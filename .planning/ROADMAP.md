@@ -28,11 +28,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Generated policies use smart label selectors (app.kubernetes.io/*, workload name) rather than raw pod names or IPs
   4. Generated policies specify exact port number and protocol (TCP/UDP) in rules
   5. Each policy is written as a separate YAML file in an organized directory structure with structured log output
-**Plans**: TBD
+**Plans:** 3 plans
 
 Plans:
-- [ ] 01-01: TBD
-- [ ] 01-02: TBD
+- [ ] 01-01-PLAN.md — Go module scaffolding + label selector package (PGEN-04)
+- [ ] 01-02-PLAN.md — Policy builder and merge logic via TDD (PGEN-01, PGEN-02, PGEN-05, PGEN-06)
+- [ ] 01-03-PLAN.md — Output writer + CLI generate command + zap logging (OUTP-01, OUTP-03)
 
 ### Phase 2: Hubble Streaming Pipeline
 **Goal**: Users can connect to a running Hubble Relay and generate policies in real-time from live dropped flows
@@ -72,6 +73,6 @@ Phases execute in numeric order: 1 -> 2 -> 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Core Policy Engine | 0/0 | Not started | - |
+| 1. Core Policy Engine | 0/3 | Planned | - |
 | 2. Hubble Streaming Pipeline | 0/0 | Not started | - |
 | 3. Production Hardening | 0/0 | Not started | - |
