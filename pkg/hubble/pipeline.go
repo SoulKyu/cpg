@@ -2,9 +2,11 @@ package hubble
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
+	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
@@ -27,6 +29,11 @@ type PipelineConfig struct {
 	OutputDir     string
 	FlushInterval time.Duration
 	Logger        *zap.Logger
+
+	// ClusterPolicies is an optional map of existing cluster policies keyed by
+	// policy name. When set (via --cluster-dedup), policies matching the cluster
+	// state are skipped. This is a startup snapshot; no periodic refresh.
+	ClusterPolicies map[string]*ciliumv2.CiliumNetworkPolicy
 }
 
 // SessionStats tracks pipeline metrics for the session summary.
@@ -34,6 +41,7 @@ type SessionStats struct {
 	StartTime       time.Time
 	FlowsSeen       uint64
 	PoliciesWritten uint64
+	PoliciesSkipped uint64
 	LostEvents      uint64
 	OutputDir       string
 }
@@ -44,6 +52,7 @@ func (s *SessionStats) Log(logger *zap.Logger) {
 		zap.Duration("duration", time.Since(s.StartTime)),
 		zap.Uint64("flows_seen", s.FlowsSeen),
 		zap.Uint64("policies_written", s.PoliciesWritten),
+		zap.Uint64("policies_skipped", s.PoliciesSkipped),
 		zap.Uint64("lost_events", s.LostEvents),
 		zap.String("output_dir", s.OutputDir),
 	)
@@ -89,9 +98,40 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source FlowS
 		return agg.Run(gctx, flows, policies)
 	})
 
-	// Stage 2: Write policies to disk
+	// Stage 2: Write policies to disk with dedup checks
 	g.Go(func() error {
+		// Cross-flush dedup: track written policies by namespace/workload key
+		writtenPolicies := make(map[string]*ciliumv2.CiliumNetworkPolicy)
+
 		for pe := range policies {
+			dedupKey := fmt.Sprintf("%s/%s", pe.Namespace, pe.Workload)
+
+			// Cluster dedup: skip if policy matches cluster state
+			if cfg.ClusterPolicies != nil {
+				if clusterPolicy, ok := cfg.ClusterPolicies[pe.Workload]; ok {
+					if policy.PoliciesEquivalent(clusterPolicy, pe.Policy) {
+						cfg.Logger.Debug("policy already exists in cluster, skipping",
+							zap.String("namespace", pe.Namespace),
+							zap.String("workload", pe.Workload),
+						)
+						stats.PoliciesSkipped++
+						continue
+					}
+				}
+			}
+
+			// Cross-flush dedup: skip if identical to last written policy for this workload
+			if lastWritten, ok := writtenPolicies[dedupKey]; ok {
+				if policy.PoliciesEquivalent(lastWritten, pe.Policy) {
+					cfg.Logger.Debug("policy unchanged since last flush, skipping",
+						zap.String("namespace", pe.Namespace),
+						zap.String("workload", pe.Workload),
+					)
+					stats.PoliciesSkipped++
+					continue
+				}
+			}
+
 			if err := writer.Write(pe); err != nil {
 				cfg.Logger.Error("failed to write policy",
 					zap.String("namespace", pe.Namespace),
@@ -101,6 +141,7 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source FlowS
 				continue
 			}
 			stats.PoliciesWritten++
+			writtenPolicies[dedupKey] = pe.Policy
 		}
 		return nil
 	})
