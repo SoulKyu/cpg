@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Core Policy Engine** - Go module scaffolding, flow-to-CiliumNetworkPolicy transformation, smart label selection, YAML output
 - [x] **Phase 2: Hubble Streaming Pipeline** - gRPC connection to Hubble Relay, flow filtering, real-time streaming generation, CLI wiring (completed 2026-03-08)
-- [ ] **Phase 3: Production Hardening** - Auto port-forward, file and cluster deduplication, CIDR policies for external traffic, flow aggregation
+- [x] **Phase 3: Production Hardening** - Auto port-forward, file and cluster deduplication, CIDR policies for external traffic, flow aggregation (completed 2026-03-08)
 
 ## Phase Details
 
@@ -60,7 +60,7 @@ Plans:
   3. Tool skips generating a policy if an equivalent CiliumNetworkPolicy already exists in the cluster
   4. Tool aggregates similar flows before generating policies (avoids one policy per packet)
   5. External traffic (world identity) produces CIDR-based rules (toCIDR/fromCIDR) instead of endpoint selectors
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 
 Plans:
 - [x] 03-01-PLAN.md — CIDR rules for world identity + file-based deduplication (PGEN-03, DEDP-01)
@@ -75,4 +75,4 @@ Phases execute in numeric order: 1 -> 2 -> 3
 |-------|----------------|--------|-----------|
 | 1. Core Policy Engine | 3/3 | Complete | 2026-03-08 |
 | 2. Hubble Streaming Pipeline | 2/2 | Complete   | 2026-03-08 |
-| 3. Production Hardening | 1/2 | In progress | - |
+| 3. Production Hardening | 2/2 | Complete   | 2026-03-08 |

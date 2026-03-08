@@ -10,7 +10,7 @@ Requirements for initial release. Each maps to roadmap phases.
 ### Connectivity
 
 - [x] **CONN-01**: Tool connects to Hubble Relay via gRPC using cilium/cilium observer proto
-- [ ] **CONN-02**: Tool auto port-forwards to hubble-relay service in kube-system
+- [x] **CONN-02**: Tool auto port-forwards to hubble-relay service in kube-system
 - [x] **CONN-03**: User can override relay address with `--server` flag
 - [x] **CONN-04**: User can filter observed flows by namespace (`--namespace`) or all namespaces (`--all-namespaces`)
 - [x] **CONN-05**: Tool detects and warns about LostEvents from Hubble ring buffer overflow
@@ -33,8 +33,8 @@ Requirements for initial release. Each maps to roadmap phases.
 ### Deduplication
 
 - [x] **DEDP-01**: Tool deduplicates against existing files in output directory
-- [ ] **DEDP-02**: Tool deduplicates against live CiliumNetworkPolicies in cluster via client-go
-- [ ] **DEDP-03**: Tool aggregates similar flows before generating policies (avoid one policy per packet)
+- [x] **DEDP-02**: Tool deduplicates against live CiliumNetworkPolicies in cluster via client-go
+- [x] **DEDP-03**: Tool aggregates similar flows before generating policies (avoid one policy per packet)
 
 ## v2 Requirements
 
@@ -68,7 +68,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | CONN-01 | Phase 2 | Complete |
-| CONN-02 | Phase 3 | Pending |
+| CONN-02 | Phase 3 | Complete |
 | CONN-03 | Phase 2 | Complete |
 | CONN-04 | Phase 2 | Complete |
 | CONN-05 | Phase 2 | Complete |
@@ -82,8 +82,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OUTP-02 | Phase 2 | Complete |
 | OUTP-03 | Phase 1 | Complete |
 | DEDP-01 | Phase 3 | Complete |
-| DEDP-02 | Phase 3 | Pending |
-| DEDP-03 | Phase 3 | Pending |
+| DEDP-02 | Phase 3 | Complete |
+| DEDP-03 | Phase 3 | Complete |
 
 **Coverage:**
 - v1 requirements: 17 total
