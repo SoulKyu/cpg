@@ -9,10 +9,10 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Connectivity
 
-- [ ] **CONN-01**: Tool connects to Hubble Relay via gRPC using cilium/cilium observer proto
+- [x] **CONN-01**: Tool connects to Hubble Relay via gRPC using cilium/cilium observer proto
 - [ ] **CONN-02**: Tool auto port-forwards to hubble-relay service in kube-system
-- [ ] **CONN-03**: User can override relay address with `--server` flag
-- [ ] **CONN-04**: User can filter observed flows by namespace (`--namespace`) or all namespaces (`--all-namespaces`)
+- [x] **CONN-03**: User can override relay address with `--server` flag
+- [x] **CONN-04**: User can filter observed flows by namespace (`--namespace`) or all namespaces (`--all-namespaces`)
 - [ ] **CONN-05**: Tool detects and warns about LostEvents from Hubble ring buffer overflow
 
 ### Policy Generation
@@ -67,10 +67,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CONN-01 | Phase 2 | Pending |
+| CONN-01 | Phase 2 | Complete |
 | CONN-02 | Phase 3 | Pending |
-| CONN-03 | Phase 2 | Pending |
-| CONN-04 | Phase 2 | Pending |
+| CONN-03 | Phase 2 | Complete |
+| CONN-04 | Phase 2 | Complete |
 | CONN-05 | Phase 2 | Pending |
 | PGEN-01 | Phase 1 | Complete |
 | PGEN-02 | Phase 1 | Complete |
