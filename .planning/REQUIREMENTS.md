@@ -17,12 +17,12 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Policy Generation
 
-- [ ] **PGEN-01**: Tool generates ingress CiliumNetworkPolicy from dropped flows
-- [ ] **PGEN-02**: Tool generates egress CiliumNetworkPolicy from dropped flows
+- [x] **PGEN-01**: Tool generates ingress CiliumNetworkPolicy from dropped flows
+- [x] **PGEN-02**: Tool generates egress CiliumNetworkPolicy from dropped flows
 - [ ] **PGEN-03**: Tool generates CIDR-based rules (toCIDR/fromCIDR) for external traffic (world identity)
 - [x] **PGEN-04**: Tool uses smart label selection for endpoint selectors (app.kubernetes.io/*, workload name)
-- [ ] **PGEN-05**: Generated policies use exact port number + protocol (TCP/UDP)
-- [ ] **PGEN-06**: Generated YAML is valid CiliumNetworkPolicy that applies cleanly with kubectl
+- [x] **PGEN-05**: Generated policies use exact port number + protocol (TCP/UDP)
+- [x] **PGEN-06**: Generated YAML is valid CiliumNetworkPolicy that applies cleanly with kubectl
 
 ### Output
 
@@ -72,12 +72,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CONN-03 | Phase 2 | Pending |
 | CONN-04 | Phase 2 | Pending |
 | CONN-05 | Phase 2 | Pending |
-| PGEN-01 | Phase 1 | Pending |
-| PGEN-02 | Phase 1 | Pending |
+| PGEN-01 | Phase 1 | Complete |
+| PGEN-02 | Phase 1 | Complete |
 | PGEN-03 | Phase 3 | Pending |
 | PGEN-04 | Phase 1 | Complete |
-| PGEN-05 | Phase 1 | Pending |
-| PGEN-06 | Phase 1 | Pending |
+| PGEN-05 | Phase 1 | Complete |
+| PGEN-06 | Phase 1 | Complete |
 | OUTP-01 | Phase 1 | Pending |
 | OUTP-02 | Phase 2 | Pending |
 | OUTP-03 | Phase 1 | Pending |
