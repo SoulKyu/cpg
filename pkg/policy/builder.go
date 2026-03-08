@@ -13,6 +13,41 @@ import (
 	"github.com/gule/cpg/pkg/labels"
 )
 
+// ReservedWorldIdentity is the Cilium reserved identity for external/world traffic.
+const ReservedWorldIdentity uint32 = 2
+
+// isWorldIdentity returns true if the endpoint represents external (world) traffic.
+func isWorldIdentity(ep *flowpb.Endpoint) bool {
+	if ep == nil {
+		return false
+	}
+	if ep.Identity == ReservedWorldIdentity {
+		return true
+	}
+	for _, l := range ep.Labels {
+		if l == "reserved:world" {
+			return true
+		}
+	}
+	return false
+}
+
+// getSourceIP extracts the source IP from a flow's IP layer (nil-safe).
+func getSourceIP(f *flowpb.Flow) string {
+	if f.IP == nil {
+		return ""
+	}
+	return f.IP.Source
+}
+
+// getDestinationIP extracts the destination IP from a flow's IP layer (nil-safe).
+func getDestinationIP(f *flowpb.Flow) string {
+	if f.IP == nil {
+		return ""
+	}
+	return f.IP.Destination
+}
+
 // PolicyEvent wraps a generated CiliumNetworkPolicy with its target location.
 type PolicyEvent struct {
 	Namespace string
@@ -107,6 +142,7 @@ func extractPort(f *flowpb.Flow) (port string, proto api.L4Proto) {
 }
 
 // buildIngressRules groups ingress flows by source peer and builds IngressRules.
+// World identity flows produce CIDR-based rules instead of endpoint selectors.
 func buildIngressRules(flows []*flowpb.Flow, policyNamespace string) []api.IngressRule {
 	type peerPorts struct {
 		selector api.EndpointSelector
@@ -114,8 +150,15 @@ func buildIngressRules(flows []*flowpb.Flow, policyNamespace string) []api.Ingre
 		seen     map[string]struct{}
 	}
 
+	type cidrPorts struct {
+		cidr  api.CIDR
+		ports []api.PortProtocol
+		seen  map[string]struct{}
+	}
+
 	peers := make(map[string]*peerPorts)
-	var order []string
+	cidrs := make(map[string]*cidrPorts)
+	var peerOrder, cidrOrder []string
 
 	for _, f := range flows {
 		if f.Source == nil {
@@ -123,6 +166,33 @@ func buildIngressRules(flows []*flowpb.Flow, policyNamespace string) []api.Ingre
 		}
 		port, proto := extractPort(f)
 		if port == "" {
+			continue
+		}
+
+		// Handle world identity: produce CIDR rule
+		if isWorldIdentity(f.Source) {
+			ip := getSourceIP(f)
+			if ip == "" {
+				continue
+			}
+			cidrStr := ip + "/32"
+			cp, exists := cidrs[cidrStr]
+			if !exists {
+				cp = &cidrPorts{
+					cidr: api.CIDR(cidrStr),
+					seen: make(map[string]struct{}),
+				}
+				cidrs[cidrStr] = cp
+				cidrOrder = append(cidrOrder, cidrStr)
+			}
+			dedupKey := port + "/" + string(proto)
+			if _, dup := cp.seen[dedupKey]; !dup {
+				cp.ports = append(cp.ports, api.PortProtocol{
+					Port:     port,
+					Protocol: proto,
+				})
+				cp.seen[dedupKey] = struct{}{}
+			}
 			continue
 		}
 
@@ -134,7 +204,7 @@ func buildIngressRules(flows []*flowpb.Flow, policyNamespace string) []api.Ingre
 				seen:     make(map[string]struct{}),
 			}
 			peers[key] = pp
-			order = append(order, key)
+			peerOrder = append(peerOrder, key)
 		}
 
 		dedupKey := port + "/" + string(proto)
@@ -147,8 +217,23 @@ func buildIngressRules(flows []*flowpb.Flow, policyNamespace string) []api.Ingre
 		}
 	}
 
-	rules := make([]api.IngressRule, 0, len(order))
-	for _, key := range order {
+	rules := make([]api.IngressRule, 0, len(cidrOrder)+len(peerOrder))
+
+	// CIDR rules first
+	for _, key := range cidrOrder {
+		cp := cidrs[key]
+		rules = append(rules, api.IngressRule{
+			IngressCommonRule: api.IngressCommonRule{
+				FromCIDR: api.CIDRSlice{cp.cidr},
+			},
+			ToPorts: api.PortRules{
+				{Ports: cp.ports},
+			},
+		})
+	}
+
+	// Endpoint selector rules
+	for _, key := range peerOrder {
 		pp := peers[key]
 		rules = append(rules, api.IngressRule{
 			IngressCommonRule: api.IngressCommonRule{
@@ -163,6 +248,7 @@ func buildIngressRules(flows []*flowpb.Flow, policyNamespace string) []api.Ingre
 }
 
 // buildEgressRules groups egress flows by destination peer and builds EgressRules.
+// World identity flows produce CIDR-based rules instead of endpoint selectors.
 func buildEgressRules(flows []*flowpb.Flow, policyNamespace string) []api.EgressRule {
 	type peerPorts struct {
 		selector api.EndpointSelector
@@ -170,8 +256,15 @@ func buildEgressRules(flows []*flowpb.Flow, policyNamespace string) []api.Egress
 		seen     map[string]struct{}
 	}
 
+	type cidrPorts struct {
+		cidr  api.CIDR
+		ports []api.PortProtocol
+		seen  map[string]struct{}
+	}
+
 	peers := make(map[string]*peerPorts)
-	var order []string
+	cidrs := make(map[string]*cidrPorts)
+	var peerOrder, cidrOrder []string
 
 	for _, f := range flows {
 		if f.Destination == nil {
@@ -179,6 +272,33 @@ func buildEgressRules(flows []*flowpb.Flow, policyNamespace string) []api.Egress
 		}
 		port, proto := extractPort(f)
 		if port == "" {
+			continue
+		}
+
+		// Handle world identity: produce CIDR rule
+		if isWorldIdentity(f.Destination) {
+			ip := getDestinationIP(f)
+			if ip == "" {
+				continue
+			}
+			cidrStr := ip + "/32"
+			cp, exists := cidrs[cidrStr]
+			if !exists {
+				cp = &cidrPorts{
+					cidr: api.CIDR(cidrStr),
+					seen: make(map[string]struct{}),
+				}
+				cidrs[cidrStr] = cp
+				cidrOrder = append(cidrOrder, cidrStr)
+			}
+			dedupKey := port + "/" + string(proto)
+			if _, dup := cp.seen[dedupKey]; !dup {
+				cp.ports = append(cp.ports, api.PortProtocol{
+					Port:     port,
+					Protocol: proto,
+				})
+				cp.seen[dedupKey] = struct{}{}
+			}
 			continue
 		}
 
@@ -190,7 +310,7 @@ func buildEgressRules(flows []*flowpb.Flow, policyNamespace string) []api.Egress
 				seen:     make(map[string]struct{}),
 			}
 			peers[key] = pp
-			order = append(order, key)
+			peerOrder = append(peerOrder, key)
 		}
 
 		dedupKey := port + "/" + string(proto)
@@ -203,8 +323,23 @@ func buildEgressRules(flows []*flowpb.Flow, policyNamespace string) []api.Egress
 		}
 	}
 
-	rules := make([]api.EgressRule, 0, len(order))
-	for _, key := range order {
+	rules := make([]api.EgressRule, 0, len(cidrOrder)+len(peerOrder))
+
+	// CIDR rules first
+	for _, key := range cidrOrder {
+		cp := cidrs[key]
+		rules = append(rules, api.EgressRule{
+			EgressCommonRule: api.EgressCommonRule{
+				ToCIDR: api.CIDRSlice{cp.cidr},
+			},
+			ToPorts: api.PortRules{
+				{Ports: cp.ports},
+			},
+		})
+	}
+
+	// Endpoint selector rules
+	for _, key := range peerOrder {
 		pp := peers[key]
 		rules = append(rules, api.EgressRule{
 			EgressCommonRule: api.EgressCommonRule{
