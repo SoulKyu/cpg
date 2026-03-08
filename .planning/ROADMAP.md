@@ -60,11 +60,11 @@ Plans:
   3. Tool skips generating a policy if an equivalent CiliumNetworkPolicy already exists in the cluster
   4. Tool aggregates similar flows before generating policies (avoids one policy per packet)
   5. External traffic (world identity) produces CIDR-based rules (toCIDR/fromCIDR) instead of endpoint selectors
-**Plans**: TBD
+**Plans:** 2 plans
 
 Plans:
-- [ ] 03-01: TBD
-- [ ] 03-02: TBD
+- [ ] 03-01-PLAN.md — CIDR rules for world identity + file-based deduplication (PGEN-03, DEDP-01)
+- [ ] 03-02-PLAN.md — Auto port-forward, cluster dedup, cross-flush dedup, CLI wiring (CONN-02, DEDP-02, DEDP-03)
 
 ## Progress
 
@@ -75,4 +75,4 @@ Phases execute in numeric order: 1 -> 2 -> 3
 |-------|----------------|--------|-----------|
 | 1. Core Policy Engine | 3/3 | Complete | 2026-03-08 |
 | 2. Hubble Streaming Pipeline | 2/2 | Complete   | 2026-03-08 |
-| 3. Production Hardening | 0/0 | Not started | - |
+| 3. Production Hardening | 0/2 | Not started | - |
