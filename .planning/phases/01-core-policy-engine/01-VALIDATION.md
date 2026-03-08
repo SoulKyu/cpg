@@ -38,16 +38,12 @@ created: 2026-03-08
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 01-01-01 | 01 | 0 | — | setup | `go build ./...` | ❌ W0 | ⬜ pending |
-| 01-01-02 | 01 | 1 | PGEN-04 | unit | `go test ./pkg/labels/ -run TestSelectLabels -count=1` | ❌ W0 | ⬜ pending |
-| 01-01-03 | 01 | 1 | PGEN-01 | unit | `go test ./pkg/policy/ -run TestBuildIngressPolicy -count=1` | ❌ W0 | ⬜ pending |
-| 01-01-04 | 01 | 1 | PGEN-02 | unit | `go test ./pkg/policy/ -run TestBuildEgressPolicy -count=1` | ❌ W0 | ⬜ pending |
-| 01-01-05 | 01 | 1 | PGEN-05 | unit | `go test ./pkg/policy/ -run TestPortProtocol -count=1` | ❌ W0 | ⬜ pending |
-| 01-01-06 | 01 | 1 | PGEN-06 | unit | `go test ./pkg/policy/ -run TestYAMLOutput -count=1` | ❌ W0 | ⬜ pending |
-| 01-02-01 | 02 | 2 | OUTP-01 | unit | `go test ./pkg/output/ -run TestDirectoryStructure -count=1` | ❌ W0 | ⬜ pending |
-| 01-02-02 | 02 | 2 | OUTP-03 | integration | `go test ./cmd/... -run TestLogLevel -count=1` | ❌ W0 | ⬜ pending |
-| 01-02-03 | 02 | 2 | CONN-01 | integration | `go test ./pkg/hubble/ -run TestConnect -count=1` | ❌ W0 | ⬜ pending |
-| 01-02-04 | 02 | 2 | CONN-05 | unit | `go test ./pkg/hubble/ -run TestLostEvents -count=1` | ❌ W0 | ⬜ pending |
+| 01-01-T1 | 01 | 1 | — | setup | `go build ./... && make build && test -f bin/cpg` | ❌ W0 | ⬜ pending |
+| 01-01-T2 | 01 | 1 | PGEN-04 | unit (TDD) | `go test ./pkg/labels/ -v -count=1` | ❌ W0 | ⬜ pending |
+| 01-02-T1 | 02 | 2 | PGEN-01, PGEN-02, PGEN-05, PGEN-06 | unit (TDD) | `go test ./pkg/policy/ -run TestBuildPolicy -v -count=1` | ❌ W0 | ⬜ pending |
+| 01-02-T2 | 02 | 2 | PGEN-06 | unit (TDD) | `go test ./pkg/policy/ -run TestMergePolicy -v -count=1` | ❌ W0 | ⬜ pending |
+| 01-03-T1 | 03 | 3 | OUTP-01 | unit (TDD) | `go test ./pkg/output/ -v -count=1` | ❌ W0 | ⬜ pending |
+| 01-03-T2 | 03 | 3 | OUTP-03 | integration | `make build && bin/cpg generate --help` | ❌ W0 | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -55,14 +51,7 @@ created: 2026-03-08
 
 ## Wave 0 Requirements
 
-- [ ] `go.mod` / `go.sum` — project initialization with Go 1.25, Cilium v1.19.1 dependency
-- [ ] `go get github.com/stretchr/testify` — test assertion library
-- [ ] `pkg/labels/selector_test.go` — stubs for PGEN-04 (label hierarchy + denylist)
-- [ ] `pkg/policy/builder_test.go` — stubs for PGEN-01, PGEN-02, PGEN-05, PGEN-06
-- [ ] `pkg/policy/merge_test.go` — stubs for merge-on-write behavior
-- [ ] `pkg/output/writer_test.go` — stubs for OUTP-01
-- [ ] `pkg/hubble/client_test.go` — stubs for CONN-01 (mock gRPC server)
-- [ ] Test fixtures: sample `flow.Flow` proto structs for ingress/egress/various label scenarios
+*No Wave 0 needed — all tasks have automated verify commands. Test files are created as part of TDD tasks in each plan.*
 
 ---
 
@@ -70,7 +59,7 @@ created: 2026-03-08
 
 | Behavior | Requirement | Why Manual | Test Instructions |
 |----------|-------------|------------|-------------------|
-| Ctrl+C session summary | OUTP-03 | Signal handling requires process interaction | Run tool, press Ctrl+C, verify summary output |
+*All phase behaviors have automated verification.*
 
 ---
 
