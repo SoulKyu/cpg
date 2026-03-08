@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: completed
-stopped_at: Completed 02-02-PLAN.md
-last_updated: "2026-03-08T19:46:10.785Z"
-last_activity: 2026-03-08 -- Completed plan 02-02 (Pipeline orchestration + CLI wiring)
+status: in-progress
+stopped_at: Completed 03-01-PLAN.md
+last_updated: "2026-03-08T20:13:00Z"
+last_activity: 2026-03-08 -- Completed plan 03-01 (CIDR world identity rules and file dedup)
 progress:
   total_phases: 3
   completed_phases: 2
-  total_plans: 5
-  completed_plans: 5
-  percent: 63
+  total_plans: 7
+  completed_plans: 6
+  percent: 86
 ---
 
 # Project State
@@ -21,23 +21,23 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-08)
 
 **Core value:** Automatically generate correct CiliumNetworkPolicies from observed Hubble denials so that SREs spend zero time manually writing network policies in default-deny environments.
-**Current focus:** Phase 2: Hubble Streaming Pipeline
+**Current focus:** Phase 3: Production Hardening
 
 ## Current Position
 
-Phase: 2 of 3 (Hubble Streaming Pipeline)
-Plan: 2 of 2 in current phase
-Status: Phase 02 complete (all plans done)
-Last activity: 2026-03-08 -- Completed plan 02-02 (Pipeline orchestration + CLI wiring)
+Phase: 3 of 3 (Production Hardening)
+Plan: 1 of 2 in current phase
+Status: Plan 03-01 complete, Plan 03-02 remaining
+Last activity: 2026-03-08 -- Completed plan 03-01 (CIDR world identity rules and file dedup)
 
-Progress: [██████░░░░] 63%
+Progress: [████████░░] 86%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 5
-- Average duration: 4 min
-- Total execution time: 0.33 hours
+- Total plans completed: 6
+- Average duration: 4.3 min
+- Total execution time: 0.43 hours
 
 **By Phase:**
 
@@ -45,9 +45,10 @@ Progress: [██████░░░░] 63%
 |-------|-------|-------|----------|
 | 01-core-policy-engine | 3 | 13 min | 4.3 min |
 | 02-hubble-streaming-pipeline | 2 | 7 min | 3.5 min |
+| 03-production-hardening | 1 | 6 min | 6.0 min |
 
 **Recent Trend:**
-- Last 5 plans: 01-01 (4 min), 01-02 (5 min), 01-03 (4 min), 02-01 (3 min), 02-02 (4 min)
+- Last 5 plans: 01-02 (5 min), 01-03 (4 min), 02-01 (3 min), 02-02 (4 min), 03-01 (6 min)
 - Trend: stable
 
 *Updated after each plan completion*
@@ -74,6 +75,10 @@ Recent decisions affecting current work:
 - Interface-based flowStream abstraction for testability (avoids bufconn complexity)
 - Variadic closer pattern to pass grpc.ClientConn cleanup into streaming goroutine
 - Buffered channels: flows=256, lostEvents=16 to absorb burst traffic
+- YAML byte comparison for file dedup (not in-memory PoliciesEquivalent) due to any: prefix roundtrip mismatch
+- matchEndpoints normalizes any: prefix for merge correctness after YAML roundtrip
+- World identity detected by Identity==2 OR reserved:world label (defense in depth)
+- CIDR rules placed before endpoint selector rules in output ordering
 
 ### Pending Todos
 
@@ -86,6 +91,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-08T19:41:32Z
-Stopped at: Completed 02-02-PLAN.md
-Resume file: Phase 02 complete. Next: Phase 03
+Last session: 2026-03-08T20:13:00Z
+Stopped at: Completed 03-01-PLAN.md
+Resume file: Plan 03-01 complete. Next: Plan 03-02

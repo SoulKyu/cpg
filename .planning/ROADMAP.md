@@ -63,7 +63,7 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 03-01-PLAN.md — CIDR rules for world identity + file-based deduplication (PGEN-03, DEDP-01)
+- [x] 03-01-PLAN.md — CIDR rules for world identity + file-based deduplication (PGEN-03, DEDP-01)
 - [ ] 03-02-PLAN.md — Auto port-forward, cluster dedup, cross-flush dedup, CLI wiring (CONN-02, DEDP-02, DEDP-03)
 
 ## Progress
@@ -75,4 +75,4 @@ Phases execute in numeric order: 1 -> 2 -> 3
 |-------|----------------|--------|-----------|
 | 1. Core Policy Engine | 3/3 | Complete | 2026-03-08 |
 | 2. Hubble Streaming Pipeline | 2/2 | Complete   | 2026-03-08 |
-| 3. Production Hardening | 0/2 | Not started | - |
+| 3. Production Hardening | 1/2 | In progress | - |
