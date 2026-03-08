@@ -141,3 +141,73 @@ func TestWriter_MultipleNamespaces(t *testing.T) {
 	_, err = os.Stat(filepath.Join(dir, "ns-b", "svc-2.yaml"))
 	require.NoError(t, err)
 }
+
+func TestWriter_SkipEquivalentPolicy(t *testing.T) {
+	dir := t.TempDir()
+	logger := zap.NewNop()
+	w := NewWriter(dir, logger)
+
+	event := buildTestEvent("default", "server")
+
+	// First write
+	err := w.Write(event)
+	require.NoError(t, err)
+
+	path := filepath.Join(dir, "default", "server.yaml")
+	info1, err := os.Stat(path)
+	require.NoError(t, err)
+	content1, err := os.ReadFile(path)
+	require.NoError(t, err)
+
+	// Second write with same policy -- should be skipped (no file change)
+	err = w.Write(event)
+	require.NoError(t, err)
+
+	info2, err := os.Stat(path)
+	require.NoError(t, err)
+	content2, err := os.ReadFile(path)
+	require.NoError(t, err)
+
+	// Content should be identical (not re-written)
+	assert.Equal(t, string(content1), string(content2), "equivalent policy should not change file content")
+	assert.Equal(t, info1.ModTime(), info2.ModTime(), "equivalent policy should not update file mtime")
+}
+
+func TestWriter_WritesDifferentPolicy(t *testing.T) {
+	dir := t.TempDir()
+	logger := zap.NewNop()
+	w := NewWriter(dir, logger)
+
+	// Write initial policy with port 80
+	event1 := buildTestEvent("default", "server")
+	err := w.Write(event1)
+	require.NoError(t, err)
+
+	path := filepath.Join(dir, "default", "server.yaml")
+	content1, err := os.ReadFile(path)
+	require.NoError(t, err)
+
+	// Write different policy with port 443 (new rules, should merge and write)
+	flows2 := []*flowpb.Flow{
+		testdata.IngressTCPFlow(
+			[]string{"k8s:app=new-client"},
+			[]string{"k8s:app=server"},
+			"default", 443,
+		),
+	}
+	event2 := policy.PolicyEvent{
+		Namespace: "default",
+		Workload:  "server",
+		Policy:    policy.BuildPolicy("default", "server", flows2),
+	}
+	err = w.Write(event2)
+	require.NoError(t, err)
+
+	content2, err := os.ReadFile(path)
+	require.NoError(t, err)
+
+	// Content should have changed (merged with new rules)
+	assert.NotEqual(t, string(content1), string(content2), "different policy should update file content")
+	assert.Contains(t, string(content2), "443")
+	assert.Contains(t, string(content2), "80")
+}
