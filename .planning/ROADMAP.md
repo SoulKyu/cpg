@@ -13,7 +13,7 @@ CPG delivers a Go CLI tool that turns Hubble dropped flows into ready-to-apply C
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Core Policy Engine** - Go module scaffolding, flow-to-CiliumNetworkPolicy transformation, smart label selection, YAML output
-- [ ] **Phase 2: Hubble Streaming Pipeline** - gRPC connection to Hubble Relay, flow filtering, real-time streaming generation, CLI wiring
+- [x] **Phase 2: Hubble Streaming Pipeline** - gRPC connection to Hubble Relay, flow filtering, real-time streaming generation, CLI wiring (completed 2026-03-08)
 - [ ] **Phase 3: Production Hardening** - Auto port-forward, file and cluster deduplication, CIDR policies for external traffic, flow aggregation
 
 ## Phase Details
@@ -44,7 +44,7 @@ Plans:
   2. User can filter observed flows by namespace (`--namespace`) or observe all namespaces (`--all-namespaces`)
   3. Policies are generated continuously as new dropped flows arrive (not batch)
   4. Tool warns the user when Hubble ring buffer overflow causes lost events
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 
 Plans:
 - [ ] 02-01-PLAN.md — Hubble gRPC client + FlowFilter namespace filtering (CONN-01, CONN-03, CONN-04)
@@ -74,5 +74,5 @@ Phases execute in numeric order: 1 -> 2 -> 3
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Core Policy Engine | 3/3 | Complete | 2026-03-08 |
-| 2. Hubble Streaming Pipeline | 1/2 | In Progress|  |
+| 2. Hubble Streaming Pipeline | 2/2 | Complete   | 2026-03-08 |
 | 3. Production Hardening | 0/0 | Not started | - |

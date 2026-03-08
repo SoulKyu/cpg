@@ -13,7 +13,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **CONN-02**: Tool auto port-forwards to hubble-relay service in kube-system
 - [x] **CONN-03**: User can override relay address with `--server` flag
 - [x] **CONN-04**: User can filter observed flows by namespace (`--namespace`) or all namespaces (`--all-namespaces`)
-- [ ] **CONN-05**: Tool detects and warns about LostEvents from Hubble ring buffer overflow
+- [x] **CONN-05**: Tool detects and warns about LostEvents from Hubble ring buffer overflow
 
 ### Policy Generation
 
@@ -27,7 +27,7 @@ Requirements for initial release. Each maps to roadmap phases.
 ### Output
 
 - [x] **OUTP-01**: Tool outputs one YAML file per policy in organized directory structure
-- [ ] **OUTP-02**: Tool generates policies continuously in real-time as flows arrive (streaming)
+- [x] **OUTP-02**: Tool generates policies continuously in real-time as flows arrive (streaming)
 - [x] **OUTP-03**: Tool uses structured logging via zap with configurable log levels
 
 ### Deduplication
@@ -71,7 +71,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CONN-02 | Phase 3 | Pending |
 | CONN-03 | Phase 2 | Complete |
 | CONN-04 | Phase 2 | Complete |
-| CONN-05 | Phase 2 | Pending |
+| CONN-05 | Phase 2 | Complete |
 | PGEN-01 | Phase 1 | Complete |
 | PGEN-02 | Phase 1 | Complete |
 | PGEN-03 | Phase 3 | Pending |
@@ -79,7 +79,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PGEN-05 | Phase 1 | Complete |
 | PGEN-06 | Phase 1 | Complete |
 | OUTP-01 | Phase 1 | Complete |
-| OUTP-02 | Phase 2 | Pending |
+| OUTP-02 | Phase 2 | Complete |
 | OUTP-03 | Phase 1 | Complete |
 | DEDP-01 | Phase 3 | Pending |
 | DEDP-02 | Phase 3 | Pending |
