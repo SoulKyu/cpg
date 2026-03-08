@@ -12,7 +12,7 @@ CPG delivers a Go CLI tool that turns Hubble dropped flows into ready-to-apply C
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Core Policy Engine** - Go module scaffolding, flow-to-CiliumNetworkPolicy transformation, smart label selection, YAML output
+- [x] **Phase 1: Core Policy Engine** - Go module scaffolding, flow-to-CiliumNetworkPolicy transformation, smart label selection, YAML output
 - [ ] **Phase 2: Hubble Streaming Pipeline** - gRPC connection to Hubble Relay, flow filtering, real-time streaming generation, CLI wiring
 - [ ] **Phase 3: Production Hardening** - Auto port-forward, file and cluster deduplication, CIDR policies for external traffic, flow aggregation
 
@@ -32,8 +32,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 Plans:
 - [x] 01-01-PLAN.md — Go module scaffolding + label selector package (PGEN-04)
-- [ ] 01-02-PLAN.md — Policy builder and merge logic via TDD (PGEN-01, PGEN-02, PGEN-05, PGEN-06)
-- [ ] 01-03-PLAN.md — Output writer + CLI generate command + zap logging (OUTP-01, OUTP-03)
+- [x] 01-02-PLAN.md — Policy builder and merge logic via TDD (PGEN-01, PGEN-02, PGEN-05, PGEN-06)
+- [x] 01-03-PLAN.md — Output writer + CLI generate command + zap logging (OUTP-01, OUTP-03)
 
 ### Phase 2: Hubble Streaming Pipeline
 **Goal**: Users can connect to a running Hubble Relay and generate policies in real-time from live dropped flows
@@ -73,6 +73,6 @@ Phases execute in numeric order: 1 -> 2 -> 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Core Policy Engine | 1/3 | In Progress | - |
+| 1. Core Policy Engine | 3/3 | Complete | 2026-03-08 |
 | 2. Hubble Streaming Pipeline | 0/0 | Not started | - |
 | 3. Production Hardening | 0/0 | Not started | - |

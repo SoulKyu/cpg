@@ -26,9 +26,9 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Output
 
-- [ ] **OUTP-01**: Tool outputs one YAML file per policy in organized directory structure
+- [x] **OUTP-01**: Tool outputs one YAML file per policy in organized directory structure
 - [ ] **OUTP-02**: Tool generates policies continuously in real-time as flows arrive (streaming)
-- [ ] **OUTP-03**: Tool uses structured logging via zap with configurable log levels
+- [x] **OUTP-03**: Tool uses structured logging via zap with configurable log levels
 
 ### Deduplication
 
@@ -78,9 +78,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PGEN-04 | Phase 1 | Complete |
 | PGEN-05 | Phase 1 | Complete |
 | PGEN-06 | Phase 1 | Complete |
-| OUTP-01 | Phase 1 | Pending |
+| OUTP-01 | Phase 1 | Complete |
 | OUTP-02 | Phase 2 | Pending |
-| OUTP-03 | Phase 1 | Pending |
+| OUTP-03 | Phase 1 | Complete |
 | DEDP-01 | Phase 3 | Pending |
 | DEDP-02 | Phase 3 | Pending |
 | DEDP-03 | Phase 3 | Pending |
