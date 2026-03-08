@@ -49,6 +49,13 @@ func (w *Writer) Write(event policy.PolicyEvent) error {
 		if err != nil {
 			return fmt.Errorf("marshaling merged policy: %w", err)
 		}
+		// Compare serialized YAML to detect semantic equivalence after roundtrip.
+		// In-memory comparison is unreliable due to label prefix normalization (any:).
+		existingData, readErr := os.ReadFile(path)
+		if readErr == nil && string(existingData) == string(data) {
+			w.logger.Debug("policy unchanged, skipping write", zap.String("path", path))
+			return nil
+		}
 		w.logger.Info("policy updated", zap.String("path", path))
 	} else {
 		data, err = yaml.Marshal(event.Policy)

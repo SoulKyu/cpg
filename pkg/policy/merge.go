@@ -2,6 +2,7 @@ package policy
 
 import (
 	"reflect"
+	"strings"
 
 	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
 	"github.com/cilium/cilium/pkg/policy/api"
@@ -53,6 +54,8 @@ func MergePolicy(existing, incoming *ciliumv2.CiliumNetworkPolicy) *ciliumv2.Cil
 }
 
 // matchEndpoints compares two slices of EndpointSelector by their matchLabels.
+// Handles the "any:" prefix that Cilium adds during YAML roundtrip by normalizing
+// keys before comparison.
 func matchEndpoints(a, b []api.EndpointSelector) bool {
 	if len(a) != len(b) {
 		return false
@@ -65,11 +68,32 @@ func matchEndpoints(a, b []api.EndpointSelector) bool {
 		if b[i].LabelSelector != nil {
 			bLabels = b[i].LabelSelector.MatchLabels
 		}
-		if !reflect.DeepEqual(aLabels, bLabels) {
+		if !matchLabelsNormalized(aLabels, bLabels) {
 			return false
 		}
 	}
 	return true
+}
+
+// matchLabelsNormalized compares two label maps ignoring the "any:" prefix
+// that Cilium adds to keys during YAML serialization/deserialization.
+func matchLabelsNormalized(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	normA := normalizeLabels(a)
+	normB := normalizeLabels(b)
+	return reflect.DeepEqual(normA, normB)
+}
+
+// normalizeLabels strips the "any:" prefix from label keys.
+func normalizeLabels(labels map[string]string) map[string]string {
+	result := make(map[string]string, len(labels))
+	for k, v := range labels {
+		key := strings.TrimPrefix(k, "any:")
+		result[key] = v
+	}
+	return result
 }
 
 // mergePortRules merges incoming port rules into existing ones, deduplicating
