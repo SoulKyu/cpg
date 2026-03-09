@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.3](https://github.com/SoulKyu/cpg/compare/v1.0.2...v1.0.3) (2026-03-09)
+
+
+### Bug Fixes
+
+* remove unsupported changelog.extra field from goreleaser config ([440407c](https://github.com/SoulKyu/cpg/commit/440407c1401cf3d81c63df3cddf736ae45df040a))
+
 ## [1.0.2](https://github.com/SoulKyu/cpg/compare/v1.0.1...v1.0.2) (2026-03-09)
 
 
