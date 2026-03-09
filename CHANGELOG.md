@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/SoulKyu/cpg/compare/v1.1.0...v1.2.0) (2026-03-09)
+
+
+### Features
+
+* annotate generated policy rules with human-readable comments ([4a9b2d9](https://github.com/SoulKyu/cpg/commit/4a9b2d9bead6bca3e129569bee224527407fdac3))
+
+
+### Bug Fixes
+
+* align go module path with GitHub repository (github.com/SoulKyu/cpg) ([d9116a3](https://github.com/SoulKyu/cpg/commit/d9116a3ac5cf35cd744dd0007756842f20ee9d6f))
+
 ## [1.1.0](https://github.com/SoulKyu/cpg/compare/v1.0.3...v1.1.0) (2026-03-09)
 
 
