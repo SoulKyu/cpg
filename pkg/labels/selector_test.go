@@ -136,6 +136,47 @@ func TestBuildPeerSelector_CrossNamespace(t *testing.T) {
 	assert.True(t, hasNs, "PeerSelector should include namespace for cross-namespace traffic")
 }
 
+func TestSelectLabels_PriorityAppKubernetesComponent(t *testing.T) {
+	labels := []string{
+		"k8s:app.kubernetes.io/component=clickhouse",
+		"k8s:app.kubernetes.io/managed-by=coroot-operator",
+		"k8s:app.kubernetes.io/part-of=coroot",
+	}
+	got := SelectLabels(labels)
+	assert.Equal(t, map[string]string{"app.kubernetes.io/component": "clickhouse"}, got)
+}
+
+func TestSelectLabels_AppNameTakesPriorityOverComponent(t *testing.T) {
+	labels := []string{
+		"k8s:app.kubernetes.io/name=myapp",
+		"k8s:app.kubernetes.io/component=frontend",
+	}
+	got := SelectLabels(labels)
+	assert.Equal(t, map[string]string{"app.kubernetes.io/name": "myapp"}, got)
+}
+
+func TestSelectLabels_CiliumIdentityLabelsFiltered(t *testing.T) {
+	labels := []string{
+		"k8s:io.cilium.k8s.namespace.labels.kubernetes.io/metadata.name=coroot",
+		"k8s:io.cilium.k8s.policy.cluster=default",
+		"k8s:io.cilium.k8s.policy.serviceaccount=coroot",
+		"k8s:io.kubernetes.pod.namespace=coroot",
+		"k8s:team=platform",
+	}
+	got := SelectLabels(labels)
+	assert.Equal(t, map[string]string{"team": "platform"}, got)
+}
+
+func TestWorkloadName_ComponentLabel(t *testing.T) {
+	labels := []string{
+		"k8s:app.kubernetes.io/component=clickhouse",
+		"k8s:app.kubernetes.io/managed-by=coroot-operator",
+		"k8s:io.cilium.k8s.policy.cluster=default",
+	}
+	got := WorkloadName(labels)
+	assert.Equal(t, "clickhouse", got)
+}
+
 func TestBuildPeerSelector_SameNamespace(t *testing.T) {
 	labels := []string{
 		"k8s:app=frontend",

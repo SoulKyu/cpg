@@ -22,14 +22,26 @@ var Denylist = map[string]struct{}{
 	"apps.kubernetes.io/pod-index":       {},
 }
 
+// denylistPrefixes contains label key prefixes that should never appear in
+// selectors. Cilium identity labels (io.cilium.k8s.*) are internal metadata,
+// not pod labels — using them produces overly specific and fragile selectors.
+var denylistPrefixes = []string{
+	"io.cilium.k8s.",
+	"io.kubernetes.pod.namespace",
+	"io.cilium.k8s.policy.",
+}
+
 // priorityKeys defines the label selection hierarchy in order of preference.
+// Uses standard Kubernetes recommended labels per
+// https://kubernetes.io/docs/concepts/overview/working-with-objects/common-labels/
 var priorityKeys = []string{
 	"app.kubernetes.io/name",
+	"app.kubernetes.io/component",
 	"app",
 }
 
 // filterK8sLabels parses raw Hubble labels and returns only k8s-sourced labels
-// that are not in the denylist.
+// that are not in the denylist or denylist prefixes.
 func filterK8sLabels(endpointLabels []string) []labels.Label {
 	var filtered []labels.Label
 	for _, raw := range endpointLabels {
@@ -40,9 +52,22 @@ func filterK8sLabels(endpointLabels []string) []labels.Label {
 		if _, denied := Denylist[l.Key]; denied {
 			continue
 		}
+		if hasDenylistedPrefix(l.Key) {
+			continue
+		}
 		filtered = append(filtered, l)
 	}
 	return filtered
+}
+
+// hasDenylistedPrefix returns true if the key starts with any denylisted prefix.
+func hasDenylistedPrefix(key string) bool {
+	for _, prefix := range denylistPrefixes {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // SelectLabels extracts the most relevant labels from Hubble flow endpoint labels.
