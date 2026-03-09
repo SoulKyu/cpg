@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.2](https://github.com/SoulKyu/cpg/compare/v1.0.1...v1.0.2) (2026-03-09)
+
+
+### Bug Fixes
+
+* prevent duplicate rules after YAML roundtrip in policy merge ([1ba8c3a](https://github.com/SoulKyu/cpg/commit/1ba8c3a27f15f8c0b14890f2d1d2061d29ab4393))
+* use unsanitized EndpointSelector to prevent label key corruption ([e064f2f](https://github.com/SoulKyu/cpg/commit/e064f2f019ecfe4a5666a6deac5a6c1a29647833))
+
 ## [1.0.1](https://github.com/SoulKyu/cpg/compare/v1.0.0...v1.0.1) (2026-03-09)
 
 
