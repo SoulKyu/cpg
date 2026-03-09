@@ -1,304 +1,320 @@
 # Pitfalls Research
 
-**Domain:** Hubble gRPC integration and CiliumNetworkPolicy generation CLI tool
-**Researched:** 2026-03-08
-**Confidence:** HIGH (verified against official Cilium docs, Datadog post-mortem, Hubble issue tracker)
+**Domain:** Adding L7 policy generation and auto-apply to existing L4 Cilium policy generator (cpg v1.1)
+**Researched:** 2026-03-09
+**Confidence:** HIGH (verified against Cilium docs, existing codebase, GitHub issues)
+
+---
 
 ## Critical Pitfalls
 
-### Pitfall 1: Traffic Direction Inversion When Generating Policies
+### Pitfall 1: L7 Rules Trigger Envoy Proxy Redirect -- Breaks Existing Connections
 
 **What goes wrong:**
-Hubble flows have a `traffic_direction` field (INGRESS/EGRESS) that describes the direction *from the perspective of the observing endpoint*. A dropped EGRESS flow on pod A means A tried to send traffic out. The generated policy needs an egress rule on A's policy *and* potentially an ingress rule on the destination's policy. Naive generators create the rule on only one side, or worse, invert ingress/egress by confusing source/destination roles with traffic direction.
+Adding L7 HTTP rules (`rules.http`) to a `toPorts` entry causes Cilium to redirect traffic through the Envoy proxy. Existing L4-only connections on that port get RST'd because the datapath switches from eBPF-only forwarding to proxy-based forwarding. If `cpg apply` upgrades an existing L4-only policy to L4+L7, workloads experience connection drops during the transition.
 
 **Why it happens:**
-The flow's `source` and `destination` fields describe the actual sender/receiver, but `traffic_direction` describes which endpoint reported the drop. A single connection attempt can produce two dropped flows (one EGRESS on the source, one INGRESS on the destination). Developers conflate "source = needs egress rule" without considering which endpoint the policy targets (`endpointSelector`).
+L4 rules use eBPF datapath only. L7 rules inject Envoy into the data path. The transition is not seamless -- TCP connections are reset when the redirect activates. This is documented in multiple Cilium issues (#35525, #43964, #30581).
+
+**Consequences:**
+Production outage for affected workloads during policy application. The blast radius is every active connection on the affected port.
 
 **How to avoid:**
-- Always anchor policy generation to the `endpointSelector` (the pod the policy applies to)
-- If `traffic_direction == EGRESS`: the selected endpoint is the source, generate an egress rule with `toEndpoints`/`toCIDR` for the destination
-- If `traffic_direction == INGRESS`: the selected endpoint is the destination, generate an ingress rule with `fromEndpoints`/`fromCIDR` for the source
-- Write explicit unit tests with flows from both perspectives of the same connection
+- Generate L7 policies as **separate policy objects** (e.g., `cpg-<workload>-l7`) rather than merging L7 rules into existing L4 policies. This prevents the merge logic from accidentally upgrading an L4 policy.
+- The `cpg apply` command MUST detect L4-to-L7 transitions in diff output and warn explicitly: "L7 rules added -- will trigger Envoy proxy redirect, expect connection resets."
+- Default to `--dry-run` (already planned). The diff output must highlight proxy redirect as a distinct warning.
 
 **Warning signs:**
-- Generated policies that have ingress rules using `toEndpoints` (wrong field)
-- Policies that "don't work" even though flows were observed
-- Duplicate/conflicting policies generated for the same traffic pair
+- `cilium monitor` shows `Redirect` events after apply.
+- Hubble shows connection resets on previously-working flows.
+- Application logs show sudden connection timeouts/resets.
 
 **Phase to address:**
-Core policy generation phase (earliest). This is foundational logic that everything else depends on.
+Both L7 generation (separate policy objects) and apply command (detect L4-to-L7 transitions in diff).
 
 ---
 
-### Pitfall 2: CIDR Rules Applied to Cilium-Managed Endpoints
+### Pitfall 2: L7 Rules Union Constraint -- Cannot Mix HTTP and DNS on Same PortRule
 
 **What goes wrong:**
-When a dropped flow involves a pod whose IP is known but whose identity/labels are not resolved (e.g., the flow lacks labels for the remote side), a naive generator falls back to CIDR-based rules using the pod's IP. Cilium explicitly documents that CIDR rules do not apply to traffic where both sides are managed by Cilium or use a node IP. The generated policy silently does nothing.
+Cilium's `L7Rules` is a union: only one of `http`, `dns`, or `kafka` can be set per `PortRule`. If the merge logic combines an HTTP rule and a DNS rule on the same port, Cilium rejects the policy. But since CiliumNetworkPolicy CRDs lack admission webhook validation by default, `kubectl apply` succeeds and the Cilium agent silently fails to import the policy.
 
 **Why it happens:**
-Hubble flows for cross-namespace or cross-node traffic sometimes have incomplete label data on the remote endpoint. The temptation is to use the IP address as a fallback. But Cilium resolves managed endpoints by security identity, not IP, so CIDR rules are ignored for managed traffic.
+The existing `mergePortRules()` in `pkg/policy/merge.go` (lines 101-131) only merges `PortProtocol` entries. It has zero awareness of the `Rules` field. Naively adding L7 rules to the merge path would combine rules without checking the L7 type constraint.
 
 **How to avoid:**
-- Only generate CIDR-based rules (`toCIDR`/`fromCIDR`) when the remote endpoint has the `reserved:world` identity or is explicitly unmanaged
-- Check the flow's `source.identity` / `destination.identity` fields: reserved identities like `WORLD` (numeric 2) indicate external traffic suitable for CIDR
-- For managed endpoints with missing labels, use the `reserved:cluster` entity or resolve labels from the cluster via client-go rather than falling back to IP
-- Never generate `toCIDR` with a pod CIDR range
+- Merge logic must treat L7 rule type as part of the grouping key. Two port rules on the same port but different L7 types must remain separate `PortRule` entries.
+- Add validation before writing: reject policies where the same port has conflicting L7 types.
+- Practically: HTTP rules go on application ports (80, 8080, 443), DNS rules go on port 53. Keep the builder aware of this separation.
 
 **Warning signs:**
-- Generated policies with `/32` CIDR rules pointing at pod IPs within the cluster
-- Policies that pass YAML validation but have no effect when applied
-- Users reporting "I applied the policy but traffic is still denied"
+- Cilium agent logs show policy import errors but kubectl reported success.
+- Policies appear to have no effect despite being applied.
 
 **Phase to address:**
-Core policy generation phase. Must be correct before CIDR policy support is added.
+L7 builder implementation. The `PortRule` builder must handle `Rules` field separately from `Ports` field.
 
 ---
 
-### Pitfall 3: Namespace Scoping and Cross-Namespace Label Selection
+### Pitfall 3: DNS FQDN Policies Require a Companion DNS Allow Rule
 
 **What goes wrong:**
-CiliumNetworkPolicy is namespace-scoped. The `endpointSelector` always and only matches pods in the policy's own namespace. When generating `fromEndpoints` or `toEndpoints` rules for cross-namespace traffic, omitting the `k8s:io.kubernetes.pod.namespace` label causes the selector to match pods in the policy's namespace instead of the intended remote namespace. This silently creates wrong rules.
+Generating a `toFQDNs` egress rule without also generating (or verifying existence of) an egress rule allowing DNS queries to kube-dns on port 53 with `rules.dns` inspection. Without the DNS allow rule, the pod cannot resolve the FQDN, and the `toFQDNs` rule never activates -- all egress traffic to that domain is silently dropped.
 
 **Why it happens:**
-Kubernetes and Cilium handle namespace scoping differently than most developers expect. The `endpointSelector` is implicitly scoped, but `fromEndpoints`/`toEndpoints` require explicit namespace labels. This is not intuitive and the Cilium docs bury this detail.
+`toFQDNs` works by intercepting DNS responses via Cilium's in-agent DNS proxy. If DNS traffic itself is blocked (because no rule allows it), the proxy never sees the resolution, and the FQDN-to-IP mapping is never populated. This is documented in Cilium's DNS policy docs but easy to miss.
+
+**Consequences:**
+Every `toFQDNs` policy silently fails. Traffic appears dropped with no obvious cause. Extremely confusing to debug.
 
 **How to avoid:**
-- Always include `k8s:io.kubernetes.pod.namespace: <namespace>` in `fromEndpoints`/`toEndpoints` selectors when the remote pod is in a different namespace than the policy
-- Extract namespace from the flow's `source.namespace` / `destination.namespace` fields
-- Validate generated policies: if policy namespace differs from the remote endpoint namespace in the selector, the namespace label MUST be present
+- When generating a `toFQDNs` egress rule, cpg MUST also generate a companion egress rule allowing DNS to kube-dns:
+  ```yaml
+  - toEndpoints:
+    - matchLabels:
+        k8s:io.kubernetes.pod.namespace: kube-system
+        k8s:io.cilium.k8s.policy.serviceaccount: coredns
+    toPorts:
+    - ports:
+      - port: "53"
+        protocol: ANY
+      rules:
+        dns:
+        - matchPattern: "*"
+  ```
+- Alternatively, check if a cluster-wide DNS allow policy already exists and skip generation.
+- Log a warning if generating FQDN rules without a DNS companion rule.
 
 **Warning signs:**
-- Cross-namespace policies that "work" only because they accidentally match a same-namespace pod with similar labels
-- Integration tests passing with single-namespace setups but failing multi-namespace
+- Egress traffic to FQDN targets is dropped despite policy existing.
+- `hubble observe` shows DNS queries being dropped.
 
 **Phase to address:**
-Core policy generation phase, with dedicated cross-namespace test cases.
+L7 DNS policy generation. Hard requirement, not optional.
 
 ---
 
-### Pitfall 4: Hubble Ring Buffer Overflow Causing Incomplete Flow Data
+### Pitfall 4: Auto-Apply Without Drift Detection -- Overwrites Manual Edits
 
 **What goes wrong:**
-Hubble stores flows in a fixed-size ring buffer per node (default 4096 events). In high-traffic clusters, the buffer overflows and older events are lost. The tool observes `LostEvent` messages instead of actual flows. Generated policies are incomplete because not all denied traffic was captured, giving users false confidence that their policy set is complete.
+`cpg apply --force` writes policies to the cluster. If a human has edited a cpg-generated policy in the cluster (added rules, tuned selectors), `cpg apply` would overwrite their changes with the generated version.
 
 **Why it happens:**
-The ring buffer is intentionally small to limit memory usage. Production clusters with default-deny can generate thousands of drops per second during initial policy rollout. The tool has no way to know what it missed.
+The tool generates policies labeled `managed-by: cpg`. But there is no mechanism to detect that the cluster version has diverged from what cpg last applied.
+
+**Consequences:**
+Loss of manually-added rules. Potential production traffic disruption in a default-deny environment.
 
 **How to avoid:**
-- Handle `LostEvent` responses in the gRPC stream explicitly: log warnings with the count of lost events
-- Surface lost event counts to the user prominently (not buried in debug logs)
-- Document that users should increase `hubble-event-buffer-capacity` if they see lost events
-- Consider recommending users filter by namespace to reduce flow volume
-- Never claim "all policies generated" if lost events were observed
+- `cpg apply` MUST compare the cluster version against the local version and refuse to overwrite if the cluster version has changes not in the generated policy (drift detection).
+- Store a generation hash annotation on applied policies (e.g., `cpg.io/spec-hash: sha256:...`) so drift detection is cheap: if cluster policy hash differs from what cpg last wrote, someone modified it.
+- Never overwrite policies not labeled `managed-by: cpg`.
+- Default `--dry-run` shows diff between local and cluster version.
 
 **Warning signs:**
-- `LostEvent` messages in the gRPC stream response
-- Suspiciously few policies generated for a namespace with many services
-- Policies work for some services but not others in the same namespace
+- Diff between local generated policy and cluster policy shows unexpected differences.
+- Users report "my manual fixes keep disappearing."
 
 **Phase to address:**
-Hubble connection/streaming phase. Must handle LostEvents from the first version.
+Apply command implementation. Drift detection is mandatory before `--force` works.
 
 ---
 
-### Pitfall 5: Importing github.com/cilium/cilium as a Go Dependency
+## Moderate Pitfalls
+
+### Pitfall 5: L7 Flows Require Visibility Enablement -- Chicken-and-Egg Problem
 
 **What goes wrong:**
-The `github.com/cilium/cilium` module is enormous (the agent binary alone is ~80 MiB). Importing it for the observer proto types and CRD types pulls in hundreds of transitive dependencies, massively inflates build time and binary size, and creates version conflicts with `client-go` and other K8s libraries.
+Hubble only reports L7 flow details (HTTP method/path, DNS query) when L7 visibility is enabled via either (a) an existing L7 CiliumNetworkPolicy or (b) the `policy.cilium.io/proxy-visibility` annotation on the pod. Without either, Hubble flows contain only L3/L4 data -- the `L7` field is nil. Running `cpg generate` with L7 mode produces nothing.
 
 **Why it happens:**
-Cilium does not publish its proto types or CRD types as separate Go modules. The entire monorepo is one Go module. Any import from `pkg/k8s/apis/cilium.io/v2` or `api/v1/observer` transitively depends on large parts of the codebase.
+Cilium does not inject the Envoy proxy into the data path unless there is a reason to. No proxy = no L7 data.
 
 **How to avoid:**
-- Pin the exact Cilium version matching the target cluster version
-- Use `go mod tidy` aggressively and check binary size after each dependency addition
-- Consider generating proto types from the `.proto` files directly (`buf generate`) instead of importing the Cilium module for observer types
-- For CRD types (`CiliumNetworkPolicy`), evaluate whether generating YAML directly (without CRD Go types) is sufficient since the output is YAML files, not API calls
-- If importing the Cilium module, use Go build tags and careful package isolation to minimize transitive deps
-- Set up CI to fail if binary exceeds a size threshold (e.g., 50 MiB)
-
-**Warning signs:**
-- `go mod download` taking >2 minutes
-- Binary size >40 MiB for a CLI tool
-- Version conflicts between cilium/cilium's pinned `client-go` and the project's `client-go`
-- Build failures after Cilium version bumps
+- Document clearly that L7 generation requires pre-existing visibility annotations or L7 policies.
+- `cpg generate` should detect when flows lack L7 data and log a warning: "No L7 data in flows. Enable visibility via pod annotation `policy.cilium.io/proxy-visibility`."
+- Consider a `--enable-visibility` flag that applies the proxy-visibility annotation to target pods before starting observation.
+- The current code checks `f.L4 == nil` in `BuildPolicy` (builder.go line 81). L7 flows have L4 set but also have `f.L7` populated. The builder must check `f.L7 != nil` separately for L7 rule generation.
 
 **Phase to address:**
-Project scaffolding / initial setup. This decision propagates through the entire project.
+L7 generation. This is a prerequisite -- without visibility, L7 generation produces nothing. Must document clearly.
 
 ---
 
-### Pitfall 6: Generating Overly Permissive Policies from Insufficient Flow Data
+### Pitfall 6: MergePolicy Is Blind to L7 Rules
 
 **What goes wrong:**
-If the tool generates policies from a short observation window, it captures only the traffic patterns active during that period. The generated policies may be too narrow (missing legitimate traffic) or, worse, too broad if the generator aggregates selectors loosely (e.g., allowing all pods with `app: frontend` when only one specific pod needed access).
+The existing `MergePolicy` in `pkg/policy/merge.go` matches rules by `FromEndpoints`/`ToEndpoints` and merges `ToPorts` by deduplicating `PortProtocol` entries. It completely ignores the `Rules` field within `PortRule`. Merging an L7 policy into an existing L4 policy silently drops the L7 rules.
 
 **Why it happens:**
-Network traffic is dynamic: batch jobs, cron schedules, scaling events, deployments, and health checks all create traffic patterns that may not appear during a short observation. The existing `cilium-network-policy-generator` project explicitly warns "it should work fine, as long as there is enough data."
+`mergePortRules()` (merge.go lines 101-131) operates on `PortProtocol` slices and never reads `PortRule.Rules`. The code was written for L4 only.
 
 **How to avoid:**
-- Never claim generated policies are "complete" -- always frame them as "based on observed traffic"
-- Add timestamps to generated policy files showing the observation window
-- In streaming mode, accumulate and merge policies over time rather than generating point-in-time snapshots
-- Document that users should observe during peak traffic / full application lifecycle
-
-**Warning signs:**
-- Policies generated from <5 minutes of observation
-- Missing rules for known periodic traffic (health checks, metrics scraping)
-- Users applying generated policies and immediately seeing new drops
+- Extend `mergePortRules` to also merge the `Rules` field when port+protocol match.
+- When merging: if existing has no L7 rules but incoming does, add them. If both have L7 rules of the same type, union them. If types conflict, keep as separate `PortRule` entries (union constraint from Pitfall 2).
+- Add test cases for: L4+L7 merge, L7+L7 merge (same type), L7+L7 merge (type conflict).
 
 **Phase to address:**
-Policy generation and deduplication phase. The streaming/accumulation design must account for this.
+L7 builder phase. Must be done before L7 generation can work with existing policy files on disk.
 
 ---
 
-### Pitfall 7: toServices and toPorts Combination Silently Ignored
+### Pitfall 7: HTTP Path Explosion -- Overly Specific Rules
 
 **What goes wrong:**
-When generating egress rules, combining `toServices` with `toPorts` in the same rule causes Cilium to silently ignore the `toServices` clause. The resulting policy allows traffic to ANY destination on those ports instead of restricting to the named service.
+HTTP flows contain full request URLs with path parameters (e.g., `/api/users/12345`, `/api/users/67890`). Generating one L7 HTTP rule per observed path creates policies with hundreds of rules that are unmaintainable and hit Envoy performance limits.
 
 **Why it happens:**
-This is an undocumented (until Datadog's blog) Cilium behavior. The YAML is valid, the policy applies without errors, but the semantics are wrong. A policy generator that tries to be "helpful" by adding both service reference and port restriction creates a security hole.
+Hubble reports the exact URL from each request via the `L7.Http.Url` field. Without normalization, every unique path is a separate rule.
+
+**Consequences:**
+Unreadable policies. Envoy rule matching degrades. New valid paths blocked until observed.
 
 **How to avoid:**
-- Never generate rules combining `toServices` and `toPorts` in the same egress rule
-- Use `toEndpoints` with label selectors + `toPorts` instead of `toServices`
-- Since the tool uses flow data (which contains labels and ports, not service names), this is naturally avoided by generating endpoint-based rules
-
-**Warning signs:**
-- Generated egress rules containing both `toServices` and `toPorts` fields
-- Security audits showing pods can reach unintended destinations on allowed ports
+- Implement path normalization from day one:
+  - Detect numeric segments: `/api/users/12345` -> `/api/users/[0-9]+`
+  - Detect UUIDs: `/api/orders/550e8400-e29b-41d4-a716-446655440000` -> `/api/orders/[a-f0-9-]+`
+- Set a maximum HTTP rules per port (e.g., 50) with a warning when exceeded.
+- Consider a `--l7-path-prefix` option generating prefix-based rules (`/api/.*`) as a simpler alternative.
 
 **Phase to address:**
-Policy generation phase. Validate generated YAML structure against known Cilium quirks.
+L7 HTTP builder. Path normalization is not optional -- it must be there from the start.
 
 ---
 
-### Pitfall 8: Port-Forward and TLS/ALPN Handshake Failures
+### Pitfall 8: PoliciesEquivalent Does Not Normalize L7 Rules
 
 **What goes wrong:**
-When using `kubectl port-forward` to reach Hubble Relay, newer gRPC versions expect ALPN/h2 during TLS handshake. Hubble Relay does not fully support this, causing connection failures with cryptic TLS errors even when certificates are correct.
-
-**Why it happens:**
-gRPC-Go has evolved its TLS requirements. The `grpc-go` version pulled by the Cilium module may differ from what the project uses directly, creating version-dependent TLS behavior. Port-forwarding adds another layer of protocol complexity.
+The dedup logic in `pkg/policy/dedup.go` uses `PoliciesEquivalent` with `normalizeRule` to sort rules before comparison. But `normalizeRule` (dedup.go lines 51-74) only sorts `PortProtocol` slices and rule-level ordering. It does not sort L7 rules within `PortRule.Rules.HTTP` or `PortRule.Rules.DNS`. Two semantically identical policies with HTTP rules in different order are considered different, causing unnecessary rewrites every flush cycle.
 
 **How to avoid:**
-- Test port-forward connectivity early in development with the exact gRPC and TLS configuration
-- Use `grpc.WithTransportCredentials(insecure.NewCredentials())` when connecting through port-forward (the port-forward tunnel is already authenticated by kubectl)
-- If TLS is required, explicitly configure `tls.Config` with `NextProtos: []string{"h2"}` or disable ALPN
-- Document the TLS configuration clearly for users
-- Consider supporting both TLS and non-TLS modes with a `--tls` / `--insecure` flag
-
-**Warning signs:**
-- "TLS handshake failure" errors during port-forward connections
-- Connection works with `hubble` CLI but not with the tool
-- Intermittent connection failures after gRPC library upgrades
+- Extend `normalizeRule` to also sort L7 rules:
+  - HTTP rules: sort by `(method, path)`
+  - DNS rules: sort by `(matchName, matchPattern)`
+- Add test cases with L7 rules in different orders.
 
 **Phase to address:**
-Hubble connection phase. Must be validated before streaming can work.
+L7 builder phase. Required for dedup to work correctly with L7 policies.
 
 ---
 
-## Technical Debt Patterns
+### Pitfall 9: HTTP Response Flows vs Request Flows
 
-| Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
-|----------|-------------------|----------------|-----------------|
-| Generating raw YAML strings instead of using CRD Go types | Avoids massive Cilium dependency | No type safety, easy to generate invalid YAML, hard to validate | MVP only, migrate to structured generation later |
-| Hardcoded label priority (always use `app` label) | Simple implementation | Misses workloads using different labeling conventions | Never -- must inspect actual flow labels |
-| Skipping LostEvent handling | Faster initial implementation | Silent data loss, incomplete policies | Never -- even a warning log is better than silence |
-| Single-pass policy generation (no accumulation) | Simpler streaming logic | Misses periodic traffic, generates incomplete policies | MVP with clear documentation of limitation |
-| No cluster dedup (file-only dedup) | Avoids client-go dependency | Generates policies that already exist in cluster | Early phases, but cluster dedup should come soon |
+**What goes wrong:**
+Hubble reports both HTTP request and response flows. Response flows have `L7.Type = RESPONSE` and contain the status code but NOT the method/path (those are only on the request flow). Generating policies from response flows produces empty or nonsensical HTTP rules.
 
-## Integration Gotchas
+**How to avoid:**
+- Filter L7 HTTP flows: only process flows where `L7.Type == L7FlowType_REQUEST`.
+- Skip `RESPONSE` and `SAMPLE` flow types for policy generation.
+- Response flows are useful for observability (latency, error rates) but not for policy generation.
 
-| Integration | Common Mistake | Correct Approach |
-|-------------|----------------|------------------|
-| Hubble Relay gRPC | Using `--since` and `--follow` together (not supported) | Use `--follow` only for streaming, `--since` only for historical queries |
-| Hubble Relay gRPC | Not handling stream reconnection after relay pod restart | Implement retry with exponential backoff using `WithRetryTimeout` pattern |
-| Hubble Relay gRPC | Assuming all nodes' flows come through one relay connection | Relay fans out to all peers; be aware of partial results during peer connection issues |
-| client-go CRD listing | Using dynamic client without proper CRD type registration | Register CiliumNetworkPolicy types with the scheme, or use the Cilium client package |
-| kubectl port-forward | Assuming port-forward is stable for long-running streams | Port-forward connections drop; implement reconnection logic with state preservation |
+**Phase to address:**
+L7 HTTP builder. Simple filter but critical to get right.
 
-## Performance Traps
+---
 
-| Trap | Symptoms | Prevention | When It Breaks |
-|------|----------|------------|----------------|
-| Unbounded in-memory policy accumulation | OOM after hours of streaming in large clusters | Flush to disk periodically, use bounded maps with LRU eviction | >10K unique flow pairs observed |
-| Per-flow file I/O for dedup checking | High latency, I/O bottleneck | Load existing policies into memory at startup, update incrementally | >500 existing policy files |
-| Synchronous cluster API calls per flow | gRPC stream backpressure, dropped events | Batch cluster queries, cache CiliumNetworkPolicy list with periodic refresh | >100 flows/second |
-| String-based YAML comparison for dedup | False negatives from field ordering differences | Compare structured policy objects, not YAML strings | Any non-trivial usage |
+### Pitfall 10: DNS Query Trailing Dot Mismatch
 
-## Security Mistakes
+**What goes wrong:**
+Hubble DNS flows include the trailing dot in the query field (e.g., `api.github.com.`). Cilium `toFQDNs.matchName` does NOT include the trailing dot. Copying the query directly produces a policy that never matches.
 
-| Mistake | Risk | Prevention |
-|---------|------|------------|
-| Generating `fromEntities: [world]` when a CIDR range would suffice | Allows all external traffic instead of specific sources | Map `reserved:world` identity to specific CIDR when IP is available in flow |
-| Not sanitizing label values from flows | Label injection if flow data is crafted | Validate label key/value format against K8s label constraints before using in policy |
-| Generating policies with empty `endpointSelector` | Policy applies to ALL pods in namespace | Always populate `endpointSelector` with at least one label from the target workload |
-| Storing kubeconfig credentials in memory longer than needed | Credential exposure if process is compromised | Use client-go's default credential chain, don't cache tokens |
+**How to avoid:**
+- Strip trailing dot from DNS query before generating `matchName`/`matchPattern` values.
+- One-liner: `strings.TrimSuffix(query, ".")`
 
-## UX Pitfalls
+**Phase to address:**
+L7 DNS builder. Trivial fix but silent failure if missed.
 
-| Pitfall | User Impact | Better Approach |
-|---------|-------------|-----------------|
-| No progress indicator during flow observation | User thinks tool is hung when no drops occur | Show "Listening for dropped flows..." with flow count, even if zero policies generated |
-| Generating one policy per flow instead of merging | Hundreds of tiny policy files | Merge rules for the same `endpointSelector` into a single policy file |
-| No human-readable policy naming | Files like `policy-abc123.yaml` are unreadable | Name files `<namespace>-<workload>-<direction>.yaml` |
-| Silent overwrite of existing policy files | User loses manually-tuned policies | Never overwrite; skip with warning, or use `--force` flag |
-| No summary output after generation | User doesn't know what was generated | Print summary: "Generated 5 ingress, 3 egress, 2 CIDR policies for namespace X" |
+---
 
-## "Looks Done But Isn't" Checklist
+### Pitfall 11: Apply Command RBAC and Server-Side Apply
 
-- [ ] **Ingress policy generation:** Often missing cross-namespace `k8s:io.kubernetes.pod.namespace` label -- verify with multi-namespace test
-- [ ] **Egress policy generation:** Often missing DNS egress rules (pods need to resolve service names) -- verify kube-dns/coredns access is included
-- [ ] **CIDR policies:** Often using pod CIDRs instead of external IPs -- verify no managed-endpoint IPs appear in CIDR rules
-- [ ] **Port specification:** Often missing protocol field (defaults to TCP, breaking UDP traffic) -- verify protocol is always set from flow data
-- [ ] **Deduplication:** Often comparing YAML strings instead of semantic equality -- verify field ordering doesn't create false duplicates
-- [ ] **Policy naming:** Often forgetting that K8s resource names must be DNS-compatible -- verify generated names pass validation
-- [ ] **Streaming reconnection:** Often assuming the gRPC stream stays open forever -- verify behavior after relay pod restart
+**What goes wrong:**
+Two sub-issues:
+1. `cpg apply` needs create/update on CiliumNetworkPolicy CRDs. Current `--cluster-dedup` only needs list/get. Users with read-only RBAC get cryptic errors.
+2. Using client-side apply (kubectl-style) causes field management conflicts with GitOps tools (ArgoCD, Flux, Helm). Server-side apply avoids this.
+
+**How to avoid:**
+- Pre-flight RBAC check: use SelfSubjectAccessReview or dry-run create to verify permissions before attempting apply.
+- Use server-side apply (`client-go` `Patch` with `ApplyPatchType`) with field manager `cpg`.
+- Provide clear error messages with required RBAC.
+
+**Phase to address:**
+Apply command implementation.
+
+---
+
+### Pitfall 12: toFQDNs Identity Exhaustion
+
+**What goes wrong:**
+When using `toFQDNs`, every IP observed by a matching DNS lookup gets a Cilium security identity. CDN domains (e.g., `*.amazonaws.com`) can resolve to hundreds of IPs, each getting a unique identity. This can exhaust Cilium's identity space and degrade agent performance.
+
+**How to avoid:**
+- Warn users when generating `toFQDNs` rules for wildcard patterns that match broad domains.
+- Prefer `matchName` (exact) over `matchPattern` (wildcard) when possible.
+- Document that FQDN policies for CDN/cloud provider domains should use CIDR rules instead.
+
+**Phase to address:**
+L7 DNS builder documentation and warnings.
+
+---
+
+## Phase-Specific Warnings
+
+| Phase Topic | Likely Pitfall | Mitigation |
+|-------------|---------------|------------|
+| L7 HTTP builder | Path explosion (P7) | Path normalization from day one |
+| L7 HTTP builder | Response vs request flows (P9) | Filter on `L7FlowType_REQUEST` only |
+| L7 HTTP builder | MergePolicy blind to L7 (P6) | Extend merge before generating L7 |
+| L7 HTTP builder | L7 union constraint (P2) | Type-aware merge and validation |
+| L7 DNS builder | Missing DNS companion rule (P3) | Auto-generate or warn |
+| L7 DNS builder | Trailing dot (P10) | Strip in builder |
+| L7 DNS builder | Identity exhaustion (P12) | Warn on wildcard FQDN patterns |
+| L7 visibility | Chicken-and-egg (P5) | Document prerequisite, add detection |
+| Dedup | PoliciesEquivalent ignores L7 order (P8) | Extend `normalizeRule` |
+| Apply command | Envoy redirect disruption (P1) | Warn on L4-to-L7 transitions in diff |
+| Apply command | No rollback / drift (P4) | Drift detection with spec-hash annotation |
+| Apply command | RBAC + SSA (P11) | Pre-flight check, server-side apply |
+
+## Integration Gotchas Specific to L7 + Apply
+
+| Integration Point | Mistake | Correct Approach |
+|-------------------|---------|------------------|
+| `BuildPolicy` + L7 flows | Checking only `f.L4 == nil` to skip flows | Also check `f.L7 != nil` to route to L7 builder |
+| `mergePortRules` + L7 | Merging only `PortProtocol`, ignoring `Rules` | Merge `Rules` field with type-awareness |
+| `PoliciesEquivalent` + L7 | Not sorting L7 rules in `normalizeRule` | Sort HTTP rules by (method, path), DNS by (matchName) |
+| `peerKey` grouping + L7 | Same peer key for L4 and L7 rules on same port | L7 rules need port-level grouping within peer |
+| Cluster dedup + L7 | Comparing L4-only cluster policy with L4+L7 generated policy | Separate L7 policies avoid this entirely |
+| Writer + L7 | File naming assumes one policy per workload | L7 policies may need separate files (e.g., `<workload>-l7.yaml`) |
+| Apply + existing L4 | Blindly applying L7 policy triggers Envoy redirect | Detect and warn on proxy redirect transitions |
+| DNS builder + kube-dns | Generating `toFQDNs` without DNS companion rule | Always generate or verify DNS allow rule |
 
 ## Recovery Strategies
 
 | Pitfall | Recovery Cost | Recovery Steps |
 |---------|---------------|----------------|
-| Wrong direction (ingress/egress inversion) | MEDIUM | Delete generated policies, fix direction logic, regenerate. No data loss but wasted time. |
-| CIDR rules on managed endpoints | LOW | Delete ineffective policies, regenerate with identity check. Policies had no effect anyway. |
-| Namespace scoping error | HIGH | Audit all generated cross-namespace policies. May have created security holes if wrong namespace matched. |
-| Incomplete data from lost events | LOW | Re-run observation with larger buffer or narrower filter. Additive process. |
-| Cilium module dependency hell | HIGH | Major refactor to extract proto generation or switch to YAML templating. Affects entire build. |
-| Overly permissive entity rules | HIGH | Security audit required. Replace with specific endpoint selectors. May require flow re-observation. |
-
-## Pitfall-to-Phase Mapping
-
-| Pitfall | Prevention Phase | Verification |
-|---------|------------------|--------------|
-| Traffic direction inversion | Core policy generation | Unit tests with bidirectional flow pairs produce correct ingress/egress rules |
-| CIDR on managed endpoints | Core policy generation | No `/32` pod-CIDR rules in output; only `reserved:world` flows produce CIDR rules |
-| Namespace scoping | Core policy generation | Multi-namespace integration test generates correct `k8s:io.kubernetes.pod.namespace` labels |
-| Ring buffer overflow | Hubble streaming | LostEvent count logged and surfaced in CLI output; test with mock LostEvent responses |
-| Cilium Go module size | Project scaffolding | CI gate on binary size; evaluate proto-only generation approach before importing full module |
-| Insufficient flow data | Policy generation + UX | Observation window documented in generated files; user warned about short windows |
-| toServices + toPorts | Policy generation | Linter/validator rejects this combination in generated output |
-| Port-forward TLS/ALPN | Hubble connection | Connection tested with both direct and port-forwarded relay; TLS mode configurable |
+| L7 rules trigger Envoy redirect (P1) | HIGH | Delete L7 policy to revert to L4-only. Existing connections recover. |
+| L7 union conflict (P2) | LOW | Fix generated policy structure, re-apply. Old invalid policy had no effect. |
+| Missing DNS companion (P3) | LOW | Add DNS allow rule. FQDN policy starts working immediately. |
+| Drift overwrite (P4) | HIGH | Must manually reconstruct lost rules from cluster audit logs or git history. |
+| Path explosion (P7) | MEDIUM | Regenerate with normalization. Delete old over-specific policies. |
+| MergePolicy drops L7 (P6) | MEDIUM | Regenerate from scratch. Existing policies on disk may have lost L7 rules through merge cycles. |
 
 ## Sources
 
-- [Datadog: CiliumNetworkPolicy Misconfigurations](https://www.datadoghq.com/blog/cilium-network-policy-misconfigurations/) (December 2025)
-- [Cilium Layer 3 Policy Documentation](https://docs.cilium.io/en/stable/security/policy/language/)
-- [Cilium Policy Enforcement Modes](https://docs.cilium.io/en/stable/security/policy/intro/)
-- [Hubble Internals Documentation](https://docs.cilium.io/en/stable/internals/hubble/)
-- [Hubble Ring Buffer Lost Events Issue #15112](https://github.com/cilium/cilium/issues/15112)
-- [Hubble Ring Buffer Events Lost Issue #1737](https://github.com/cilium/hubble/issues/1737)
-- [Hubble GetFlows --since and --follow Incompatibility Issue #363](https://github.com/cilium/hubble/issues/363)
-- [Hubble Relay gRPC Connection Timeout Issue #12645](https://github.com/cilium/cilium/issues/12645)
-- [Hubble Relay Timeout Issue #36979](https://github.com/cilium/cilium/issues/36979)
-- [CiliumNetworkPolicy Namespace Label Issue #30149](https://github.com/cilium/cilium/issues/30149)
-- [Cilium Thinning Binaries Issue #25980](https://github.com/cilium/cilium/issues/25980)
-- [Endpoint Selectors and Kubernetes Namespaces in CNPs (Scott Lowe)](https://blog.scottlowe.org/2024/05/30/endpoint-selectors-and-kubernetes-namespaces-in-ciliumnetworkpolicies/)
-- [siegmund-heiss-ich/cilium-network-policy-generator](https://github.com/siegmund-heiss-ich/cilium-network-policy-generator)
+- [Cilium Envoy Proxy Documentation](https://docs.cilium.io/en/stable/security/network/proxy/envoy/)
+- [Cilium DNS-Based Policies Documentation](https://docs.cilium.io/en/stable/security/dns/)
+- [Cilium L7 Protocol Visibility](https://docs.cilium.io/en/stable/observability/visibility/)
+- [Cilium Policy Language Reference](https://docs.cilium.io/en/stable/security/policy/language/)
+- [Cilium Flow Protobuf API](https://docs.cilium.io/en/stable/_api/v1/flow/README/)
+- [Cilium Policy API - L7Rules Union](https://pkg.go.dev/github.com/cilium/cilium/pkg/policy/api)
+- [Envoy proxy stops working with L7 policy - Issue #35525](https://github.com/cilium/cilium/issues/35525)
+- [Missing L7 policy state causes TCP resets - Issue #43964](https://github.com/cilium/cilium/issues/43964)
+- [L7 rules cause gateway timeout - Issue #30581](https://github.com/cilium/cilium/issues/30581)
 - [CNCF: Safely Managing Cilium Network Policies](https://www.cncf.io/blog/2025/11/06/safely-managing-cilium-network-policies-in-kubernetes-testing-and-simulation-techniques/)
-- [CIDR Policy and Managed Endpoints Issue #23603](https://github.com/cilium/cilium/issues/23603)
+- [Cilium FQDN DNS proxy truncated response - Issue #31197](https://github.com/cilium/cilium/issues/31197)
+- [Debug Cilium toFQDN Network Policies (Medium)](https://mcvidanagama.medium.com/debug-cilium-tofqdn-network-policies-b5c4837e3fc4)
 
 ---
-*Pitfalls research for: Cilium Policy Generator (CPG) -- Hubble gRPC + CiliumNetworkPolicy generation*
-*Researched: 2026-03-08*
+*Pitfalls research for: CPG v1.1 -- L7 Policy Generation + Auto-Apply*
+*Researched: 2026-03-09*

@@ -1,357 +1,499 @@
-# Architecture Research
+# Architecture Patterns
 
-**Domain:** Go CLI tool -- gRPC streaming client with Kubernetes CRD generation
-**Researched:** 2026-03-08
-**Confidence:** HIGH
+**Domain:** L7 policy generation and cluster apply for existing Cilium Policy Generator
+**Researched:** 2026-03-09
 
-## System Overview
+## Recommended Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         CLI Layer (cobra)                           │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐   │
-│  │ observe   │  │ generate │  │  root    │  │ version/status   │   │
-│  │ command   │  │ command  │  │ command  │  │ commands         │   │
-│  └─────┬─────┘  └────┬─────┘  └─────────┘  └──────────────────┘   │
-│        │              │                                             │
-├────────┴──────────────┴─────────────────────────────────────────────┤
-│                      Core Pipeline                                  │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐   │
-│  │ hubble   │→ │ policy   │→ │ dedup    │→ │ output           │   │
-│  │ (source) │  │ (build)  │  │ (filter) │  │ (write YAML)     │   │
-│  └─────┬────┘  └──────────┘  └─────┬────┘  └──────────────────┘   │
-│        │                           │                                │
-├────────┴───────────────────────────┴────────────────────────────────┤
-│                      Infrastructure                                 │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐                         │
-│  │ gRPC     │  │ client-go│  │ filesystem│                         │
-│  │ (relay)  │  │ (k8s)   │  │ (files)   │                         │
-│  └──────────┘  └──────────┘  └──────────┘                         │
-└─────────────────────────────────────────────────────────────────────┘
-```
+### Design Principle: Extend, Don't Restructure
 
-### Component Responsibilities
+The existing architecture is well-factored. L7 support and `cpg apply` integrate as extensions to existing components, not rewrites. The key insight: L7 rules attach to existing `PortRule.Rules` (the `L7Rules` field), so L7 data enriches the same ingress/egress rules the builder already produces.
 
-| Component | Responsibility | Typical Implementation |
-|-----------|----------------|------------------------|
-| `cmd/` (cobra commands) | Parse flags, wire dependencies, run pipeline | Thin wiring layer, no business logic |
-| `pkg/hubble` | Connect to Hubble Relay gRPC, stream dropped flows | gRPC client with `observer.ObserverClient.GetFlows()`, manages port-forward lifecycle |
-| `pkg/policy` | Transform flow data into CiliumNetworkPolicy structs | Pure function: `[]Flow -> []CiliumNetworkPolicy`, uses `pkg/policy/api` types |
-| `pkg/labels` | Smart label selection from flow metadata | Extracts `app.kubernetes.io/*` and workload labels, builds `EndpointSelector` |
-| `pkg/dedup` | Deduplicate policies against local files and cluster state | Compares generated policies against existing ones, returns only net-new |
-| `pkg/k8s` | Kubernetes client for reading existing CNPs and port-forwarding | `client-go` with Cilium CRD clientset, `tools/portforward` for relay access |
-| `pkg/output` | Serialize policies to YAML files in organized directory structure | `sigs.k8s.io/yaml` marshaling, one file per policy, deterministic naming |
-
-## Recommended Project Structure
+### Component Map (existing + new)
 
 ```
-cpg/
-├── main.go                    # Entry point, calls cmd.Execute()
-├── cmd/
-│   ├── root.go                # Root command, global flags (--server, --kubeconfig, --log-level)
-│   ├── generate.go            # Main command: observe flows + generate policies
-│   └── version.go             # Version/build info
-├── pkg/
-│   ├── hubble/
-│   │   ├── client.go          # gRPC client wrapper, GetFlows streaming
-│   │   ├── portforward.go     # Auto port-forward to hubble-relay service
-│   │   └── filter.go          # Flow filter construction (verdict=DROPPED, namespace, labels)
-│   ├── policy/
-│   │   ├── builder.go         # Flow -> CiliumNetworkPolicy conversion
-│   │   ├── ingress.go         # Ingress rule construction
-│   │   ├── egress.go          # Egress rule construction
-│   │   └── cidr.go            # CIDR-based rules for external traffic
-│   ├── labels/
-│   │   ├── selector.go        # Smart label extraction from flow metadata
-│   │   └── priority.go        # Label priority ordering (app.kubernetes.io > workload > pod)
-│   ├── dedup/
-│   │   ├── local.go           # Deduplicate against files in output directory
-│   │   └── cluster.go         # Deduplicate against live CNPs via client-go
-│   ├── k8s/
-│   │   ├── client.go          # Kubernetes/Cilium clientset factory
-│   │   └── cnp.go             # CiliumNetworkPolicy list/get operations
-│   └── output/
-│       ├── writer.go          # YAML serialization and file writing
-│       └── naming.go          # Deterministic file/directory naming conventions
-├── go.mod
-├── go.sum
-└── Makefile
+                    Hubble gRPC Stream
+                          |
+                          v
+              +--------------------------+
+              |  pkg/hubble/client       |  (existing, modify: request L7 flows)
+              |  StreamDroppedFlows      |
+              +------------+-------------+
+                           |
+                           v
+              +--------------------------+
+              |  pkg/hubble/aggregator   |  (existing, no changes needed)
+              |  AggKey bucketing        |
+              +------------+-------------+
+                           |
+                           v
+              +--------------------------+
+              |  pkg/policy/builder      |  (existing, MODIFY: add L7 rule building)
+              |  BuildPolicy             |
+              |  + buildL7HTTP()         |  <- NEW logic in existing file
+              |  + buildL7DNS()          |  <- NEW logic in existing file
+              +------------+-------------+
+                           |
+                           v
+              +--------------------------+
+              |  pkg/policy/dedup        |  (existing, MODIFY: normalize L7Rules)
+              |  PoliciesEquivalent      |
+              +------------+-------------+
+                           |
+                           v
+              +--------------------------+
+              |  pkg/policy/merge        |  (existing, MODIFY: merge L7Rules)
+              |  MergePolicy             |
+              +------------+-------------+
+                           |
+                           v
+              +--------------------------+
+              |  pkg/output/writer       |  (existing, no changes needed)
+              +--------------------------+
+
+
+              +--------------------------+
+              |  cmd/cpg/apply.go        |  <- NEW command file
+              |  newApplyCmd()           |
+              +------------+-------------+
+                           |
+                           v
+              +--------------------------+
+              |  pkg/k8s/apply.go        |  <- NEW file in existing package
+              |  ApplyPolicies()         |
+              |  DryRunPolicies()        |
+              +--------------------------+
 ```
 
-### Structure Rationale
+### Component Boundaries
 
-- **`cmd/`:** Cobra commands only handle flag parsing and dependency wiring. Zero business logic. This mirrors the Hubble CLI pattern where `hubble/cmd/` contains thin command handlers that delegate to core packages.
-- **`pkg/`:** Domain-driven packages with clear single responsibilities. Each package is independently testable. The `pkg/` prefix signals these are library-quality packages (matches Cilium ecosystem convention).
-- **No `internal/`:** For a single-binary CLI tool without external consumers, `internal/` adds ceremony without value. If the tool later becomes a library, promote specific packages.
-- **Flat within packages:** Avoid deep nesting. Each package has 2-4 files max. If a package grows beyond that, it is doing too much.
+| Component | Responsibility | Status | Communicates With |
+|-----------|---------------|--------|-------------------|
+| `pkg/hubble/client` | gRPC stream with L7 flow types | MODIFY | aggregator (via flow channel) |
+| `pkg/hubble/aggregator` | Bucket flows by namespace+workload | NO CHANGE | builder (via flush) |
+| `pkg/hubble/pipeline` | Orchestrate stream-to-disk | NO CHANGE | all stages |
+| `pkg/policy/builder` | Convert flows to CNP with L4+L7 rules | MODIFY | labels pkg |
+| `pkg/policy/dedup` | Normalize and compare policies | MODIFY | builder output |
+| `pkg/policy/merge` | Merge rules into existing policies | MODIFY | writer |
+| `pkg/output/writer` | Write YAML to disk | NO CHANGE | merge, dedup |
+| `pkg/k8s/apply` | Apply/dry-run policies to cluster | NEW | Cilium clientset |
+| `cmd/cpg/apply.go` | CLI command for apply | NEW | k8s/apply, output/reader |
 
-## Architectural Patterns
+## Integration Details
 
-### Pattern 1: Streaming Pipeline with Channels
+### 1. L7 HTTP Flow Detection and Rule Building
 
-**What:** Flow data moves through a pipeline of Go channels: source (gRPC stream) -> transform (policy builder) -> filter (dedup) -> sink (file writer). Each stage runs in its own goroutine.
+**Where:** `pkg/policy/builder.go` -- modify `buildIngressRules()` and `buildEgressRules()`
 
-**When to use:** Always -- this is the core architecture. gRPC streaming naturally produces events that flow through processing stages.
+**How it works:** Hubble flows with `f.L7 != nil && f.L7.Type == L7FlowType_HTTP` carry HTTP metadata. The builder must detect these flows and attach `L7Rules` to the corresponding `PortRule`.
 
-**Trade-offs:** Channels add complexity vs. a synchronous loop, but they decouple stages, enable backpressure, and allow the dedup stage to batch work.
+**Flow data mapping (Hubble -> Cilium policy API):**
+
+| Hubble `flow.L7.Http` field | Cilium `api.PortRuleHTTP` field | Notes |
+|---|---|---|
+| `Method` (string) | `Method` (string) | Direct mapping, e.g. "GET" |
+| `Url` (string) | `Path` (string) | Extract path from URL, regex-escape |
+| `Headers` (`[]*HTTPHeader`) | `HeaderMatches` (`[]HeaderMatch`) | Selective: only common auth/routing headers |
+
+**Key design decision:** The `PortRule` struct already has a `Rules *L7Rules` field. Currently cpg creates `PortRule{Ports: []PortProtocol{...}}` with `Rules` left nil. For L7 flows, populate `Rules`:
+
+```go
+portRule := api.PortRule{
+    Ports: []api.PortProtocol{{Port: port, Protocol: proto}},
+    Rules: &api.L7Rules{
+        HTTP: []api.PortRuleHTTP{
+            {Method: http.Method, Path: extractPath(http.Url)},
+        },
+    },
+}
+```
+
+**Integration point in existing code:** The `peerPorts` struct (used inside `buildIngressRules` and `buildEgressRules`) currently tracks `ports []api.PortProtocol` and dedup via `seen map[string]struct{}`. This needs extension:
+
+- Change `peerPorts` to track `portRules map[string]*portAccumulator` keyed by `port/proto`
+- Each accumulator collects L7 HTTP rules for that port
+- Dedup key for L7 becomes `port/proto/method/path`
+
+**Refactoring approach:** Extract a `portAccumulator` type that accumulates both L4-only and L7-enriched port rules per peer. This keeps `buildIngressRules`/`buildEgressRules` clean while adding L7 support.
+
+### 2. L7 DNS Flow Detection and FQDN Rule Building
+
+**Where:** `pkg/policy/builder.go` -- modify `buildEgressRules()` only (DNS visibility is egress-only in Cilium)
+
+**How it works:** DNS flows have `f.L7 != nil && f.L7.Type == L7FlowType_DNS`. The DNS query name maps to `ToFQDNs` on the egress rule.
+
+**Flow data mapping:**
+
+| Hubble `flow.L7.Dns` field | Cilium policy API | Notes |
+|---|---|---|
+| `Query` (string) | `EgressRule.ToFQDNs` with `FQDNSelector{MatchName: query}` | Strip trailing dot |
+| `Query` (string) | `PortRule.Rules.DNS` with `PortRuleDNS{MatchPattern: query}` | L7 DNS visibility rule on port 53 |
+
+**Critical constraint from Cilium:** `ToFQDNs` cannot coexist with `ToEndpoints`, `ToCIDR`, or other `To*` fields in the same `EgressRule`. This means DNS-based egress rules must be separate `EgressRule` entries, not merged with existing peer-based rules.
+
+**Design:** Create a separate code path in `buildEgressRules()` for DNS flows:
+
+```go
+// DNS flows produce two things:
+// 1. An EgressRule with ToFQDNs (the actual FQDN allow rule)
+// 2. An EgressRule allowing DNS traffic to kube-dns on port 53/UDP
+//    with L7 DNS rules for the specific query
+```
+
+**Important:** The FQDN egress rule also needs a corresponding DNS allow rule (port 53/UDP to kube-dns) with L7 DNS rules. Without this, Cilium cannot resolve the FQDN to learn IP-to-FQDN mappings. The builder should auto-generate both.
+
+### 3. Hubble Client Modifications
+
+**Where:** `pkg/hubble/client.go` -- modify `StreamDroppedFlows()`
+
+**What changes:** The current Hubble observe request filters for dropped flows. For L7 visibility:
+
+- L7 flows appear as `DROPPED` or `REDIRECTED` verdict depending on Cilium config
+- The flow filter may need to include `flowpb.Verdict_REDIRECTED` or adjust type filters
+- L7 data is already present in the `Flow` protobuf; no gRPC API changes needed
+- Consider adding a `--l7` flag to explicitly opt-in to L7 flow processing (L7 visibility requires Cilium pod annotations or CiliumNetworkPolicy with L7 rules already in place)
+
+**No aggregator changes:** The aggregator buckets by `AggKey{Namespace, Workload}` extracted from flow endpoints. L7 flows carry the same endpoint information, so they naturally bucket with their L4 counterparts. This is correct behavior: a single workload's policy should contain both L4 and L7 rules.
+
+### 4. Dedup and Merge Extensions
+
+**Where:** `pkg/policy/dedup.go` and `pkg/policy/merge.go`
+
+**Dedup (`PoliciesEquivalent`):**
+- Currently normalizes and compares `Ingress`/`Egress` rules via `reflect.DeepEqual`
+- L7Rules are nested inside `PortRule.Rules`, so `reflect.DeepEqual` already captures them
+- However, `normalizeRule()` must sort L7 rules within `PortRule.Rules.HTTP` and `PortRule.Rules.DNS` for deterministic comparison
+- Add sorting of `L7Rules.HTTP` entries by method+path and `L7Rules.DNS` entries by matchPattern
+- Also normalize `ToFQDNs` entries (sort by matchName/matchPattern)
+
+**Merge (`MergePolicy`):**
+- Currently matches peers by endpoints, then merges `ToPorts` via `mergePortRules()`
+- `mergePortRules()` deduplicates by `port/protocol` string key but ignores `Rules`
+- Must extend to merge `L7Rules` when port+protocol match: append new HTTP rules (dedup by method+path), append new DNS rules (dedup by matchPattern)
+- For FQDN rules: match egress rules by `ToFQDNs` equality, merge associated port rules
+- Add `matchFQDNs()` alongside existing `matchEndpoints()` for FQDN-based rule matching
+
+### 5. `cpg apply` Command
+
+**Where:** `cmd/cpg/apply.go` (new) + `pkg/k8s/apply.go` (new)
+
+**Design:**
+
+```
+cpg apply [--dir ./policies] [--namespace production] [--force] [--kubeconfig path]
+```
+
+- Default behavior: **dry-run** -- read YAML files from output dir, diff against cluster state, show what would change
+- `--force`: actually apply (create or update) policies to the cluster
+- Uses the existing `pkg/k8s` package's kubeconfig loading and Cilium clientset
+
+**`pkg/k8s/apply.go` responsibilities:**
+1. Walk the output directory, read all YAML files, unmarshal to `CiliumNetworkPolicy`
+2. For each policy, check if it exists in cluster (by namespace+name)
+3. If exists: compare specs (reuse `PoliciesEquivalent`), update if different
+4. If not exists: create
+5. Return a summary of actions (created, updated, unchanged, errors)
+
+**Dry-run implementation:** Use Kubernetes server-side dry-run (`metav1.CreateOptions{DryRun: []string{"All"}}`) rather than client-side simulation. This validates against admission webhooks and CRD validation. Fall back to client-side diff display if server-side dry-run is not available.
+
+**Apply implementation:** Use the Cilium clientset's `CiliumNetworkPolicies(namespace).Create()` and `.Update()` methods. These already exist in the `ciliumclient` package that `cluster_dedup.go` imports.
+
+**Safety features:**
+- Require `managed-by: cpg` label on all policies (already set by builder)
+- Refuse to update policies without `managed-by: cpg` label (prevent overwriting manually-created policies)
+- Show diff before apply with `--force`
+- Count and report: created/updated/skipped/errors
+
+### Data Flow Changes
+
+**Current flow (L4 only):**
+
+```
+gRPC stream -> Flow{L4: TCP/UDP} -> Aggregator -> BuildPolicy(L4 ports) -> Write YAML
+```
+
+**New flow (L4 + L7):**
+
+```
+gRPC stream -> Flow{L4 + L7: HTTP/DNS} -> Aggregator -> BuildPolicy(L4 ports + L7 rules) -> Write YAML
+                                                                                                  |
+                                                                                                  v
+                                                                              cpg apply -> Read YAML -> Apply to cluster
+```
+
+The pipeline stays unchanged. L7 data flows through the same channel, same aggregator, same builder. The builder produces richer `PortRule` entries with `Rules` populated when L7 data is present.
+
+## Patterns to Follow
+
+### Pattern 1: L7 Rule Extraction Functions
+
+**What:** Separate functions to extract L7 rules from flows, parallel to existing `extractPort()`
+
+**When:** Processing flows with L7 data in the builder
 
 **Example:**
+
 ```go
-// Pipeline wiring in cmd/generate.go
-func runGenerate(ctx context.Context, cfg Config) error {
-    // Stage 1: Source -- gRPC stream to channel
-    flows := make(chan *flow.Flow, 256)
-    go hubble.StreamDroppedFlows(ctx, conn, cfg.Filters, flows)
+// extractHTTPRule extracts an L7 HTTP rule from a flow's Layer7 data.
+// Returns nil if the flow has no HTTP L7 information.
+func extractHTTPRule(f *flowpb.Flow) *api.PortRuleHTTP {
+    if f.L7 == nil || f.L7.Http == nil {
+        return nil
+    }
+    h := f.L7.Http
+    rule := &api.PortRuleHTTP{}
+    if h.Method != "" {
+        rule.Method = h.Method
+    }
+    if h.Url != "" {
+        rule.Path = extractPathFromURL(h.Url)
+    }
+    return rule
+}
 
-    // Stage 2: Transform -- flows to policies
-    policies := make(chan *v2.CiliumNetworkPolicy, 64)
-    go policy.BuildFromFlows(ctx, flows, policies, cfg.LabelStrategy)
-
-    // Stage 3: Filter -- deduplicate
-    unique := make(chan *v2.CiliumNetworkPolicy, 64)
-    go dedup.Filter(ctx, policies, unique, localStore, clusterStore)
-
-    // Stage 4: Sink -- write YAML files
-    return output.WriteAll(ctx, unique, cfg.OutputDir)
+// extractDNSQuery extracts the DNS query name from a flow's Layer7 data.
+// Returns empty string if the flow has no DNS information or is a response.
+func extractDNSQuery(f *flowpb.Flow) string {
+    if f.L7 == nil || f.L7.Dns == nil {
+        return ""
+    }
+    // Only process DNS requests, not responses
+    if f.L7.Type != flowpb.L7FlowType_REQUEST {
+        return ""
+    }
+    return strings.TrimSuffix(f.L7.Dns.Query, ".")
 }
 ```
 
-### Pattern 2: Aggregation Window Before Policy Generation
+### Pattern 2: Port Rule Accumulator
 
-**What:** Rather than generating a policy per individual flow, accumulate flows over a short window (e.g., 5 seconds or N flows) and merge them into a single policy per (namespace, workload, direction) tuple. This prevents generating 100 identical policies for 100 dropped packets.
+**What:** Replace bare `[]PortProtocol` tracking with a structure that accumulates both L4 and L7 rules per port
 
-**When to use:** Always. Without aggregation, high-traffic workloads produce massive duplicates.
-
-**Trade-offs:** Adds latency (user waits for window to fill). A configurable window or "flush on idle" approach balances responsiveness with dedup quality.
+**When:** Building ingress/egress rules in the builder
 
 **Example:**
+
 ```go
-// In pkg/policy/builder.go
-type FlowAggregator struct {
-    window   time.Duration
-    policies map[policyKey]*policyAccumulator // keyed by (ns, workload, direction)
+// portAccumulator groups L7 rules under a single port+protocol combination.
+type portAccumulator struct {
+    port      string
+    protocol  api.L4Proto
+    httpRules []api.PortRuleHTTP
+    httpSeen  map[string]struct{} // dedup by method+path
 }
 
-type policyKey struct {
-    Namespace string
-    Workload  string
-    Direction string // "ingress" or "egress"
+// toPortRule produces the final PortRule with optional L7Rules attached.
+func (pa *portAccumulator) toPortRule() api.PortRule {
+    pr := api.PortRule{
+        Ports: []api.PortProtocol{{Port: pa.port, Protocol: pa.protocol}},
+    }
+    if len(pa.httpRules) > 0 {
+        pr.Rules = &api.L7Rules{HTTP: pa.httpRules}
+    }
+    return pr
 }
 ```
 
-### Pattern 3: Interface-Based Infrastructure Boundaries
+### Pattern 3: Separate FQDN Egress Rules
 
-**What:** Define interfaces at package boundaries for infrastructure concerns (gRPC client, Kubernetes client, filesystem). Concrete implementations live in the infrastructure packages; core logic depends only on interfaces.
+**What:** DNS flows produce isolated `EgressRule` entries with `ToFQDNs` since these cannot be combined with other `To*` fields
 
-**When to use:** For all external dependencies (gRPC, Kubernetes, filesystem). Enables testing without real clusters.
-
-**Trade-offs:** More interfaces upfront, but massively simplifies testing. The policy builder can be tested with mock flows without any gRPC connection.
+**When:** Building egress rules from DNS L7 flows
 
 **Example:**
+
 ```go
-// In pkg/hubble/client.go
-type FlowSource interface {
-    StreamFlows(ctx context.Context, filters FlowFilters) (<-chan *flow.Flow, error)
+// buildFQDNEgressRules produces EgressRules for DNS-observed FQDNs.
+// Each FQDN gets its own rule because ToFQDNs cannot coexist with
+// ToEndpoints or ToCIDR in the same EgressRule.
+func buildFQDNEgressRules(dnsFlows []*flowpb.Flow) []api.EgressRule {
+    fqdns := make(map[string]struct{})
+    for _, f := range dnsFlows {
+        query := extractDNSQuery(f)
+        if query == "" {
+            continue
+        }
+        fqdns[query] = struct{}{}
+    }
+
+    var rules []api.EgressRule
+    for fqdn := range fqdns {
+        rules = append(rules, api.EgressRule{
+            EgressCommonRule: api.EgressCommonRule{
+                ToFQDNs: api.FQDNSelectorSlice{
+                    {MatchName: fqdn},
+                },
+            },
+            ToPorts: api.PortRules{{
+                Ports: []api.PortProtocol{{Port: "443", Protocol: api.ProtoTCP}},
+            }},
+        })
+    }
+    return rules
 }
+```
 
-// In pkg/dedup/cluster.go
-type PolicyLister interface {
-    ListCNPs(ctx context.Context, namespace string) ([]*v2.CiliumNetworkPolicy, error)
+### Pattern 4: Apply with Safety Guards
+
+**What:** Policy application checks `managed-by` label before mutations
+
+**When:** `cpg apply` creates/updates cluster policies
+
+```go
+func applyPolicy(ctx context.Context, client ciliumclient.Interface,
+    policy *ciliumv2.CiliumNetworkPolicy, force bool) (action string, err error) {
+
+    existing, err := client.CiliumV2().CiliumNetworkPolicies(policy.Namespace).
+        Get(ctx, policy.Name, metav1.GetOptions{})
+    if err != nil {
+        if apierrors.IsNotFound(err) {
+            if !force {
+                return "would-create", nil
+            }
+            _, err = client.CiliumV2().CiliumNetworkPolicies(policy.Namespace).
+                Create(ctx, policy, metav1.CreateOptions{})
+            return "created", err
+        }
+        return "", err
+    }
+
+    // Safety: refuse to overwrite non-cpg policies
+    if existing.Labels["app.kubernetes.io/managed-by"] != "cpg" {
+        return "skipped-not-managed", nil
+    }
+
+    if PoliciesEquivalent(existing, policy) {
+        return "unchanged", nil
+    }
+
+    if !force {
+        return "would-update", nil
+    }
+    policy.ResourceVersion = existing.ResourceVersion
+    _, err = client.CiliumV2().CiliumNetworkPolicies(policy.Namespace).
+        Update(ctx, policy, metav1.UpdateOptions{})
+    return "updated", err
 }
-
-// In pkg/output/writer.go
-type PolicyWriter interface {
-    Write(ctx context.Context, policy *v2.CiliumNetworkPolicy) error
-}
 ```
 
-## Data Flow
+## Anti-Patterns to Avoid
 
-### Main Flow: Dropped Flows to YAML Files
+### Anti-Pattern 1: Mixing L4-only and L7 PortRules for Same Port
 
-```
-Hubble Relay (gRPC server, port 4245)
-    │
-    │ GetFlows(GetFlowsRequest{Follow: true, Whitelist: [verdict=DROPPED]})
-    │ Server-streaming RPC over HTTP/2
-    ↓
-pkg/hubble.Client
-    │ Receives GetFlowsResponse, extracts flow.Flow
-    │ Filters by namespace/labels if specified
-    ↓
-pkg/policy.Builder
-    │ Groups flows by (namespace, workload, direction)
-    │ Aggregates ports across flows for same source->dest pair
-    │ Constructs api.Rule with EndpointSelector + IngressRule/EgressRule
-    │ Wraps in v2.CiliumNetworkPolicy with TypeMeta/ObjectMeta
-    ↓
-pkg/dedup.Filter
-    │ Checks against local file store (output dir scan)
-    │ Checks against cluster store (client-go CNP list)
-    │ Passes through only net-new policies
-    ↓
-pkg/output.Writer
-    │ Marshals CiliumNetworkPolicy to YAML via sigs.k8s.io/yaml
-    │ Writes to <output-dir>/<namespace>/<workload>-<direction>.yaml
-    ↓
-Filesystem (organized YAML files)
-```
+**What:** Creating separate `PortRule` entries for the same port (one L4-only, one with L7 rules)
 
-### Connection Setup Flow
+**Why bad:** Cilium treats each `PortRule` independently. Two rules for port 80 -- one allowing all traffic and one restricting to GET /api -- means the L4-only rule allows everything, making the L7 rule useless.
 
-```
-CLI start
-    │
-    ├─ --server flag provided?
-    │   YES → Direct gRPC dial to address
-    │   NO  → Auto port-forward flow:
-    │          ├─ Build client-go config (kubeconfig/in-cluster)
-    │          ├─ Find hubble-relay pod in kube-system
-    │          ├─ Start port-forward (client-go/tools/portforward)
-    │          ├─ Wait for Ready channel
-    │          └─ gRPC dial to localhost:<forwarded-port>
-    │
-    └─ Establish observer.ObserverClient
-```
+**Instead:** When L7 data exists for a port, always attach L7 rules to the same `PortRule`. If some flows for a port have L7 data and others don't, only generate L7 rules (the restrictive case) or fall back to L4-only (the permissive case). Choose L4-only as default since L7 visibility may not be enabled for all pods.
 
-### Key Data Flows
+### Anti-Pattern 2: Generating FQDN Rules Without DNS Allow Rules
 
-1. **Flow ingestion:** Hubble Relay streams `flow.Flow` proto messages. Each flow contains source/destination identity, labels, namespace, pod name, L4 port/protocol, traffic direction, and verdict. The tool filters for `verdict=DROPPED`.
+**What:** Creating `ToFQDNs` rules without corresponding DNS port 53 allow rules
 
-2. **Policy construction:** Flows are grouped by `(target namespace, target workload, direction)`. For ingress: the target is `destination`, peers are `source`. For egress: the target is `source`, peers are `destination`. Ports from multiple flows are merged into a single `PortRule`.
+**Why bad:** Cilium requires DNS traffic to be allowed so it can intercept DNS responses to learn IP-to-FQDN mappings. Without DNS allow rules, FQDN-based policies silently fail.
 
-3. **Label extraction:** From flow metadata, `pkg/labels` picks the best labels for `EndpointSelector`: prefers `app.kubernetes.io/name` > `app` > workload name derived from pod name. For peers, same logic applies. If peer is outside the cluster (no labels, only IP), a `CIDRRule` is generated instead.
+**Instead:** Always pair FQDN rules with a DNS allow rule (port 53/UDP to `kube-dns` endpoint).
 
-4. **Dedup comparison:** Generated policies are compared semantically (not string-equal). Two policies match if they have the same endpoint selector, direction, and cover the same or subset of port/peer combinations.
+### Anti-Pattern 3: Applying Without Ownership Checks
 
-## Scaling Considerations
+**What:** Blindly updating any CiliumNetworkPolicy found in the cluster
 
-| Scale | Architecture Adjustments |
-|-------|--------------------------|
-| Single namespace, few workloads | Default config works fine. Synchronous dedup, small aggregation window. |
-| Many namespaces, dozens of workloads | Increase channel buffer sizes. Parallel dedup checks per namespace. Consider namespace-scoped goroutines for policy building. |
-| Large cluster, thousands of flows/sec | Flow aggregation window becomes critical. May need to increase gRPC receive buffer. Consider rate-limiting output writes to avoid filesystem thrashing. |
+**Why bad:** Overwrites manually-crafted or operator-managed policies, causing outages.
 
-### Scaling Priorities
+**Instead:** Only touch policies with `app.kubernetes.io/managed-by: cpg` label. Skip anything without it.
 
-1. **First bottleneck:** Policy aggregation. Without proper grouping, the tool generates thousands of near-identical policies. Aggregation by `(namespace, workload, direction)` is the single most important design decision.
-2. **Second bottleneck:** Cluster dedup (listing existing CNPs). For large clusters with many policies, the `ListCNPs` call can be slow. Use a label selector or informer cache if this becomes an issue, but start simple with direct list calls.
+### Anti-Pattern 4: Client-Side Dry-Run Only
 
-## Anti-Patterns
+**What:** Implementing dry-run as pure diff display without server validation
 
-### Anti-Pattern 1: One Policy Per Flow
+**Why bad:** Misses CRD validation errors, admission webhook rejections, RBAC denials. User applies with `--force` and gets unexpected failures.
 
-**What people do:** Generate a separate CiliumNetworkPolicy for each individual dropped flow.
-**Why it is wrong:** A workload with 50 denied connections to the same peer on different ports generates 50 policies instead of 1. Unusable output that is impossible to review or apply.
-**Do this instead:** Aggregate flows by `(namespace, workload, direction)` and merge ports/peers into a single policy per workload per direction.
+**Instead:** Use server-side dry-run (`DryRun: []string{"All"}` in create/update options) to validate the policy would be accepted, then display the diff.
 
-### Anti-Pattern 2: String-Based YAML Templating
+### Anti-Pattern 5: Path Literal Explosion
 
-**What people do:** Build YAML by concatenating strings or using `text/template` with raw YAML.
-**Why it is wrong:** Produces invalid YAML on edge cases (special characters in labels, multiline values). Cannot validate structure at compile time. Loses type safety from Cilium's Go types.
-**Do this instead:** Build `v2.CiliumNetworkPolicy` structs using Cilium's Go types, then marshal with `sigs.k8s.io/yaml`. The compiler catches structural errors, and marshaling handles escaping.
+**What:** Generating separate HTTP rules for `/api/users/1`, `/api/users/2`, `/api/users/3`...
 
-### Anti-Pattern 3: Blocking gRPC Stream Processing
+**Why bad:** Produces policies with hundreds of path entries. Cilium compiles these to envoy config, bloating proxy memory.
 
-**What people do:** Process each flow synchronously in the gRPC receive loop (build policy, dedup, write file, then receive next flow).
-**Why it is wrong:** File I/O and Kubernetes API calls block the gRPC stream. If processing is slower than flow arrival, the gRPC buffer fills and flows are dropped or the connection stalls.
-**Do this instead:** Use the channel pipeline pattern. The gRPC receive goroutine only reads and sends to a channel. Processing happens in separate goroutines with buffered channels providing backpressure.
-
-### Anti-Pattern 4: Global Kubernetes Client Construction
-
-**What people do:** Create `kubernetes.Clientset` at package init or as a global variable.
-**Why it is wrong:** Breaks testability, makes it impossible to run without a cluster, couples packages to infrastructure.
-**Do this instead:** Accept interfaces at package boundaries. Construct clients in `cmd/` and inject them. Tests provide mocks.
-
-## Integration Points
-
-### External Services
-
-| Service | Integration Pattern | Notes |
-|---------|---------------------|-------|
-| Hubble Relay | gRPC streaming client via `observer.NewObserverClient()` | Server-streaming RPC. Connection requires either direct address or port-forward. Use `grpc.WithBlock()` for initial connection, then stream with `Follow: true`. |
-| Kubernetes API | `client-go` with Cilium CRD clientset | Used for two things: (1) port-forwarding to hubble-relay pod, (2) listing existing CiliumNetworkPolicies for dedup. Use `pkg/k8s/client/clientset/versioned` for typed CNP access. |
-| Filesystem | Standard `os` package | Write YAML files. Create directories as needed. Scan existing files for local dedup. |
-
-### Internal Boundaries
-
-| Boundary | Communication | Notes |
-|----------|---------------|-------|
-| `cmd/` -> `pkg/*` | Direct function calls, dependency injection | Commands construct dependencies and call into pkg functions. No pkg imports cmd. |
-| `pkg/hubble` -> `pkg/policy` | Channel of `*flow.Flow` | Hubble package produces flows, policy package consumes them. No direct import between them -- connected via channels in cmd. |
-| `pkg/policy` -> `pkg/labels` | Direct function calls | Policy builder calls label selector to build `EndpointSelector` from flow metadata. Tight coupling is fine -- labels is a helper for policy. |
-| `pkg/policy` -> `pkg/dedup` | Channel of `*v2.CiliumNetworkPolicy` | Policy produces, dedup filters. Connected via channels in cmd. |
-| `pkg/dedup` -> `pkg/k8s` | Interface (`PolicyLister`) | Dedup calls k8s to list existing CNPs. Uses interface for testability. |
-| `pkg/dedup` -> `pkg/output` | Reads existing files | Local dedup scans output directory. Could share a `PolicyStore` interface with output writer. |
+**Instead:** Consider path generalization -- replace numeric path segments with regex patterns like `[0-9]+`. Implement as an optional `--generalize-paths` flag.
 
 ## Suggested Build Order
 
-Based on component dependencies, build in this order:
+The build order follows dependency chains and enables incremental testing:
 
-1. **pkg/labels + pkg/policy (core logic, no infrastructure)**
-   - Pure transformation functions, fully testable with mock data
-   - No gRPC, no Kubernetes, no filesystem needed
-   - This is the hardest domain logic -- get it right first
+### Phase 1: L7 HTTP Rules (builder core)
 
-2. **pkg/output (filesystem only)**
-   - YAML marshaling and file writing
-   - Depends on policy types but nothing else
-   - Easy to test with temp directories
+1. **Add `extractHTTPRule()` and `extractPathFromURL()`** in `builder.go`
+   - Pure functions, easily unit tested
+   - No changes to existing code yet
 
-3. **pkg/hubble (gRPC client)**
-   - Requires understanding of Hubble proto API
-   - Test with a mock gRPC server or against a real cluster
-   - Port-forward logic can be deferred (use `--server` flag first)
+2. **Refactor `peerPorts` to support L7 rules**
+   - Extend the internal structs in `buildIngressRules`/`buildEgressRules`
+   - Change from `ports []api.PortProtocol` to `portRules map[string]*portAccumulator`
+   - Existing L4-only behavior must remain identical (regression tests)
 
-4. **cmd/ (wiring)**
-   - Cobra commands that wire the pipeline together
-   - Depends on all pkg packages being functional
-   - Thin layer, mostly configuration
+3. **Wire L7 HTTP detection into flow processing loop**
+   - Check `f.L7 != nil && f.L7.Http != nil` in the flow iteration
+   - Attach `L7Rules` to matching `PortRule`
 
-5. **pkg/dedup (local files)**
-   - Compares generated policies against output directory
-   - Depends on output package for file format consistency
+4. **Extend dedup normalization** for L7 rules
+   - Sort HTTP rules in `normalizeRule()` by method+path
 
-6. **pkg/k8s + pkg/dedup cluster (Kubernetes integration)**
-   - Client-go setup, CNP listing, port-forward
-   - Most complex infrastructure, defer until pipeline works end-to-end
-   - Test against a real cluster with Cilium installed
+5. **Extend merge** for L7-enriched port rules
+   - `mergePortRules()` must handle `Rules` field merging
 
-## Key Cilium/Hubble Types Reference
+### Phase 2: L7 DNS / FQDN Rules
 
-These are the primary types from `github.com/cilium/cilium` that CPG will use:
+6. **Add `extractDNSQuery()`** in `builder.go`
 
-**Flow observation (input):**
-- `github.com/cilium/cilium/api/v1/observer.ObserverClient` -- gRPC client interface
-- `github.com/cilium/cilium/api/v1/observer.GetFlowsRequest` -- stream request with filters
-- `github.com/cilium/cilium/api/v1/flow.Flow` -- individual network flow with metadata
+7. **Add `buildFQDNEgressRules()`** as separate builder function
+   - Produces isolated `EgressRule` with `ToFQDNs`
+   - Auto-generates companion DNS allow rule for kube-dns
 
-**Policy generation (output):**
-- `github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2.CiliumNetworkPolicy` -- CRD type
-- `github.com/cilium/cilium/pkg/policy/api.Rule` -- policy rule with endpoint selector, ingress/egress rules
-- `github.com/cilium/cilium/pkg/policy/api.IngressRule` -- FromEndpoints, FromCIDR, ToPorts
-- `github.com/cilium/cilium/pkg/policy/api.EgressRule` -- ToEndpoints, ToCIDR, ToPorts
-- `github.com/cilium/cilium/pkg/policy/api.EndpointSelector` -- wraps LabelSelector
-- `github.com/cilium/cilium/pkg/policy/api.PortRule` -- port + protocol specification
-- `github.com/cilium/cilium/pkg/policy/api.CIDRRule` -- CIDR block for external traffic
+8. **Wire into `BuildPolicy()`** -- separate DNS flows from L4 flows in the egress path
 
-**Kubernetes integration:**
-- `github.com/cilium/cilium/pkg/k8s/client/clientset/versioned` -- typed Cilium CRD clientset
-- `k8s.io/client-go/tools/portforward` -- programmatic port-forwarding
+9. **Extend dedup/merge** for FQDN rules
+   - Normalize `ToFQDNs` sorting
+   - Add `matchFQDNs()` for merge matching
+   - Merge FQDN selectors
+
+### Phase 3: `cpg apply` Command
+
+10. **Add `pkg/k8s/apply.go`** -- core apply/dry-run logic
+    - Read YAML files from directory
+    - Compare with cluster state via `PoliciesEquivalent`
+    - Create/Update with safety guards and ownership checks
+
+11. **Add `cmd/cpg/apply.go`** -- cobra command wiring
+    - Flags: `--dir`, `--namespace`, `--force`
+    - Default dry-run behavior
+    - Wire to `main.go`
+
+12. **Register apply command** in `cmd/cpg/main.go`
+
+### Phase 4: Hubble Client Verification
+
+13. **Verify/modify `StreamDroppedFlows()`** filter
+    - Ensure L7 flows are not filtered out by verdict filter
+    - May need to add `flowpb.Verdict_REDIRECTED` or adjust flow type filters
+    - This is last because it requires a live cluster to validate
+
+## Scalability Considerations
+
+| Concern | At 100 policies | At 1K policies | At 10K policies |
+|---------|-----------------|----------------|-----------------|
+| Apply speed | Sequential fine | Batch with concurrency (10 workers) | Batch + rate limiting |
+| YAML reading | `os.ReadDir` fine | Still fine | Consider streaming |
+| L7 rule cardinality | Low | HTTP paths can explode | Need path generalization (regex patterns) |
+| FQDN count | Low | Moderate | May hit Cilium DNS proxy limits |
+
+**L7 rule explosion risk:** HTTP paths like `/api/users/123` and `/api/users/456` should not produce separate rules. Consider path generalization (replace numeric segments with regex `[0-9]+`). This is a post-MVP enhancement, not blocking for initial implementation. Flag for validation during development.
 
 ## Sources
 
-- [Hubble CLI repository](https://github.com/cilium/hubble)
-- [Hubble CLI architecture (DeepWiki)](https://deepwiki.com/cilium/hubble/3-cli-usage-guide)
-- [Cilium observer gRPC proto](https://github.com/cilium/cilium/blob/main/api/v1/observer/observer_grpc.pb.go)
-- [CiliumNetworkPolicy types (pkg.go.dev)](https://pkg.go.dev/github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2)
-- [Cilium policy/api types (pkg.go.dev)](https://pkg.go.dev/github.com/cilium/cilium/pkg/policy/api)
-- [Cilium CNP client-go](https://github.com/cilium/cilium/blob/master/pkg/k8s/client/clientset/versioned/typed/cilium.io/v2/ciliumnetworkpolicy.go)
-- [client-go port-forward package](https://pkg.go.dev/k8s.io/client-go/tools/portforward)
-- [Hubble internals (Cilium docs)](https://docs.cilium.io/en/stable/internals/hubble/)
-- [Go CLI structure best practices](https://www.bytesizego.com/blog/structure-go-cli-app)
-- [Kubernetes CLI development patterns](https://iximiuz.com/en/posts/kubernetes-api-go-cli/)
-
----
-*Architecture research for: Cilium Policy Generator CLI*
-*Researched: 2026-03-08*
+- [Cilium policy API - pkg.go.dev](https://pkg.go.dev/github.com/cilium/cilium/pkg/policy/api) - HIGH confidence (official Go docs, v1.19.1)
+- [Hubble Flow protobuf - Cilium docs](https://docs.cilium.io/en/stable/_api/v1/flow/README/) - HIGH confidence (official protocol docs)
+- [Cilium L7 HTTP policy example](https://github.com/cilium/cilium/blob/main/examples/policies/l7/http/http.yaml) - HIGH confidence (official examples)
+- [Cilium L7 visibility docs](https://docs.cilium.io/en/stable/observability/visibility/) - HIGH confidence (official docs)
+- Existing codebase analysis (`pkg/policy/builder.go`, `pkg/policy/merge.go`, `pkg/policy/dedup.go`, `pkg/hubble/pipeline.go`, `pkg/k8s/cluster_dedup.go`) - HIGH confidence (direct code reading)
