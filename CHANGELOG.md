@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/SoulKyu/cpg/compare/v1.0.0...v1.0.1) (2026-03-09)
+
+
+### Bug Fixes
+
+* register OIDC auth provider for kubeconfig loading ([af20b64](https://github.com/SoulKyu/cpg/commit/af20b64a28cce81feda56917a54187f62c3e337c))
+
 ## 1.0.0 (2026-03-09)
 
 
