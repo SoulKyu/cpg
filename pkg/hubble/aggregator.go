@@ -23,15 +23,17 @@ type AggKey struct {
 // PolicyEvents on a configurable ticker interval. It also flushes remaining
 // flows when the input channel closes or the context is cancelled.
 type Aggregator struct {
-	interval time.Duration
-	logger   *zap.Logger
+	interval     time.Duration
+	logger       *zap.Logger
+	warnedReserved map[string]struct{}
 }
 
 // NewAggregator creates a new Aggregator with the given flush interval.
 func NewAggregator(interval time.Duration, logger *zap.Logger) *Aggregator {
 	return &Aggregator{
-		interval: interval,
-		logger:   logger,
+		interval:       interval,
+		logger:         logger,
+		warnedReserved: make(map[string]struct{}),
 	}
 }
 
@@ -90,10 +92,14 @@ func (a *Aggregator) keyFromFlow(f *flowpb.Flow) (key AggKey, skip bool) {
 
 	if ep.Namespace == "" {
 		if isReservedIdentity(ep.Labels) {
-			a.logger.Warn("dropped flow targets a reserved identity — cpg generates namespace-scoped CiliumNetworkPolicy and cannot handle reserved endpoints; use a CiliumClusterwideNetworkPolicy instead",
-				zap.Strings("labels", ep.Labels),
-				zap.String("summary", flowSummary(f)),
-			)
+			warnKey := reservedWarnKey(ep.Labels, f)
+			if _, seen := a.warnedReserved[warnKey]; !seen {
+				a.warnedReserved[warnKey] = struct{}{}
+				a.logger.Warn("dropped flow targets a reserved identity — cpg generates namespace-scoped CiliumNetworkPolicy and cannot handle reserved endpoints; use a CiliumClusterwideNetworkPolicy instead",
+					zap.Strings("labels", ep.Labels),
+					zap.String("summary", flowSummary(f)),
+				)
+			}
 		} else {
 			a.logger.Debug("skipping flow with empty namespace",
 				zap.String("workload", labels.WorkloadName(ep.Labels)),
@@ -165,6 +171,19 @@ func monitorLostEvents(ctx context.Context, ch <-chan *flowpb.LostEvent, logger 
 			return nil
 		}
 	}
+}
+
+// reservedWarnKey builds a dedup key from reserved labels and traffic direction
+// so the same warning is only logged once per identity+direction combination.
+func reservedWarnKey(epLabels []string, f *flowpb.Flow) string {
+	var reserved string
+	for _, l := range epLabels {
+		if strings.HasPrefix(l, "reserved:") {
+			reserved = l
+			break
+		}
+	}
+	return fmt.Sprintf("%s/%s", reserved, f.TrafficDirection)
 }
 
 // isReservedIdentity returns true if any of the endpoint labels indicate
