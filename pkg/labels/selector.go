@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/cilium/cilium/pkg/labels"
+	slim_metav1 "github.com/cilium/cilium/pkg/k8s/slim/k8s/apis/meta/v1"
 	"github.com/cilium/cilium/pkg/policy/api"
 )
 
@@ -111,20 +112,29 @@ func WorkloadName(endpointLabels []string) string {
 }
 
 // BuildEndpointSelector creates an EndpointSelector from flow endpoint labels.
-// Uses plain keys (no k8s: prefix) via NewESFromMatchRequirements per Research
-// Open Question 1 findings.
+// Uses plain keys without the sanitized flag to prevent MarshalJSON from
+// applying GetCiliumKeyFrom which corrupts label keys (e.g. app.kubernetes.io/name
+// becomes app:kubernetes.io/name where "app" is misinterpreted as a label source).
 func BuildEndpointSelector(endpointLabels []string) api.EndpointSelector {
 	selected := SelectLabels(endpointLabels)
 	if len(selected) == 0 {
-		return api.NewESFromMatchRequirements(nil, nil)
+		return api.EndpointSelector{
+			LabelSelector: &slim_metav1.LabelSelector{},
+		}
 	}
-	return api.NewESFromMatchRequirements(selected, nil)
+	return api.EndpointSelector{
+		LabelSelector: &slim_metav1.LabelSelector{
+			MatchLabels: selected,
+		},
+	}
 }
 
 // BuildPeerSelector creates an EndpointSelector for peer (from/to) endpoints.
 // It includes the k8s:io.kubernetes.pod.namespace label when peerNamespace
 // differs from policyNamespace to ensure cross-namespace traffic is scoped
 // correctly.
+// Uses unsanitized EndpointSelector to prevent MarshalJSON from corrupting
+// label keys via GetCiliumKeyFrom.
 func BuildPeerSelector(peerLabels []string, peerNamespace, policyNamespace string) api.EndpointSelector {
 	selected := SelectLabels(peerLabels)
 	if selected == nil {
@@ -137,7 +147,13 @@ func BuildPeerSelector(peerLabels []string, peerNamespace, policyNamespace strin
 	}
 
 	if len(selected) == 0 {
-		return api.NewESFromMatchRequirements(nil, nil)
+		return api.EndpointSelector{
+			LabelSelector: &slim_metav1.LabelSelector{},
+		}
 	}
-	return api.NewESFromMatchRequirements(selected, nil)
+	return api.EndpointSelector{
+		LabelSelector: &slim_metav1.LabelSelector{
+			MatchLabels: selected,
+		},
+	}
 }
