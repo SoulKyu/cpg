@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
+	"github.com/cilium/cilium/pkg/policy/api"
 	"go.uber.org/zap"
 	"sigs.k8s.io/yaml"
 
@@ -43,27 +45,34 @@ func (w *Writer) Write(event policy.PolicyEvent) error {
 		return fmt.Errorf("reading existing policy %s: %w", path, err)
 	}
 
+	var spec *api.Rule
 	if existing != nil {
 		merged := policy.MergePolicy(existing, event.Policy)
+		spec = merged.Spec
 		data, err = yaml.Marshal(merged)
 		if err != nil {
 			return fmt.Errorf("marshaling merged policy: %w", err)
 		}
 		// Compare serialized YAML to detect semantic equivalence after roundtrip.
 		// In-memory comparison is unreliable due to label prefix normalization (any:).
+		// Strip comments from existing file before comparing since annotations may differ.
 		existingData, readErr := os.ReadFile(path)
-		if readErr == nil && string(existingData) == string(data) {
+		if readErr == nil && stripComments(string(existingData)) == string(data) {
 			w.logger.Debug("policy unchanged, skipping write", zap.String("path", path))
 			return nil
 		}
 		w.logger.Info("policy updated", zap.String("path", path))
 	} else {
+		spec = event.Policy.Spec
 		data, err = yaml.Marshal(event.Policy)
 		if err != nil {
 			return fmt.Errorf("marshaling policy: %w", err)
 		}
 		w.logger.Info("policy written", zap.String("path", path))
 	}
+
+	// Annotate rules with human-readable comments
+	data = annotateRules(data, spec)
 
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		return fmt.Errorf("writing policy file %s: %w", path, err)
@@ -89,4 +98,17 @@ func readExistingPolicy(path string) (*ciliumv2.CiliumNetworkPolicy, error) {
 	}
 
 	return &cnp, nil
+}
+
+// stripComments removes YAML comment lines (starting with optional whitespace + #)
+// so that semantic comparison ignores annotation differences.
+func stripComments(yamlStr string) string {
+	lines := strings.Split(yamlStr, "\n")
+	var filtered []string
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" || !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			filtered = append(filtered, line)
+		}
+	}
+	return strings.Join(filtered, "\n")
 }
