@@ -1,36 +1,36 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: completed
-stopped_at: Completed 03-02-PLAN.md (final plan)
-last_updated: "2026-03-08T20:34:40.870Z"
-last_activity: 2026-03-08 -- Completed plan 03-02 (auto port-forward, cluster dedup, cross-flush dedup)
+milestone: v1.1
+milestone_name: L7 Policies & Auto-Apply
+status: defining-requirements
+stopped_at: null
+last_updated: "2026-03-09T00:00:00Z"
+last_activity: 2026-03-09 -- Milestone v1.1 started
 progress:
-  total_phases: 3
-  completed_phases: 3
-  total_plans: 7
-  completed_plans: 7
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-08)
+See: .planning/PROJECT.md (updated 2026-03-09)
 
 **Core value:** Automatically generate correct CiliumNetworkPolicies from observed Hubble denials so that SREs spend zero time manually writing network policies in default-deny environments.
-**Current focus:** Phase 3: Production Hardening
+**Current focus:** Defining requirements for v1.1
 
 ## Current Position
 
-Phase: 3 of 3 (Production Hardening)
-Plan: 2 of 2 in current phase
-Status: All plans complete. Project milestone v1.0 reached.
-Last activity: 2026-03-08 -- Completed plan 03-02 (auto port-forward, cluster dedup, cross-flush dedup)
+Phase: Not started (defining requirements)
+Plan: --
+Status: Defining requirements
+Last activity: 2026-03-09 -- Milestone v1.1 started
 
-Progress: [██████████] 100%
+Progress: [░░░░░░░░░░] 0%
 
 ## Performance Metrics
 

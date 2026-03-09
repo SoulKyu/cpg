@@ -12,27 +12,27 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 
 ### Validated
 
-<!-- Shipped and confirmed valuable. -->
+<!-- Shipped and confirmed valuable in v1.0. -->
 
-(None yet — ship to validate)
+- ✓ Connect to Hubble Relay via gRPC with auto port-forward — v1.0
+- ✓ Override relay address with `--server` flag — v1.0
+- ✓ Observe dropped flows filtered by namespace or all-namespaces — v1.0
+- ✓ Generate CiliumNetworkPolicy for ingress/egress traffic — v1.0
+- ✓ Generate CIDR-based policies for external traffic — v1.0
+- ✓ Exact ports (port number + protocol) in generated policies — v1.0
+- ✓ Smart label selection (app.kubernetes.io/*, workload name) — v1.0
+- ✓ One YAML file per policy in organized directory structure — v1.0
+- ✓ Stream policy generation continuously as flows arrive — v1.0
+- ✓ Deduplicate against files and live cluster policies — v1.0
+- ✓ Structured logging with zap — v1.0
 
 ### Active
 
-<!-- Current scope. Building toward these. -->
+<!-- Current scope for v1.1. -->
 
-- [ ] Connect to Hubble Relay via gRPC with auto port-forward to hubble-relay service
-- [ ] Override relay address with `--server` flag
-- [ ] Observe dropped flows filtered by namespace, labels, or all-namespaces
-- [ ] Generate CiliumNetworkPolicy for ingress traffic based on dropped flows
-- [ ] Generate CiliumNetworkPolicy for egress traffic based on dropped flows
-- [ ] Generate CIDR-based policies for external (non-cluster) traffic
-- [ ] Use exact ports (port number + protocol) in generated policies
-- [ ] Smart label selection for endpoint selectors (app.kubernetes.io/*, workload name, namespace)
-- [ ] Output one YAML file per policy in organized directory structure
-- [ ] Stream policy generation continuously as flows arrive (real-time)
-- [ ] Deduplicate against existing files in output directory
-- [ ] Deduplicate against live CiliumNetworkPolicies in the cluster via client-go
-- [ ] Structured logging with zap
+- [ ] Generate L7 HTTP policies (method, path, headers) from Hubble L7 flows
+- [ ] Generate L7 DNS policies (FQDN matchPattern) from Hubble DNS flows
+- [ ] `cpg apply` command: apply generated policies to cluster (dry-run by default, --force to apply)
 
 ### Out of Scope
 
@@ -40,8 +40,6 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 - Named port resolution — use exact port numbers only
 - CiliumClusterwideNetworkPolicy generation — namespace-scoped only
 - Web UI or dashboard — CLI tool only
-- Policy simulation/dry-run against the cluster — generate only
-- Automatic `kubectl apply` of generated policies — user applies manually
 
 ## Context
 
@@ -75,5 +73,14 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 | Exact ports over named ports | Simpler, no ambiguity, matches flow data directly | — Pending |
 | Both local + cluster dedup | Comprehensive dedup prevents duplicate policies in all scenarios | — Pending |
 
+## Current Milestone: v1.1 L7 Policies & Auto-Apply
+
+**Goal:** Extend cpg with L7 policy generation (HTTP methods/paths/headers, DNS FQDN patterns) and a safe apply command with dry-run by default.
+
+**Target features:**
+- L7 HTTP policy rules from Hubble L7 flow data
+- L7 DNS policy rules (FQDN matching) from Hubble DNS flow data
+- `cpg apply` command with dry-run default and `--force` for real apply
+
 ---
-*Last updated: 2026-03-08 after initialization*
+*Last updated: 2026-03-09 after v1.1 milestone start*
