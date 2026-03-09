@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.1.0](https://github.com/SoulKyu/cpg/compare/v1.0.3...v1.1.0) (2026-03-09)
+
+
+### Features
+
+* support ICMP flows and reserved entities in policy generation ([aa252ef](https://github.com/SoulKyu/cpg/commit/aa252ef17b57f9bc265f119ff4c3dec217e36d62))
+
+
+### Bug Fixes
+
+* deduplicate reserved identity warnings to log once per identity ([25d316a](https://github.com/SoulKyu/cpg/commit/25d316a1a78f606fec97b6349f4b76774a4aaf2c))
+* improve label selection with component priority and Cilium label filtering ([703a751](https://github.com/SoulKyu/cpg/commit/703a751f45de305779d18a24a11cce6ccb4991a9))
+* only warn on actionable reserved identities, demote unknown to debug ([908d08d](https://github.com/SoulKyu/cpg/commit/908d08df64b57fab4bd4110944f4ffea98b19530))
+* split ICMPs and ToPorts into separate rules per Cilium spec ([a698e9f](https://github.com/SoulKyu/cpg/commit/a698e9f2ddeef503cf89b3ad1a39c84de841c68b))
+* support ICMP, entity and CIDR rule merging in policy merge logic ([606e5f1](https://github.com/SoulKyu/cpg/commit/606e5f1a910854370ef276ab386669c16985a334))
+* warn when dropped flows target reserved identities outside cpg scope ([64ef7d4](https://github.com/SoulKyu/cpg/commit/64ef7d43d1c97528e3dd48ae4c45d70627b4d201))
+
 ## [1.0.3](https://github.com/SoulKyu/cpg/compare/v1.0.2...v1.0.3) (2026-03-09)
 
 
