@@ -124,6 +124,49 @@ func WorldFlowNilIP() *flowpb.Flow {
 	}
 }
 
+// IngressICMPv4Flow builds a dropped ingress ICMPv4 flow for testing.
+func IngressICMPv4Flow(srcLabels []string, srcNs string, dstLabels []string, dstNs string, icmpType uint32) *flowpb.Flow {
+	return &flowpb.Flow{
+		TrafficDirection: flowpb.TrafficDirection_INGRESS,
+		Source: &flowpb.Endpoint{
+			Labels:    srcLabels,
+			Namespace: srcNs,
+		},
+		Destination: &flowpb.Endpoint{
+			Labels:    dstLabels,
+			Namespace: dstNs,
+		},
+		L4: &flowpb.Layer4{
+			Protocol: &flowpb.Layer4_ICMPv4{
+				ICMPv4: &flowpb.ICMPv4{
+					Type: icmpType,
+				},
+			},
+		},
+	}
+}
+
+// EntityIngressFlow builds a dropped ingress flow from a reserved entity.
+func EntityIngressFlow(srcLabels []string, dstLabels []string, dstNs string, dstPort uint32) *flowpb.Flow {
+	return &flowpb.Flow{
+		TrafficDirection: flowpb.TrafficDirection_INGRESS,
+		Source: &flowpb.Endpoint{
+			Labels: srcLabels,
+		},
+		Destination: &flowpb.Endpoint{
+			Labels:    dstLabels,
+			Namespace: dstNs,
+		},
+		L4: &flowpb.Layer4{
+			Protocol: &flowpb.Layer4_TCP{
+				TCP: &flowpb.TCP{
+					DestinationPort: dstPort,
+				},
+			},
+		},
+	}
+}
+
 // EgressICMPv4Flow builds a dropped egress ICMPv4 flow for testing.
 func EgressICMPv4Flow(srcLabels []string, srcNs string, dstLabels []string, dstIP string, icmpType uint32) *flowpb.Flow {
 	return &flowpb.Flow{

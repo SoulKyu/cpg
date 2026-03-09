@@ -10,9 +10,9 @@ import (
 )
 
 // MergePolicy merges incoming policy rules into an existing policy.
-// For each incoming rule, if a matching peer (same FromEndpoints/ToEndpoints)
-// exists in the existing policy, new ports are added to that rule.
-// If no matching peer exists, the rule is appended as a new entry.
+// For each incoming rule, if a matching peer (same endpoints/entities/CIDR)
+// and same rule type (ports vs ICMP) exists, contents are merged.
+// If no match exists, the rule is appended as a new entry.
 // ObjectMeta is preserved from the existing policy.
 func MergePolicy(existing, incoming *ciliumv2.CiliumNetworkPolicy) *ciliumv2.CiliumNetworkPolicy {
 	result := existing.DeepCopy()
@@ -25,8 +25,9 @@ func MergePolicy(existing, incoming *ciliumv2.CiliumNetworkPolicy) *ciliumv2.Cil
 	for _, inRule := range incoming.Spec.Ingress {
 		merged := false
 		for i, exRule := range result.Spec.Ingress {
-			if matchEndpoints(exRule.FromEndpoints, inRule.FromEndpoints) {
+			if ingressRulesMatch(exRule, inRule) {
 				result.Spec.Ingress[i].ToPorts = mergePortRules(exRule.ToPorts, inRule.ToPorts)
+				result.Spec.Ingress[i].ICMPs = mergeICMPRules(exRule.ICMPs, inRule.ICMPs)
 				merged = true
 				break
 			}
@@ -40,8 +41,9 @@ func MergePolicy(existing, incoming *ciliumv2.CiliumNetworkPolicy) *ciliumv2.Cil
 	for _, inRule := range incoming.Spec.Egress {
 		merged := false
 		for i, exRule := range result.Spec.Egress {
-			if matchEndpoints(exRule.ToEndpoints, inRule.ToEndpoints) {
+			if egressRulesMatch(exRule, inRule) {
 				result.Spec.Egress[i].ToPorts = mergePortRules(exRule.ToPorts, inRule.ToPorts)
+				result.Spec.Egress[i].ICMPs = mergeICMPRules(exRule.ICMPs, inRule.ICMPs)
 				merged = true
 				break
 			}
@@ -52,6 +54,74 @@ func MergePolicy(existing, incoming *ciliumv2.CiliumNetworkPolicy) *ciliumv2.Cil
 	}
 
 	return result
+}
+
+// ingressRulesMatch returns true if two ingress rules target the same peer
+// (endpoints, entities, or CIDR) and the same rule type (ports vs ICMP).
+func ingressRulesMatch(a, b api.IngressRule) bool {
+	if !matchEndpoints(a.FromEndpoints, b.FromEndpoints) {
+		return false
+	}
+	if !matchEntities(a.FromEntities, b.FromEntities) {
+		return false
+	}
+	if !matchCIDRSlice(a.FromCIDR, b.FromCIDR) {
+		return false
+	}
+	return isICMPRule(a) == isICMPRule(b)
+}
+
+// egressRulesMatch returns true if two egress rules target the same peer
+// (endpoints, entities, or CIDR) and the same rule type (ports vs ICMP).
+func egressRulesMatch(a, b api.EgressRule) bool {
+	if !matchEndpoints(a.ToEndpoints, b.ToEndpoints) {
+		return false
+	}
+	if !matchEntities(a.ToEntities, b.ToEntities) {
+		return false
+	}
+	if !matchCIDRSlice(a.ToCIDR, b.ToCIDR) {
+		return false
+	}
+	return isICMPRule(a) == isICMPRule(b)
+}
+
+// isICMPRule returns true if the rule carries ICMP fields rather than port specs.
+func isICMPRule(r interface{}) bool {
+	switch v := r.(type) {
+	case api.IngressRule:
+		return len(v.ICMPs) > 0
+	case api.EgressRule:
+		return len(v.ICMPs) > 0
+	default:
+		return false
+	}
+}
+
+// matchEntities compares two EntitySlice values for equality.
+func matchEntities(a, b api.EntitySlice) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// matchCIDRSlice compares two CIDRSlice values for equality.
+func matchCIDRSlice(a, b api.CIDRSlice) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // matchEndpoints compares two slices of EndpointSelector by their matchLabels.
@@ -140,4 +210,44 @@ func mergePortRules(existing, incoming api.PortRules) api.PortRules {
 	}
 
 	return result
+}
+
+// mergeICMPRules merges incoming ICMP rules into existing ones, deduplicating
+// by family and type.
+func mergeICMPRules(existing, incoming api.ICMPRules) api.ICMPRules {
+	if len(existing) == 0 {
+		return incoming
+	}
+	if len(incoming) == 0 {
+		return existing
+	}
+
+	result := make(api.ICMPRules, 1)
+	result[0].Fields = append(result[0].Fields, existing[0].Fields...)
+
+	seen := make(map[string]struct{})
+	for _, f := range existing[0].Fields {
+		seen[icmpFieldKey(f)] = struct{}{}
+	}
+
+	for _, ir := range incoming {
+		for _, f := range ir.Fields {
+			key := icmpFieldKey(f)
+			if _, dup := seen[key]; !dup {
+				result[0].Fields = append(result[0].Fields, f)
+				seen[key] = struct{}{}
+			}
+		}
+	}
+
+	return result
+}
+
+// icmpFieldKey returns a dedup key for an ICMPField based on family and type.
+func icmpFieldKey(f api.ICMPField) string {
+	typeStr := "*"
+	if f.Type != nil {
+		typeStr = f.Type.String()
+	}
+	return f.Family + "/" + typeStr
 }
