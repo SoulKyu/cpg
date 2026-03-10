@@ -17,13 +17,18 @@ import (
 )
 
 func newGenerateCmd() *cobra.Command {
+	bin := "cpg"
+	if isKubectlPlugin() {
+		bin = "kubectl cilium-policy-gen"
+	}
+
 	cmd := &cobra.Command{
 		Use:   "generate",
 		Short: "Generate CiliumNetworkPolicies from Hubble flow observations",
-		Long: `Connect to Hubble Relay via gRPC, stream dropped flows, and generate
+		Long: fmt.Sprintf(`Connect to Hubble Relay via gRPC, stream dropped flows, and generate
 CiliumNetworkPolicy YAML files organized by namespace and workload.
 
-When --server is omitted, cpg automatically port-forwards to the
+When --server is omitted, %[1]s automatically port-forwards to the
 hubble-relay service in kube-system using your current kubeconfig.
 
 Runs continuously until interrupted (Ctrl+C). On shutdown, flushes all
@@ -35,19 +40,19 @@ policy (ports are deduplicated, new peers are appended).
 
 Examples:
   # Generate policies (auto port-forward to hubble-relay)
-  cpg generate -n production
+  %[1]s generate -n production
 
   # Generate policies from explicit Hubble Relay
-  cpg generate --server localhost:4245
+  %[1]s generate --server localhost:4245
 
   # Skip policies that already exist in the cluster
-  cpg generate --cluster-dedup -n production
+  %[1]s generate --cluster-dedup -n production
 
   # Filter to specific namespaces
-  cpg generate --server relay.example.com:443 --tls -n production -n staging
+  %[1]s generate --server relay.example.com:443 --tls -n production -n staging
 
   # All namespaces with debug logging
-  cpg --debug generate --server localhost:4245 --all-namespaces`,
+  %[1]s --debug generate --server localhost:4245 --all-namespaces`, bin),
 		RunE: runGenerate,
 	}
 

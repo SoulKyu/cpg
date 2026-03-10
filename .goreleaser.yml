@@ -8,7 +8,8 @@ before:
     - go test -race -count=1 ./...
 
 builds:
-  - main: ./cmd/cpg/
+  - id: cpg
+    main: ./cmd/cpg/
     binary: cpg
     env:
       - CGO_ENABLED=0
@@ -22,9 +23,35 @@ builds:
       - amd64
       - arm64
 
+  - id: kubectl-cilium_policy_gen
+    main: ./cmd/cpg/
+    binary: kubectl-cilium_policy_gen
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
 archives:
-  - format: tar.gz
+  - id: cpg
+    builds:
+      - cpg
+    format: tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+  - id: krew
+    builds:
+      - kubectl-cilium_policy_gen
+    format: tar.gz
+    name_template: "cilium-policy-gen_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
 
 checksum:
   name_template: "checksums.txt"
@@ -67,6 +94,9 @@ release:
     ```bash
     # Go install
     go install github.com/SoulKyu/cpg/cmd/cpg@{{ .Tag }}
+
+    # kubectl krew
+    kubectl krew install cilium-policy-gen
 
     # Or download binary
     curl -sL https://github.com/SoulKyu/cpg/releases/download/{{ .Tag }}/cpg_{{ .Version }}_linux_amd64.tar.gz | tar xz

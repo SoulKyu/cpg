@@ -1,0 +1,49 @@
+apiVersion: krew.googlecontainertools.github.com/v1alpha2
+kind: Plugin
+metadata:
+  name: cilium-policy-gen
+spec:
+  version: {{ .TagName }}
+  homepage: https://github.com/SoulKyu/cpg
+  shortDescription: "Generate CiliumNetworkPolicy from dropped Hubble flows"
+  description: |
+    Watches dropped network flows in real-time via Hubble Relay and
+    automatically generates CiliumNetworkPolicy YAML files that would
+    allow them. Useful for clusters with a default-deny posture where
+    writing policies manually is tedious and error-prone.
+
+    Supports TCP/UDP ports, ICMP, reserved entities, and CIDR rules.
+    Merges with existing policies on disk and writes only on changes.
+
+    Usage:
+      kubectl cilium-policy-gen generate -n <namespace>
+      kubectl cilium-policy-gen generate --server <relay-addr>
+      kubectl cilium-policy-gen generate --cluster-dedup -n <namespace>
+  caveats: |
+    Requires a running Cilium cluster with Hubble Relay enabled.
+    The plugin auto port-forwards to hubble-relay by default.
+  platforms:
+  - selector:
+      matchLabels:
+        os: linux
+        arch: amd64
+    {{addURIAndSha "https://github.com/SoulKyu/cpg/releases/download/{{ .TagName }}/cilium-policy-gen_linux_amd64.tar.gz" .TagName }}
+    bin: kubectl-cilium_policy_gen
+  - selector:
+      matchLabels:
+        os: linux
+        arch: arm64
+    {{addURIAndSha "https://github.com/SoulKyu/cpg/releases/download/{{ .TagName }}/cilium-policy-gen_linux_arm64.tar.gz" .TagName }}
+    bin: kubectl-cilium_policy_gen
+  - selector:
+      matchLabels:
+        os: darwin
+        arch: amd64
+    {{addURIAndSha "https://github.com/SoulKyu/cpg/releases/download/{{ .TagName }}/cilium-policy-gen_darwin_amd64.tar.gz" .TagName }}
+    bin: kubectl-cilium_policy_gen
+  - selector:
+      matchLabels:
+        os: darwin
+        arch: arm64
+    {{addURIAndSha "https://github.com/SoulKyu/cpg/releases/download/{{ .TagName }}/cilium-policy-gen_darwin_arm64.tar.gz" .TagName }}
+    bin: kubectl-cilium_policy_gen

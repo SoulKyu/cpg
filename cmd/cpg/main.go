@@ -2,6 +2,8 @@ package main
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -13,9 +15,19 @@ var version = "dev"
 // logger is the package-level zap logger, initialized by the root PersistentPreRunE.
 var logger *zap.Logger
 
+// isKubectlPlugin returns true when the binary was invoked as a kubectl plugin.
+func isKubectlPlugin() bool {
+	return strings.HasPrefix(filepath.Base(os.Args[0]), "kubectl-")
+}
+
 func main() {
+	useName := "cpg"
+	if isKubectlPlugin() {
+		useName = "kubectl cilium-policy-gen"
+	}
+
 	rootCmd := &cobra.Command{
-		Use:     "cpg",
+		Use:     useName,
 		Short:   "Cilium Policy Generator",
 		Long:    "Automatically generate CiliumNetworkPolicies from observed Hubble flow denials.",
 		Version: version,
