@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.0](https://github.com/SoulKyu/cpg/compare/v1.2.0...v1.3.0) (2026-03-10)
+
+
+### Features
+
+* add kubectl krew plugin support (cilium-policy-gen) ([9c03bbf](https://github.com/SoulKyu/cpg/commit/9c03bbf790c331223dfd82d7f3f1c66e47942305))
+
+
+### Bug Fixes
+
+* remove invalid .Contributors template and fix deprecated archives.format ([6cde130](https://github.com/SoulKyu/cpg/commit/6cde130af69b7fa86ea739e2cd5674ecd4a42127))
+
 ## [1.2.0](https://github.com/SoulKyu/cpg/compare/v1.1.0...v1.2.0) (2026-03-09)
 
 
