@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/SoulKyu/cpg/compare/v1.3.0...v1.4.0) (2026-03-10)
+
+
+### Features
+
+* respect 50 char max ([fdd746e](https://github.com/SoulKyu/cpg/commit/fdd746ebb890221c22228c6113f338c69095b844))
+
 ## [1.3.0](https://github.com/SoulKyu/cpg/compare/v1.2.0...v1.3.0) (2026-03-10)
 
 
