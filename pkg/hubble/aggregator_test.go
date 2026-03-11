@@ -19,7 +19,8 @@ import (
 
 func TestAggregator_FlushOnTicker(t *testing.T) {
 	logger := zaptest.NewLogger(t)
-	agg := NewAggregator(10*time.Millisecond, logger)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(10*time.Millisecond, logger, tracker)
 
 	in := make(chan *flowpb.Flow, 10)
 	out := make(chan policy.PolicyEvent, 10)
@@ -64,7 +65,8 @@ func TestAggregator_FlushOnTicker(t *testing.T) {
 
 func TestAggregator_KeyFromFlow_Ingress(t *testing.T) {
 	logger := zaptest.NewLogger(t)
-	agg := NewAggregator(time.Hour, logger) // long interval, won't tick
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker) // long interval, won't tick
 
 	in := make(chan *flowpb.Flow, 10)
 	out := make(chan policy.PolicyEvent, 10)
@@ -90,7 +92,8 @@ func TestAggregator_KeyFromFlow_Ingress(t *testing.T) {
 
 func TestAggregator_KeyFromFlow_Egress(t *testing.T) {
 	logger := zaptest.NewLogger(t)
-	agg := NewAggregator(time.Hour, logger)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
 
 	in := make(chan *flowpb.Flow, 10)
 	out := make(chan policy.PolicyEvent, 10)
@@ -116,7 +119,8 @@ func TestAggregator_KeyFromFlow_Egress(t *testing.T) {
 
 func TestAggregator_FlushOnChannelClose(t *testing.T) {
 	logger := zaptest.NewLogger(t)
-	agg := NewAggregator(time.Hour, logger) // long interval, won't tick
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker) // long interval, won't tick
 
 	in := make(chan *flowpb.Flow, 10)
 	out := make(chan policy.PolicyEvent, 10)
@@ -135,7 +139,8 @@ func TestAggregator_FlushOnChannelClose(t *testing.T) {
 
 func TestAggregator_FlushOnContextCancel(t *testing.T) {
 	logger := zaptest.NewLogger(t)
-	agg := NewAggregator(time.Hour, logger)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
 
 	in := make(chan *flowpb.Flow, 10)
 	out := make(chan policy.PolicyEvent, 10)
@@ -167,7 +172,8 @@ func TestAggregator_FlushOnContextCancel(t *testing.T) {
 func TestAggregator_SkipEmptyNamespace(t *testing.T) {
 	core, logs := observer.New(zapcore.DebugLevel)
 	logger := zap.New(core)
-	agg := NewAggregator(time.Hour, logger)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
 
 	in := make(chan *flowpb.Flow, 10)
 	out := make(chan policy.PolicyEvent, 10)
@@ -197,7 +203,10 @@ func TestAggregator_SkipEmptyNamespace(t *testing.T) {
 
 	events := drainEvents(out)
 	assert.Empty(t, events, "should skip flows with empty namespace")
-	assert.GreaterOrEqual(t, logs.Len(), 1, "should log debug message for skipped flow")
+
+	debugLogs := filterLogs(logs, zapcore.DebugLevel, "unhandled flow")
+	assert.Len(t, debugLogs, 1, "empty namespace should be tracked")
+	assert.Equal(t, "empty_namespace", fieldString(debugLogs[0], "reason"))
 }
 
 func TestMonitorLostEvents_AggregatesWarnings(t *testing.T) {
@@ -272,6 +281,87 @@ func TestMonitorLostEvents_FinalSummary(t *testing.T) {
 		}
 	}
 	assert.True(t, totalLogged, "should log total lost events in final summary")
+}
+
+func TestAggregator_TracksNilEndpoint(t *testing.T) {
+	core, logs := observer.New(zapcore.DebugLevel)
+	logger := zap.New(core)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+
+	// Flow with nil destination (ingress)
+	f := &flowpb.Flow{
+		TrafficDirection: flowpb.TrafficDirection_INGRESS,
+		Source: &flowpb.Endpoint{
+			Labels:    []string{"k8s:app=client"},
+			Namespace: "default",
+		},
+		Destination: nil,
+	}
+	in <- f
+	close(in)
+
+	err := agg.Run(context.Background(), in, out)
+	require.NoError(t, err)
+
+	events := drainEvents(out)
+	assert.Empty(t, events)
+
+	debugLogs := filterLogs(logs, zapcore.DebugLevel, "unhandled flow")
+	assert.Len(t, debugLogs, 1, "nil endpoint should be tracked")
+	assert.Equal(t, "nil_endpoint", fieldString(debugLogs[0], "reason"))
+}
+
+func TestAggregator_TracksEmptyNamespace(t *testing.T) {
+	core, logs := observer.New(zapcore.DebugLevel)
+	logger := zap.New(core)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+
+	f := &flowpb.Flow{
+		TrafficDirection: flowpb.TrafficDirection_INGRESS,
+		Source: &flowpb.Endpoint{
+			Labels:    []string{"k8s:app=client"},
+			Namespace: "default",
+		},
+		Destination: &flowpb.Endpoint{
+			Labels:    []string{"k8s:app=server"},
+			Namespace: "",
+		},
+		L4: &flowpb.Layer4{
+			Protocol: &flowpb.Layer4_TCP{
+				TCP: &flowpb.TCP{DestinationPort: 80},
+			},
+		},
+	}
+	in <- f
+	close(in)
+
+	err := agg.Run(context.Background(), in, out)
+	require.NoError(t, err)
+
+	events := drainEvents(out)
+	assert.Empty(t, events)
+
+	debugLogs := filterLogs(logs, zapcore.DebugLevel, "unhandled flow")
+	assert.Len(t, debugLogs, 1, "empty namespace should be tracked")
+	assert.Equal(t, "empty_namespace", fieldString(debugLogs[0], "reason"))
+}
+
+// fieldString extracts a string field value from a log entry.
+func fieldString(entry observer.LoggedEntry, key string) string {
+	for _, f := range entry.Context {
+		if f.Key == key {
+			return f.String
+		}
+	}
+	return ""
 }
 
 // drainEvents reads all events from a closed channel.

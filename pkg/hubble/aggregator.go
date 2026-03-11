@@ -23,17 +23,19 @@ type AggKey struct {
 // PolicyEvents on a configurable ticker interval. It also flushes remaining
 // flows when the input channel closes or the context is cancelled.
 type Aggregator struct {
-	interval     time.Duration
-	logger       *zap.Logger
+	interval       time.Duration
+	logger         *zap.Logger
 	warnedReserved map[string]struct{}
+	tracker        *UnhandledTracker
 }
 
 // NewAggregator creates a new Aggregator with the given flush interval.
-func NewAggregator(interval time.Duration, logger *zap.Logger) *Aggregator {
+func NewAggregator(interval time.Duration, logger *zap.Logger, tracker *UnhandledTracker) *Aggregator {
 	return &Aggregator{
 		interval:       interval,
 		logger:         logger,
 		warnedReserved: make(map[string]struct{}),
+		tracker:        tracker,
 	}
 }
 
@@ -86,7 +88,7 @@ func (a *Aggregator) keyFromFlow(f *flowpb.Flow) (key AggKey, skip bool) {
 	}
 
 	if ep == nil {
-		a.logger.Debug("skipping flow with nil endpoint")
+		a.tracker.Track(f, "nil_endpoint")
 		return AggKey{}, true
 	}
 
@@ -101,10 +103,7 @@ func (a *Aggregator) keyFromFlow(f *flowpb.Flow) (key AggKey, skip bool) {
 				)
 			}
 		} else {
-			a.logger.Debug("skipping flow with empty namespace",
-				zap.Strings("labels", ep.Labels),
-				zap.String("workload", labels.WorkloadName(ep.Labels)),
-			)
+			a.tracker.Track(f, "empty_namespace")
 		}
 		return AggKey{}, true
 	}

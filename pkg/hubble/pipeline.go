@@ -82,7 +82,8 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source FlowS
 		zap.Bool("all-namespaces", cfg.AllNamespaces),
 	)
 
-	agg := NewAggregator(cfg.FlushInterval, cfg.Logger)
+	tracker := NewUnhandledTracker(cfg.Logger)
+	agg := NewAggregator(cfg.FlushInterval, cfg.Logger, tracker)
 	writer := output.NewWriter(cfg.OutputDir, cfg.Logger)
 	stats := &SessionStats{
 		StartTime: time.Now(),
