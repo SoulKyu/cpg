@@ -138,6 +138,49 @@ cpg tries hard not to waste your time:
 - **Cross-flush dedup**: if the same policy was written in a previous flush cycle, it's not rewritten.
 - **Cluster dedup** (`--cluster-dedup`): fetches live CiliumNetworkPolicies from the cluster and skips policies that already match. Needs `list` RBAC on `ciliumnetworkpolicies.cilium.io`.
 
+## Unhandled flows
+
+Not every dropped flow can become a policy rule. cpg reports what it skips so you can investigate:
+
+- **INFO summary** at each flush cycle -- structured counters by skip reason
+- **DEBUG detail** per unique flow -- logged once, with source, destination, port, protocol, and destination labels
+
+Enable debug logging to see individual flows:
+
+```bash
+cpg --debug generate -n production
+# or
+cpg --log-level debug generate -n production
+```
+
+### Skip reasons
+
+| Reason | What it means |
+|--------|---------------|
+| `no_l4` | Flow has no L4 layer (no port/protocol info) |
+| `nil_endpoint` | Source or destination endpoint is nil |
+| `empty_namespace` | Target endpoint has no namespace (non-reserved identity) |
+| `nil_source` | Ingress flow with nil source endpoint |
+| `nil_destination` | Egress flow with nil destination endpoint |
+| `unknown_protocol` | L4 layer present but protocol not TCP/UDP/ICMP |
+| `world_no_ip` | World (external) traffic without an IP address |
+
+### Example output
+
+At INFO level (default):
+
+```
+INFO  Unhandled flows summary  {"no_l4": 42, "nil_endpoint": 8, "world_no_ip": 3}
+```
+
+At DEBUG level:
+
+```
+DEBUG Unhandled flow  {"src": "default/nginx", "dst": "kube-system/coredns", "port": "53", "proto": "UDP", "reason": "no_l4", "dst_labels": ["k8s:app=coredns"]}
+```
+
+Reserved identity flows (like `reserved:host` or `reserved:kube-apiserver`) are reported separately as WARN logs with guidance to use CiliumClusterwideNetworkPolicy instead.
+
 ## Label selection
 
 Labels are chosen with a priority hierarchy:
