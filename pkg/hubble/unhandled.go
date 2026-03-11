@@ -89,7 +89,8 @@ func (t *UnhandledTracker) dedupKey(f *flowpb.Flow, reason string) string {
 	src := endpointID(f.Source)
 	dst := endpointID(f.Destination)
 	port, proto := protoFields(f)
-	return fmt.Sprintf("%s|%s|%s|%s|%s", src, dst, port, proto, reason)
+	dir := f.TrafficDirection.String()
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s", src, dst, port, proto, dir, reason)
 }
 
 // extractFields pulls human-readable fields from a flow for DEBUG logging.

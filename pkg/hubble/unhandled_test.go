@@ -1,6 +1,7 @@
 package hubble
 
 import (
+	"strings"
 	"testing"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
@@ -113,25 +114,13 @@ func TestTrack_SameFlowDifferentReason(t *testing.T) {
 func filterLogs(logs *observer.ObservedLogs, level zapcore.Level, msgSubstring string) []observer.LoggedEntry {
 	var result []observer.LoggedEntry
 	for _, entry := range logs.All() {
-		if entry.Level == level && contains(entry.Message, msgSubstring) {
+		if entry.Level == level && strings.Contains(entry.Message, msgSubstring) {
 			result = append(result, entry)
 		}
 	}
 	return result
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
-}
-
-func searchString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
 
 func TestFlush_EmitsSummary(t *testing.T) {
 	core, logs := observer.New(zapcore.DebugLevel)
