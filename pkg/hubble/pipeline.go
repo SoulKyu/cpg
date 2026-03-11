@@ -153,6 +153,8 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source FlowS
 	})
 
 	err = g.Wait()
+	// Final flush for any unhandled flows tracked after the last aggregation cycle
+	tracker.Flush()
 	stats.Log(cfg.Logger)
 	return err
 }

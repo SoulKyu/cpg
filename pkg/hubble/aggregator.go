@@ -127,6 +127,8 @@ func (a *Aggregator) flush(buckets map[AggKey][]*flowpb.Flow, out chan<- policy.
 	for k := range buckets {
 		delete(buckets, k)
 	}
+	// Flush unhandled flow summary after each aggregation cycle
+	a.tracker.Flush()
 }
 
 // monitorLostEvents accumulates LostEvents and logs an aggregated warning
