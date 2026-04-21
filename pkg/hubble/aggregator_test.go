@@ -154,8 +154,8 @@ func TestAggregator_FlushOnContextCancel(t *testing.T) {
 		done <- agg.Run(ctx, in, out)
 	}()
 
-	// Give time for the flow to be received
-	time.Sleep(20 * time.Millisecond)
+	// Deterministic: wait until the aggregator has consumed the buffered flow.
+	require.Eventually(t, func() bool { return len(in) == 0 }, time.Second, time.Millisecond)
 	cancel()
 
 	select {
@@ -225,9 +225,8 @@ func TestMonitorLostEvents_AggregatesWarnings(t *testing.T) {
 		done <- monitorLostEvents(ctx, ch, logger)
 	}()
 
-	// Wait a bit then cancel -- with a very short ticker we'd see a warn log
-	// We close channel to trigger return
-	time.Sleep(50 * time.Millisecond)
+	// Deterministic: wait until both events are drained, then cancel.
+	require.Eventually(t, func() bool { return len(ch) == 0 }, time.Second, time.Millisecond)
 	cancel()
 
 	select {
@@ -261,7 +260,7 @@ func TestMonitorLostEvents_FinalSummary(t *testing.T) {
 		done <- monitorLostEvents(ctx, ch, logger)
 	}()
 
-	time.Sleep(20 * time.Millisecond)
+	require.Eventually(t, func() bool { return len(ch) == 0 }, time.Second, time.Millisecond)
 	cancel()
 
 	select {
