@@ -6,6 +6,7 @@ import (
 	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
 	"github.com/cilium/cilium/pkg/policy/api"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/SoulKyu/cpg/pkg/policy"
@@ -39,7 +40,9 @@ func TestPoliciesEquivalent_SameSpecDifferentMeta(t *testing.T) {
 	a := makePolicy("policy-a", ingress, nil)
 	b := makePolicy("policy-b", ingress, nil)
 
-	assert.True(t, policy.PoliciesEquivalent(a, b), "same spec with different metadata should be equivalent")
+	equiv, err := policy.PoliciesEquivalent(a, b)
+	require.NoError(t, err)
+	assert.True(t, equiv, "same spec with different metadata should be equivalent")
 }
 
 func TestPoliciesEquivalent_DifferentIngressRules(t *testing.T) {
@@ -65,7 +68,9 @@ func TestPoliciesEquivalent_DifferentIngressRules(t *testing.T) {
 		},
 	}, nil)
 
-	assert.False(t, policy.PoliciesEquivalent(a, b), "different ingress rules should not be equivalent")
+	equiv, err := policy.PoliciesEquivalent(a, b)
+	require.NoError(t, err)
+	assert.False(t, equiv, "different ingress rules should not be equivalent")
 }
 
 func TestPoliciesEquivalent_DifferentOrderSameRules(t *testing.T) {
@@ -89,13 +94,21 @@ func TestPoliciesEquivalent_DifferentOrderSameRules(t *testing.T) {
 	a := makePolicy("policy", []api.IngressRule{ruleA, ruleB}, nil)
 	b := makePolicy("policy", []api.IngressRule{ruleB, ruleA}, nil)
 
-	assert.True(t, policy.PoliciesEquivalent(a, b), "same rules in different order should be equivalent")
+	equiv, err := policy.PoliciesEquivalent(a, b)
+	require.NoError(t, err)
+	assert.True(t, equiv, "same rules in different order should be equivalent")
 }
 
 func TestPoliciesEquivalent_NilPolicy(t *testing.T) {
 	p := makePolicy("policy", nil, nil)
 
-	assert.False(t, policy.PoliciesEquivalent(p, nil), "policy vs nil should not be equivalent")
-	assert.False(t, policy.PoliciesEquivalent(nil, p), "nil vs policy should not be equivalent")
-	assert.True(t, policy.PoliciesEquivalent(nil, nil), "nil vs nil should be equivalent")
+	equiv, err := policy.PoliciesEquivalent(p, nil)
+	require.NoError(t, err)
+	assert.False(t, equiv, "policy vs nil should not be equivalent")
+	equiv, err = policy.PoliciesEquivalent(nil, p)
+	require.NoError(t, err)
+	assert.False(t, equiv, "nil vs policy should not be equivalent")
+	equiv, err = policy.PoliciesEquivalent(nil, nil)
+	require.NoError(t, err)
+	assert.True(t, equiv, "nil vs nil should be equivalent")
 }

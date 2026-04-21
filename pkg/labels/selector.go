@@ -162,9 +162,6 @@ func BuildEndpointSelector(endpointLabels []string) api.EndpointSelector {
 // label keys via GetCiliumKeyFrom.
 func BuildPeerSelector(peerLabels []string, peerNamespace, policyNamespace string) api.EndpointSelector {
 	selected := SelectLabels(peerLabels)
-	if selected == nil {
-		selected = map[string]string{}
-	}
 
 	// Add namespace label for cross-namespace peers
 	if peerNamespace != policyNamespace {

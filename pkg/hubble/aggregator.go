@@ -84,11 +84,12 @@ func (a *Aggregator) keyFromFlow(f *flowpb.Flow) (key AggKey, skip bool) {
 	case flowpb.TrafficDirection_EGRESS:
 		ep = f.Source
 	default:
-		ep = f.Destination
+		a.tracker.Track(f, string(ReasonUnknownDir))
+		return AggKey{}, true
 	}
 
 	if ep == nil {
-		a.tracker.Track(f, "nil_endpoint")
+		a.tracker.Track(f, string(ReasonNilEndpoint))
 		return AggKey{}, true
 	}
 

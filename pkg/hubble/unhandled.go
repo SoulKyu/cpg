@@ -6,6 +6,23 @@ import (
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
 	"go.uber.org/zap"
+
+	"github.com/SoulKyu/cpg/pkg/labels"
+)
+
+// UnhandledReason identifies why a flow was not converted to a policy rule.
+type UnhandledReason string
+
+const (
+	ReasonNoL4            UnhandledReason = "no_l4"
+	ReasonNilSource       UnhandledReason = "nil_source"
+	ReasonNilDestination  UnhandledReason = "nil_destination"
+	ReasonNilEndpoint     UnhandledReason = "nil_endpoint"
+	ReasonEmptyNamespace  UnhandledReason = "empty_namespace"
+	ReasonUnknownProtocol UnhandledReason = "unknown_protocol"
+	ReasonWorldNoIP       UnhandledReason = "world_no_ip"
+	ReasonReservedID      UnhandledReason = "reserved_identity"
+	ReasonUnknownDir      UnhandledReason = "unknown_direction"
 )
 
 // UnhandledTracker tracks flows that CPG cannot convert to policy rules.
@@ -110,33 +127,15 @@ func endpointID(ep *flowpb.Endpoint) string {
 		return "<nil>"
 	}
 	if ep.Namespace != "" {
-		workload := workloadFromLabels(ep.Labels)
-		if workload != "" {
+		if workload := labels.WorkloadName(ep.Labels); workload != "" {
 			return ep.Namespace + "/" + workload
 		}
 		return ep.Namespace + "/<unknown>"
 	}
-	// No namespace -- use first label as identifier
 	if len(ep.Labels) > 0 {
 		return ep.Labels[0]
 	}
 	return "<unknown>"
-}
-
-// workloadFromLabels extracts a workload name from endpoint labels.
-// Mirrors the logic in pkg/labels.WorkloadName but avoids a cross-package dependency.
-func workloadFromLabels(lbls []string) string {
-	for _, l := range lbls {
-		if len(l) > 27 && l[:27] == "k8s:app.kubernetes.io/name=" {
-			return l[27:]
-		}
-	}
-	for _, l := range lbls {
-		if len(l) > 8 && l[:8] == "k8s:app=" {
-			return l[8:]
-		}
-	}
-	return ""
 }
 
 // protoFields extracts port and protocol from a flow's L4 layer.

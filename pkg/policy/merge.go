@@ -68,7 +68,7 @@ func ingressRulesMatch(a, b api.IngressRule) bool {
 	if !matchCIDRSlice(a.FromCIDR, b.FromCIDR) {
 		return false
 	}
-	return isICMPRule(a) == isICMPRule(b)
+	return ingressIsICMP(a) == ingressIsICMP(b)
 }
 
 // egressRulesMatch returns true if two egress rules target the same peer
@@ -83,20 +83,11 @@ func egressRulesMatch(a, b api.EgressRule) bool {
 	if !matchCIDRSlice(a.ToCIDR, b.ToCIDR) {
 		return false
 	}
-	return isICMPRule(a) == isICMPRule(b)
+	return egressIsICMP(a) == egressIsICMP(b)
 }
 
-// isICMPRule returns true if the rule carries ICMP fields rather than port specs.
-func isICMPRule(r interface{}) bool {
-	switch v := r.(type) {
-	case api.IngressRule:
-		return len(v.ICMPs) > 0
-	case api.EgressRule:
-		return len(v.ICMPs) > 0
-	default:
-		return false
-	}
-}
+func ingressIsICMP(r api.IngressRule) bool { return len(r.ICMPs) > 0 }
+func egressIsICMP(r api.EgressRule) bool   { return len(r.ICMPs) > 0 }
 
 // matchEntities compares two EntitySlice values for equality.
 func matchEntities(a, b api.EntitySlice) bool {
@@ -188,27 +179,28 @@ func mergePortRules(existing, incoming api.PortRules) api.PortRules {
 		return existing
 	}
 
-	// Collect all existing ports into the first PortRule
+	// Flatten all existing ports into the first PortRule so entries beyond
+	// existing[0] are preserved.
 	result := make(api.PortRules, 1)
-	result[0].Ports = append(result[0].Ports, existing[0].Ports...)
-
-	// Build dedup set from existing
 	seen := make(map[string]struct{})
-	for _, p := range existing[0].Ports {
-		seen[p.Port+"/"+string(p.Protocol)] = struct{}{}
+	appendIfNew := func(p api.PortProtocol) {
+		key := p.Port + "/" + string(p.Protocol)
+		if _, dup := seen[key]; dup {
+			return
+		}
+		seen[key] = struct{}{}
+		result[0].Ports = append(result[0].Ports, p)
 	}
-
-	// Add incoming ports that are not duplicates
-	for _, pr := range incoming {
+	for _, pr := range existing {
 		for _, p := range pr.Ports {
-			key := p.Port + "/" + string(p.Protocol)
-			if _, dup := seen[key]; !dup {
-				result[0].Ports = append(result[0].Ports, p)
-				seen[key] = struct{}{}
-			}
+			appendIfNew(p)
 		}
 	}
-
+	for _, pr := range incoming {
+		for _, p := range pr.Ports {
+			appendIfNew(p)
+		}
+	}
 	return result
 }
 

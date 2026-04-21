@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
@@ -125,12 +124,3 @@ func findRelayPod(ctx context.Context, clientset kubernetes.Interface, logger *z
 	return nil, fmt.Errorf("no running hubble-relay pod found in %s (%d pods found, none running)", relayNamespace, len(pods.Items))
 }
 
-// portForwardURL builds the URL for the pod portforward subresource.
-// Exported for potential future use.
-func portForwardURL(config *rest.Config, namespace, podName string) *url.URL {
-	return &url.URL{
-		Scheme: "https",
-		Host:   config.Host,
-		Path:   fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/portforward", namespace, podName),
-	}
-}

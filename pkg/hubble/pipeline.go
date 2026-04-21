@@ -109,8 +109,15 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source FlowS
 
 			// Cluster dedup: skip if policy matches cluster state
 			if cfg.ClusterPolicies != nil {
-				if clusterPolicy, ok := cfg.ClusterPolicies["cpg-"+pe.Workload]; ok {
-					if policy.PoliciesEquivalent(clusterPolicy, pe.Policy) {
+				if clusterPolicy, ok := cfg.ClusterPolicies[policy.PolicyName(pe.Workload)]; ok {
+					equiv, err := policy.PoliciesEquivalent(clusterPolicy, pe.Policy)
+					if err != nil {
+						cfg.Logger.Warn("policy equivalence check failed; writing to be safe",
+							zap.String("namespace", pe.Namespace),
+							zap.String("workload", pe.Workload),
+							zap.Error(err),
+						)
+					} else if equiv {
 						cfg.Logger.Debug("policy already exists in cluster, skipping",
 							zap.String("namespace", pe.Namespace),
 							zap.String("workload", pe.Workload),
@@ -123,7 +130,14 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source FlowS
 
 			// Cross-flush dedup: skip if identical to last written policy for this workload
 			if lastWritten, ok := writtenPolicies[dedupKey]; ok {
-				if policy.PoliciesEquivalent(lastWritten, pe.Policy) {
+				equiv, err := policy.PoliciesEquivalent(lastWritten, pe.Policy)
+				if err != nil {
+					cfg.Logger.Warn("policy equivalence check failed; writing to be safe",
+						zap.String("namespace", pe.Namespace),
+						zap.String("workload", pe.Workload),
+						zap.Error(err),
+					)
+				} else if equiv {
 					cfg.Logger.Debug("policy unchanged since last flush, skipping",
 						zap.String("namespace", pe.Namespace),
 						zap.String("workload", pe.Workload),
