@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.6.0](https://github.com/SoulKyu/cpg/compare/v1.5.1...v1.6.0) (2026-04-24)
+
+
+### Features
+
+* **cli:** cpg replay + cpg explain subcommands with dry-run + evidence ([73e0e4b](https://github.com/SoulKyu/cpg/commit/73e0e4b43f32461ee9222c9abb6efddd64ac63e0))
+* **evidence:** add JSON schema for per-rule attribution ([db6f62f](https://github.com/SoulKyu/cpg/commit/db6f62f851788ce1aa6f9cd848c840d49e644911))
+* **evidence:** atomic writer + reader with schema version check ([a885ccc](https://github.com/SoulKyu/cpg/commit/a885ccc463bed1152ce372b1c7b34a31ab4d07f8))
+* **evidence:** merge semantics with FIFO sample/session caps ([259de0f](https://github.com/SoulKyu/cpg/commit/259de0f50c6f247097173ee81c28b46687f78178))
+* **evidence:** XDG-aware path resolver with output-dir hash ([2c6a58e](https://github.com/SoulKyu/cpg/commit/2c6a58e0ab6f3f0e8bf005feba0a1fa2ab762c92))
+* **flowsource:** jsonpb file source with DROPPED filter, gzip, error counters ([79c1d96](https://github.com/SoulKyu/cpg/commit/79c1d9660fa8803354073fe7788d0315d1f2be54))
+* **hubble,diff:** dry-run mode with unified YAML diff ([ab4cb0e](https://github.com/SoulKyu/cpg/commit/ab4cb0e0ce7bff791b21bac9d32eadbd9879b774))
+* **hubble,evidence:** evidence writer goroutine + pipeline fan-out ([05c8320](https://github.com/SoulKyu/cpg/commit/05c8320fb4000798066293895019dee10dc027ba))
+* **policy:** add RuleKey and RuleAttribution types ([3e00803](https://github.com/SoulKyu/cpg/commit/3e0080382a36ed46d5efcaba3debc70d4bb9cb86))
+* **policy:** BuildPolicy returns per-rule attribution ([34eb318](https://github.com/SoulKyu/cpg/commit/34eb3185d5fd98acfdf72216a85bd1ce07eb50f4))
+
 ## [1.5.1](https://github.com/SoulKyu/cpg/compare/v1.5.0...v1.5.1) (2026-04-24)
 
 
