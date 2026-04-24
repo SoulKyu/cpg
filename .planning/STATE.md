@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: executing
-stopped_at: v1.1 rescoped — spec + master plan written, phases 4–6 created
-last_updated: "2026-04-24T15:40:24.501Z"
-last_activity: 2026-04-24 -- Phase 04 execution started
+milestone: v1.2
+milestone_name: awaiting-scope
+status: between_milestones
+stopped_at: v1.0 + v1.1 archived 2026-04-24; next milestone awaits /gsd:new-milestone
+last_updated: "2026-04-24T16:00:00.000Z"
+last_activity: 2026-04-24 -- Archived v1.0 and v1.1 milestones
 progress:
-  total_phases: 6
-  completed_phases: 3
-  total_plans: 10
-  completed_plans: 7
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
   percent: 0
 ---
 
@@ -25,12 +25,11 @@ See: .planning/PROJECT.md (updated 2026-03-09)
 
 ## Current Position
 
-Phase: 04 (offline-replay-core) — EXECUTING
-Plan: 1 of 1
-Status: Executing Phase 04
-Last activity: 2026-04-24 -- Phase 04 execution started
+Status: Between milestones — v1.0 and v1.1 archived.
+Last activity: 2026-04-24 -- Archived v1.0 and v1.1 milestones
+Next: `/gsd:new-milestone` to scope v1.2.
 
-Progress: [░░░░░░░░░░] 0%
+Progress: v1.0 ✅ · v1.1 ✅ · v1.2 📋 (not started)
 
 ## Performance Metrics
 
@@ -93,11 +92,12 @@ None.
 
 ### Blockers/Concerns
 
-- Cilium monorepo dependency may inflate binary to 40+ MiB -- validate in Phase 1 scaffolding
-- Flow label completeness (app.kubernetes.io/* population) may require tuning label heuristics
+None open at milestone close. Prior concerns resolved:
+- ~~Cilium monorepo dependency inflates binary~~ — accepted (~40 MiB, acceptable for ops tool).
+- ~~Flow label completeness for `app.kubernetes.io/*`~~ — smart label heuristics + workload-name fallback work in practice.
 
 ## Session Continuity
 
-Last session: 2026-04-24T14:20:00Z
-Stopped at: v1.1 rescoped — spec + master plan written, phases 4–6 created
-Resume file: Start Phase 4 via `/gsd:plan-phase 04-offline-replay-core` or execute inline from the master plan.
+Last session: 2026-04-24T16:00:00Z
+Stopped at: v1.0 and v1.1 milestones archived — ready for v1.2 scoping.
+Resume: Run `/gsd:new-milestone` to scope v1.2 (L7 + auto-apply + metrics).
