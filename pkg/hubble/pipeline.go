@@ -4,19 +4,14 @@ import (
 	"context"
 	"time"
 
-	flowpb "github.com/cilium/cilium/api/v1/flow"
 	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/SoulKyu/cpg/pkg/flowsource"
 	"github.com/SoulKyu/cpg/pkg/output"
 	"github.com/SoulKyu/cpg/pkg/policy"
 )
-
-// FlowSource abstracts the streaming source for testability.
-type FlowSource interface {
-	StreamDroppedFlows(ctx context.Context, namespaces []string, allNS bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error)
-}
 
 // PipelineConfig holds all configuration for the streaming pipeline.
 type PipelineConfig struct {
@@ -69,7 +64,7 @@ func RunPipeline(ctx context.Context, cfg PipelineConfig) error {
 
 // RunPipelineWithSource runs the pipeline with an injectable flow source.
 // This enables testing without a real gRPC connection.
-func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source FlowSource) error {
+func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flowsource.FlowSource) error {
 	flows, lostEvents, err := source.StreamDroppedFlows(ctx, cfg.Namespaces, cfg.AllNamespaces)
 	if err != nil {
 		return err
