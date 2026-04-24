@@ -77,20 +77,65 @@ Examples:
 	return cmd
 }
 
-func runGenerate(cmd *cobra.Command, _ []string) error {
-	server, _ := cmd.Flags().GetString("server")
-	namespaces, _ := cmd.Flags().GetStringSlice("namespace")
-	allNamespaces, _ := cmd.Flags().GetBool("all-namespaces")
-	outputDir, _ := cmd.Flags().GetString("output-dir")
-	tlsEnabled, _ := cmd.Flags().GetBool("tls")
-	flushInterval, _ := cmd.Flags().GetDuration("flush-interval")
-	timeout, _ := cmd.Flags().GetDuration("timeout")
-	clusterDedup, _ := cmd.Flags().GetBool("cluster-dedup")
+// generateFlags holds the parsed flag values for the generate command. It
+// exists so flag-level validation (mutual exclusion, target namespace
+// resolution) can be unit tested without constructing a cobra.Command.
+type generateFlags struct {
+	server        string
+	namespaces    []string
+	allNamespaces bool
+	outputDir     string
+	tlsEnabled    bool
+	flushInterval time.Duration
+	timeout       time.Duration
+	clusterDedup  bool
+}
 
-	// Validate mutually exclusive flags
-	if len(namespaces) > 0 && allNamespaces {
+// validate enforces flag-level invariants. Returns an error when the user
+// combined flags that cannot be honored simultaneously.
+func (f generateFlags) validate() error {
+	if len(f.namespaces) > 0 && f.allNamespaces {
 		return fmt.Errorf("--namespace and --all-namespaces are mutually exclusive")
 	}
+	return nil
+}
+
+// clusterDedupNamespaces returns the list of namespaces to query when
+// loading cluster policies for dedup. An empty-string element means "list
+// across all namespaces" (the k8s client contract).
+func (f generateFlags) clusterDedupNamespaces() []string {
+	if f.allNamespaces || len(f.namespaces) == 0 {
+		return []string{""}
+	}
+	return f.namespaces
+}
+
+func parseGenerateFlags(cmd *cobra.Command) generateFlags {
+	f := generateFlags{}
+	f.server, _ = cmd.Flags().GetString("server")
+	f.namespaces, _ = cmd.Flags().GetStringSlice("namespace")
+	f.allNamespaces, _ = cmd.Flags().GetBool("all-namespaces")
+	f.outputDir, _ = cmd.Flags().GetString("output-dir")
+	f.tlsEnabled, _ = cmd.Flags().GetBool("tls")
+	f.flushInterval, _ = cmd.Flags().GetDuration("flush-interval")
+	f.timeout, _ = cmd.Flags().GetDuration("timeout")
+	f.clusterDedup, _ = cmd.Flags().GetBool("cluster-dedup")
+	return f
+}
+
+func runGenerate(cmd *cobra.Command, _ []string) error {
+	f := parseGenerateFlags(cmd)
+	if err := f.validate(); err != nil {
+		return err
+	}
+	server := f.server
+	namespaces := f.namespaces
+	allNamespaces := f.allNamespaces
+	outputDir := f.outputDir
+	tlsEnabled := f.tlsEnabled
+	flushInterval := f.flushInterval
+	timeout := f.timeout
+	clusterDedup := f.clusterDedup
 
 	// Setup signal-aware context for graceful shutdown
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
@@ -137,21 +182,10 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 			}
 		}
 
-		clusterPolicies = make(map[string]*ciliumv2.CiliumNetworkPolicy)
-		targetNamespaces := namespaces
-		if allNamespaces || len(targetNamespaces) == 0 {
-			// When all namespaces or no filter, pass empty string to list across all namespaces
-			targetNamespaces = []string{""}
-		}
-
-		for _, ns := range targetNamespaces {
-			policies, err := k8s.LoadClusterPolicies(ctx, kubeConfig, ns)
-			if err != nil {
-				return fmt.Errorf("loading cluster policies for dedup: %w", err)
-			}
-			for name, pol := range policies {
-				clusterPolicies[name] = pol
-			}
+		var err error
+		clusterPolicies, err = k8s.LoadClusterPoliciesForNamespaces(ctx, kubeConfig, f.clusterDedupNamespaces())
+		if err != nil {
+			return fmt.Errorf("loading cluster policies for dedup: %w", err)
 		}
 
 		logger.Info("loaded cluster policies for dedup",

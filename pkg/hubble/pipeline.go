@@ -2,7 +2,6 @@ package hubble
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
@@ -101,48 +100,9 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source FlowS
 
 	// Stage 2: Write policies to disk with dedup checks
 	g.Go(func() error {
-		// Cross-flush dedup: track written policies by namespace/workload key
-		writtenPolicies := make(map[string]*ciliumv2.CiliumNetworkPolicy)
-
+		pw := newPolicyWriter(writer, cfg.ClusterPolicies, stats, cfg.Logger)
 		for pe := range policies {
-			dedupKey := fmt.Sprintf("%s/%s", pe.Namespace, pe.Workload)
-
-			// Cluster dedup: skip if policy matches cluster state
-			if cfg.ClusterPolicies != nil {
-				if clusterPolicy, ok := cfg.ClusterPolicies["cpg-"+pe.Workload]; ok {
-					if policy.PoliciesEquivalent(clusterPolicy, pe.Policy) {
-						cfg.Logger.Debug("policy already exists in cluster, skipping",
-							zap.String("namespace", pe.Namespace),
-							zap.String("workload", pe.Workload),
-						)
-						stats.PoliciesSkipped++
-						continue
-					}
-				}
-			}
-
-			// Cross-flush dedup: skip if identical to last written policy for this workload
-			if lastWritten, ok := writtenPolicies[dedupKey]; ok {
-				if policy.PoliciesEquivalent(lastWritten, pe.Policy) {
-					cfg.Logger.Debug("policy unchanged since last flush, skipping",
-						zap.String("namespace", pe.Namespace),
-						zap.String("workload", pe.Workload),
-					)
-					stats.PoliciesSkipped++
-					continue
-				}
-			}
-
-			if err := writer.Write(pe); err != nil {
-				cfg.Logger.Error("failed to write policy",
-					zap.String("namespace", pe.Namespace),
-					zap.String("workload", pe.Workload),
-					zap.Error(err),
-				)
-				continue
-			}
-			stats.PoliciesWritten++
-			writtenPolicies[dedupKey] = pe.Policy
+			pw.handle(pe)
 		}
 		return nil
 	})

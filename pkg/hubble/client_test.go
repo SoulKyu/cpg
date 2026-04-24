@@ -102,7 +102,7 @@ func TestClient_StreamDroppedFlows(t *testing.T) {
 		},
 	}
 
-	flows, lostEvents := streamFromSource(stream, logger)
+	flows, lostEvents := streamFromSource(stream, logger, nil)
 
 	var receivedFlows []*flowpb.Flow
 	var receivedLost []*flowpb.LostEvent
@@ -134,7 +134,7 @@ func TestClient_StreamContextCancel(t *testing.T) {
 	// Stream that blocks until context is cancelled
 	stream := &blockingStream{ctx: ctx}
 
-	flows, lostEvents := streamFromSource(stream, logger)
+	flows, lostEvents := streamFromSource(stream, logger, nil)
 
 	// Cancel context to trigger shutdown
 	cancel()
@@ -163,7 +163,7 @@ func TestClient_StreamError(t *testing.T) {
 		err: io.ErrUnexpectedEOF,
 	}
 
-	flows, lostEvents := streamFromSource(stream, logger)
+	flows, lostEvents := streamFromSource(stream, logger, nil)
 
 	// Both channels should close without panic
 	timeout := time.After(2 * time.Second)
@@ -201,7 +201,7 @@ func TestClient_SkipsNonDroppedFlowResponses(t *testing.T) {
 		},
 	}
 
-	flows, lostEvents := streamFromSource(stream, logger)
+	flows, lostEvents := streamFromSource(stream, logger, nil)
 
 	var receivedFlows []*flowpb.Flow
 	done := make(chan struct{})

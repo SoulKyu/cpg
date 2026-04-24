@@ -10,44 +10,39 @@ import (
 )
 
 // PoliciesEquivalent compares two CiliumNetworkPolicies by their Spec only
-// (ignoring metadata). Rules are normalized (sorted) before comparison so that
-// ordering differences do not cause false negatives.
-func PoliciesEquivalent(a, b *ciliumv2.CiliumNetworkPolicy) bool {
+// (ignoring metadata). Returns (equivalent, error). Rules are normalized
+// (sorted) before comparison. reflect.DeepEqual is unreliable here because
+// Cilium's EndpointSelector has unexported fields that differ between freshly
+// built selectors and YAML-roundtripped ones; YAML serialization normalizes
+// label keys through Cilium's MarshalJSON for consistent output.
+func PoliciesEquivalent(a, b *ciliumv2.CiliumNetworkPolicy) (bool, error) {
 	if a == nil && b == nil {
-		return true
+		return true, nil
 	}
 	if a == nil || b == nil {
-		return false
+		return false, nil
 	}
 	if a.Spec == nil && b.Spec == nil {
-		return true
+		return true, nil
 	}
 	if a.Spec == nil || b.Spec == nil {
-		return false
+		return false, nil
 	}
 
-	// DeepCopy to avoid mutating originals
 	aCopy := a.Spec.DeepCopy()
 	bCopy := b.Spec.DeepCopy()
-
-	// Normalize: sort rules and ports
 	normalizeRule(aCopy)
 	normalizeRule(bCopy)
 
-	// Compare via YAML serialization. reflect.DeepEqual is unreliable here
-	// because Cilium's EndpointSelector has unexported fields (sanitized,
-	// cachedLabelSelectorString) that differ between freshly built selectors
-	// and YAML-roundtripped ones. YAML serialization normalizes label keys
-	// through Cilium's custom MarshalJSON, producing consistent output.
 	aData, err := yaml.Marshal(aCopy)
 	if err != nil {
-		return false
+		return false, fmt.Errorf("marshal policy a: %w", err)
 	}
 	bData, err := yaml.Marshal(bCopy)
 	if err != nil {
-		return false
+		return false, fmt.Errorf("marshal policy b: %w", err)
 	}
-	return string(aData) == string(bData)
+	return string(aData) == string(bData), nil
 }
 
 // normalizeRule sorts ingress/egress rules and their ports for deterministic comparison.
@@ -102,6 +97,9 @@ func ingressRuleKey(r api.IngressRule) string {
 	for _, cidr := range r.FromCIDR {
 		parts = append(parts, "cidr:"+string(cidr))
 	}
+	for _, entity := range r.FromEntities {
+		parts = append(parts, "entity:"+string(entity))
+	}
 	sort.Strings(parts)
 	return fmt.Sprintf("%v", parts)
 }
@@ -121,6 +119,9 @@ func egressRuleKey(r api.EgressRule) string {
 	}
 	for _, cidr := range r.ToCIDR {
 		parts = append(parts, "cidr:"+string(cidr))
+	}
+	for _, entity := range r.ToEntities {
+		parts = append(parts, "entity:"+string(entity))
 	}
 	sort.Strings(parts)
 	return fmt.Sprintf("%v", parts)

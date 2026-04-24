@@ -116,8 +116,12 @@ func TestRunPipeline_GracefulShutdown(t *testing.T) {
 		done <- RunPipelineWithSource(ctx, cfg, source)
 	}()
 
-	// Give time for flow to be consumed then cancel
-	time.Sleep(50 * time.Millisecond)
+	// Deterministic: wait until the pipeline has written the policy, then cancel.
+	serverPolicy := filepath.Join(tmpDir, "default", "server.yaml")
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(serverPolicy)
+		return err == nil
+	}, 5*time.Second, 5*time.Millisecond)
 	cancel()
 
 	select {
@@ -127,10 +131,7 @@ func TestRunPipeline_GracefulShutdown(t *testing.T) {
 		t.Fatal("timed out waiting for graceful shutdown")
 	}
 
-	// Verify remaining flow was flushed to disk
-	serverPolicy := filepath.Join(tmpDir, "default", "server.yaml")
-	_, err := os.Stat(serverPolicy)
-	assert.NoError(t, err, "policy should be flushed on shutdown")
+	// Policy already verified above via require.Eventually.
 }
 
 func TestSessionStats_Log(t *testing.T) {
@@ -199,18 +200,42 @@ func TestCrossFlushDedup_SkipsSamePolicy(t *testing.T) {
 		done <- RunPipelineWithSource(ctx, cfg, source)
 	}()
 
-	// Send flow, wait for first flush
+	// Send flow; wait deterministically for the file to appear.
 	flowCh <- flow
-	time.Sleep(50 * time.Millisecond)
-
-	// Record file mtime after first flush
 	serverPolicy := filepath.Join(tmpDir, "production", "server.yaml")
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(serverPolicy)
+		return err == nil
+	}, 5*time.Second, 5*time.Millisecond)
 	info1, err := os.Stat(serverPolicy)
 	require.NoError(t, err, "policy should be written after first flush")
 
-	// Send same flow again, wait for second flush
+	// Send same flow again; wait until the pipeline has drained the buffered send
+	// so the second flush tick has observed it.
 	flowCh <- flow
-	time.Sleep(50 * time.Millisecond)
+	require.Eventually(t, func() bool { return len(flowCh) == 0 }, 5*time.Second, 5*time.Millisecond)
+
+	// Wait until two consecutive poll samples one flush-interval apart agree on
+	// ModTime. `require.Eventually` polls on its own interval, so relying on
+	// distinct poll samples (state across attempts) avoids sleeping inside the
+	// callback — matches the Eventually style used elsewhere in this file.
+	var prevModTime time.Time
+	require.Eventually(t, func() bool {
+		info, err := os.Stat(serverPolicy)
+		if err != nil {
+			return false
+		}
+		current := info.ModTime()
+		if prevModTime.IsZero() {
+			prevModTime = current
+			return false
+		}
+		if !current.Equal(prevModTime) {
+			prevModTime = current
+			return false
+		}
+		return true
+	}, 10*time.Second, cfg.FlushInterval)
 
 	// File should not be rewritten (cross-flush dedup)
 	info2, err := os.Stat(serverPolicy)
@@ -255,20 +280,25 @@ func TestCrossFlushDedup_WritesChangedPolicy(t *testing.T) {
 		done <- RunPipelineWithSource(ctx, cfg, source)
 	}()
 
-	// Send flow1, wait for flush
+	// Send flow1 and wait for the first write to land.
 	flowCh <- flow1
-	time.Sleep(50 * time.Millisecond)
-
-	// Read first content
 	serverPolicy := filepath.Join(tmpDir, "production", "server.yaml")
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(serverPolicy)
+		return err == nil
+	}, 5*time.Second, 5*time.Millisecond)
 	data1, err := os.ReadFile(serverPolicy)
 	require.NoError(t, err)
 
-	// Send flow2 (different rules), wait for flush
+	// Send flow2 with different rules and wait for the file content to change.
 	flowCh <- flow2
-	time.Sleep(50 * time.Millisecond)
-
-	// File should be updated with merged policy
+	require.Eventually(t, func() bool {
+		data2, err := os.ReadFile(serverPolicy)
+		if err != nil {
+			return false
+		}
+		return string(data2) != string(data1)
+	}, 5*time.Second, 5*time.Millisecond)
 	data2, err := os.ReadFile(serverPolicy)
 	require.NoError(t, err)
 	assert.NotEqual(t, string(data1), string(data2), "file should be updated when policy changes")

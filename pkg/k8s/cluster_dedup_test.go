@@ -1,7 +1,6 @@
 package k8s
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -61,10 +60,3 @@ func TestLoadClusterPolicies_LabelSelector(t *testing.T) {
 	assert.Equal(t, "app.kubernetes.io/managed-by=cpg", ManagedByLabel)
 }
 
-func TestLoadClusterPolicies_Integration(t *testing.T) {
-	// LoadClusterPolicies requires a real Cilium clientset which is hard to fake.
-	// We test the core logic via buildClusterPolicyMap and verify the function
-	// signature and label selector are correct.
-	ctx := context.Background()
-	_ = ctx // used in actual call
-}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"time"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
@@ -72,14 +73,9 @@ func (c *Client) StreamDroppedFlows(ctx context.Context, namespaces []string, al
 	return flows, lostEvents, nil
 }
 
-// closer is implemented by types that need cleanup when streaming ends (e.g., *grpc.ClientConn).
-type closer interface {
-	Close() error
-}
-
 // streamFromSource reads from a flowStream and dispatches to typed channels.
-// It closes both channels (and the optional conn) when the stream ends or returns an error.
-func streamFromSource(stream flowStream, logger *zap.Logger, closers ...closer) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent) {
+// It closes both channels (and onClose if provided) when the stream ends or returns an error.
+func streamFromSource(stream flowStream, logger *zap.Logger, onClose io.Closer) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent) {
 	flows := make(chan *flowpb.Flow, 256)
 	lostEvents := make(chan *flowpb.LostEvent, 16)
 
@@ -87,8 +83,8 @@ func streamFromSource(stream flowStream, logger *zap.Logger, closers ...closer) 
 		defer close(flows)
 		defer close(lostEvents)
 		defer func() {
-			for _, c := range closers {
-				c.Close()
+			if onClose != nil {
+				onClose.Close()
 			}
 		}()
 

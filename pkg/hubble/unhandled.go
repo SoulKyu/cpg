@@ -6,6 +6,9 @@ import (
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
 	"go.uber.org/zap"
+
+	"github.com/SoulKyu/cpg/pkg/labels"
+	"github.com/SoulKyu/cpg/pkg/policy"
 )
 
 // UnhandledTracker tracks flows that CPG cannot convert to policy rules.
@@ -30,13 +33,14 @@ func NewUnhandledTracker(logger *zap.Logger) *UnhandledTracker {
 // Track records an unhandled flow. On first occurrence (unique src+dst+port+proto+reason),
 // it emits a DEBUG log with flow details and destination labels. It always increments the
 // reason counter for the periodic summary.
-func (t *UnhandledTracker) Track(f *flowpb.Flow, reason string) {
-	key := t.dedupKey(f, reason)
+func (t *UnhandledTracker) Track(f *flowpb.Flow, reason policy.UnhandledReason) {
+	reasonStr := string(reason)
+	key := t.dedupKey(f, reasonStr)
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	t.counters[reason]++
+	t.counters[reasonStr]++
 
 	if _, seen := t.seen[key]; seen {
 		return
@@ -49,7 +53,7 @@ func (t *UnhandledTracker) Track(f *flowpb.Flow, reason string) {
 		zap.String("dst", dst),
 		zap.String("port", port),
 		zap.String("proto", proto),
-		zap.String("reason", reason),
+		zap.String("reason", reasonStr),
 		zap.Strings("dst_labels", dstLabels),
 	)
 }
@@ -110,33 +114,15 @@ func endpointID(ep *flowpb.Endpoint) string {
 		return "<nil>"
 	}
 	if ep.Namespace != "" {
-		workload := workloadFromLabels(ep.Labels)
-		if workload != "" {
+		if workload := labels.WorkloadName(ep.Labels); workload != "" {
 			return ep.Namespace + "/" + workload
 		}
 		return ep.Namespace + "/<unknown>"
 	}
-	// No namespace -- use first label as identifier
 	if len(ep.Labels) > 0 {
 		return ep.Labels[0]
 	}
 	return "<unknown>"
-}
-
-// workloadFromLabels extracts a workload name from endpoint labels.
-// Mirrors the logic in pkg/labels.WorkloadName but avoids a cross-package dependency.
-func workloadFromLabels(lbls []string) string {
-	for _, l := range lbls {
-		if len(l) > 27 && l[:27] == "k8s:app.kubernetes.io/name=" {
-			return l[27:]
-		}
-	}
-	for _, l := range lbls {
-		if len(l) > 8 && l[:8] == "k8s:app=" {
-			return l[8:]
-		}
-	}
-	return ""
 }
 
 // protoFields extracts port and protocol from a flow's L4 layer.

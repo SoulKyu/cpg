@@ -22,15 +22,26 @@ type AggKey struct {
 // Aggregator accumulates flows by (namespace, workload) and flushes them as
 // PolicyEvents on a configurable ticker interval. It also flushes remaining
 // flows when the input channel closes or the context is cancelled.
+// flushingTracker is the tracker contract the Aggregator depends on: it both
+// receives individual flows (policy.FlowTracker) and is asked to emit the
+// periodic summary at each aggregation cycle. Keeping the interface local
+// avoids exporting Flush from pkg/policy where it has no use.
+type flushingTracker interface {
+	policy.FlowTracker
+	Flush()
+}
+
 type Aggregator struct {
 	interval       time.Duration
 	logger         *zap.Logger
 	warnedReserved map[string]struct{}
-	tracker        *UnhandledTracker
+	tracker        flushingTracker
 }
 
 // NewAggregator creates a new Aggregator with the given flush interval.
-func NewAggregator(interval time.Duration, logger *zap.Logger, tracker *UnhandledTracker) *Aggregator {
+// tracker is accepted as an interface so tests can substitute a stub and the
+// aggregator can depend on behavior rather than the concrete UnhandledTracker.
+func NewAggregator(interval time.Duration, logger *zap.Logger, tracker flushingTracker) *Aggregator {
 	return &Aggregator{
 		interval:       interval,
 		logger:         logger,
@@ -84,11 +95,12 @@ func (a *Aggregator) keyFromFlow(f *flowpb.Flow) (key AggKey, skip bool) {
 	case flowpb.TrafficDirection_EGRESS:
 		ep = f.Source
 	default:
-		ep = f.Destination
+		a.tracker.Track(f, policy.ReasonUnknownDir)
+		return AggKey{}, true
 	}
 
 	if ep == nil {
-		a.tracker.Track(f, "nil_endpoint")
+		a.tracker.Track(f, policy.ReasonNilEndpoint)
 		return AggKey{}, true
 	}
 
@@ -102,8 +114,13 @@ func (a *Aggregator) keyFromFlow(f *flowpb.Flow) (key AggKey, skip bool) {
 					zap.String("summary", flowSummary(f)),
 				)
 			}
+			// Track reserved-identity drops so they appear in the periodic
+			// Flush summary alongside other unhandled reasons; the Warn above
+			// is one-shot per (labels, port, proto, dir) and does not feed
+			// the tracker.
+			a.tracker.Track(f, policy.ReasonReservedID)
 		} else {
-			a.tracker.Track(f, "empty_namespace")
+			a.tracker.Track(f, policy.ReasonEmptyNamespace)
 		}
 		return AggKey{}, true
 	}
@@ -213,18 +230,13 @@ func isActionableReserved(epLabels []string) bool {
 // flowSummary returns a short human-readable description of a flow
 // for use in log messages.
 func flowSummary(f *flowpb.Flow) string {
-	dir := f.TrafficDirection.String()
-	proto := "unknown"
-	if f.L4 != nil {
-		if tcp := f.L4.GetTCP(); tcp != nil {
-			proto = fmt.Sprintf("TCP/%d", tcp.DestinationPort)
-		} else if udp := f.L4.GetUDP(); udp != nil {
-			proto = fmt.Sprintf("UDP/%d", udp.DestinationPort)
-		} else if icmp4 := f.L4.GetICMPv4(); icmp4 != nil {
-			proto = fmt.Sprintf("ICMPv4 type=%d", icmp4.Type)
-		} else if icmp6 := f.L4.GetICMPv6(); icmp6 != nil {
-			proto = fmt.Sprintf("ICMPv6 type=%d", icmp6.Type)
-		}
+	port, proto := protoFields(f)
+	if proto == "unknown" {
+		return fmt.Sprintf("%s unknown", f.TrafficDirection.String())
 	}
-	return fmt.Sprintf("%s %s", dir, proto)
+	// ICMP reports its "port" as the ICMP type; keep the historical wording.
+	if proto == "ICMPv4" || proto == "ICMPv6" {
+		return fmt.Sprintf("%s %s type=%s", f.TrafficDirection.String(), proto, port)
+	}
+	return fmt.Sprintf("%s %s/%s", f.TrafficDirection.String(), proto, port)
 }

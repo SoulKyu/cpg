@@ -25,8 +25,9 @@ func TestPoliciesEquivalent_TwoBuildPolicyOutputs(t *testing.T) {
 	p1 := policy.BuildPolicy("default", "server", flows, nil)
 	p2 := policy.BuildPolicy("default", "server", flows, nil)
 
-	assert.True(t, policy.PoliciesEquivalent(p1, p2),
-		"Two BuildPolicy outputs from same flows should be equivalent")
+	equiv, err := policy.PoliciesEquivalent(p1, p2)
+	require.NoError(t, err)
+	assert.True(t, equiv, "Two BuildPolicy outputs from same flows should be equivalent")
 }
 
 // TestPoliciesEquivalent_BuildPolicyVsYAMLRoundtrip verifies that a
@@ -48,7 +49,8 @@ func TestPoliciesEquivalent_BuildPolicyVsYAMLRoundtrip(t *testing.T) {
 	var roundtripped ciliumv2.CiliumNetworkPolicy
 	require.NoError(t, yaml.Unmarshal(data, &roundtripped))
 
-	equiv := policy.PoliciesEquivalent(original, &roundtripped)
+	equiv, err := policy.PoliciesEquivalent(original, &roundtripped)
+	require.NoError(t, err)
 	if !equiv {
 		t.Logf("Original ingress: %+v", original.Spec.Ingress)
 		t.Logf("Roundtripped ingress: %+v", roundtripped.Spec.Ingress)
@@ -80,6 +82,7 @@ func TestPoliciesEquivalent_MergedVsOriginal(t *testing.T) {
 	incoming := policy.BuildPolicy("default", "server", flows, nil)
 	merged := policy.MergePolicy(&fromDisk, incoming)
 
-	assert.True(t, policy.PoliciesEquivalent(original, merged),
-		"Merging identical content should produce equivalent policy")
+	equiv, err := policy.PoliciesEquivalent(original, merged)
+	require.NoError(t, err)
+	assert.True(t, equiv, "Merging identical content should produce equivalent policy")
 }

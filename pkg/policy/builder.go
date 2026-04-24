@@ -16,13 +16,20 @@ import (
 
 // FlowTracker receives flows that cannot be converted to policy rules.
 type FlowTracker interface {
-	Track(f *flowpb.Flow, reason string)
+	Track(f *flowpb.Flow, reason UnhandledReason)
 }
 
 // ReservedWorldIdentity is the Cilium reserved identity for external/world traffic.
 const ReservedWorldIdentity uint32 = 2
 
-// reservedEntityMap maps Cilium reserved label values to Cilium policy entities.
+// policyNamePrefix is the CNP name prefix shared by the builder and dedup consumers.
+const policyNamePrefix = "cpg-"
+
+// PolicyName returns the CiliumNetworkPolicy name generated for a workload.
+func PolicyName(workload string) string {
+	return policyNamePrefix + workload
+}
+
 var reservedEntityMap = map[string]api.Entity{
 	"reserved:kube-apiserver": api.EntityKubeAPIServer,
 	"reserved:host":          api.EntityHost,
@@ -30,7 +37,6 @@ var reservedEntityMap = map[string]api.Entity{
 	"reserved:health":        api.EntityHealth,
 }
 
-// isWorldIdentity returns true if the endpoint represents external (world) traffic.
 func isWorldIdentity(ep *flowpb.Endpoint) bool {
 	if ep == nil {
 		return false
@@ -46,7 +52,6 @@ func isWorldIdentity(ep *flowpb.Endpoint) bool {
 	return false
 }
 
-// reservedEntity returns the Cilium entity for a reserved endpoint, or empty string.
 func reservedEntity(ep *flowpb.Endpoint) api.Entity {
 	if ep == nil {
 		return ""
@@ -59,16 +64,14 @@ func reservedEntity(ep *flowpb.Endpoint) api.Entity {
 	return ""
 }
 
-// getSourceIP extracts the source IP from a flow's IP layer (nil-safe).
-func getSourceIP(f *flowpb.Flow) string {
+func flowSourceIP(f *flowpb.Flow) string {
 	if f.IP == nil {
 		return ""
 	}
 	return f.IP.Source
 }
 
-// getDestinationIP extracts the destination IP from a flow's IP layer (nil-safe).
-func getDestinationIP(f *flowpb.Flow) string {
+func flowDestinationIP(f *flowpb.Flow) string {
 	if f.IP == nil {
 		return ""
 	}
@@ -83,8 +86,6 @@ type PolicyEvent struct {
 }
 
 // BuildPolicy transforms a set of Hubble dropped flows into a CiliumNetworkPolicy.
-// For INGRESS flows: endpointSelector = destination, IngressRule with FromEndpoints = source.
-// For EGRESS flows: endpointSelector = source, EgressRule with ToEndpoints = destination.
 func BuildPolicy(namespace, workload string, flows []*flowpb.Flow, tracker FlowTracker) *ciliumv2.CiliumNetworkPolicy {
 	cnp := &ciliumv2.CiliumNetworkPolicy{
 		TypeMeta: metav1.TypeMeta{
@@ -92,7 +93,7 @@ func BuildPolicy(namespace, workload string, flows []*flowpb.Flow, tracker FlowT
 			Kind:       "CiliumNetworkPolicy",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "cpg-" + workload,
+			Name:      PolicyName(workload),
 			Namespace: namespace,
 			Labels: map[string]string{
 				"app.kubernetes.io/managed-by": "cpg",
@@ -101,12 +102,11 @@ func BuildPolicy(namespace, workload string, flows []*flowpb.Flow, tracker FlowT
 		Spec: &api.Rule{},
 	}
 
-	// Group flows by direction
 	var ingressFlows, egressFlows []*flowpb.Flow
 	for _, f := range flows {
 		if f.L4 == nil {
 			if tracker != nil {
-				tracker.Track(f, "no_l4")
+				tracker.Track(f, ReasonNoL4)
 			}
 			continue
 		}
@@ -118,34 +118,27 @@ func BuildPolicy(namespace, workload string, flows []*flowpb.Flow, tracker FlowT
 		}
 	}
 
-	// Set endpointSelector from the first flow that has labels
-	if len(flows) > 0 {
-		var selectorLabels []string
-		for _, f := range flows {
-			if f.TrafficDirection == flowpb.TrafficDirection_INGRESS && f.Destination != nil {
-				selectorLabels = f.Destination.Labels
-				break
-			}
-			if f.TrafficDirection == flowpb.TrafficDirection_EGRESS && f.Source != nil {
-				selectorLabels = f.Source.Labels
-				break
-			}
-		}
-		if selectorLabels != nil {
-			cnp.Spec.EndpointSelector = labels.BuildEndpointSelector(selectorLabels)
-		}
+	if selectorLabels := pickSelectorLabels(flows); selectorLabels != nil {
+		cnp.Spec.EndpointSelector = labels.BuildEndpointSelector(selectorLabels)
 	}
 
-	// Build ingress rules: group by peer (source labels)
 	cnp.Spec.Ingress = buildIngressRules(ingressFlows, namespace, tracker)
-
-	// Build egress rules: group by peer (destination labels)
 	cnp.Spec.Egress = buildEgressRules(egressFlows, namespace, tracker)
-
 	return cnp
 }
 
-// peerKey creates a deterministic string key from peer labels for grouping.
+func pickSelectorLabels(flows []*flowpb.Flow) []string {
+	for _, f := range flows {
+		if f.TrafficDirection == flowpb.TrafficDirection_INGRESS && f.Destination != nil {
+			return f.Destination.Labels
+		}
+		if f.TrafficDirection == flowpb.TrafficDirection_EGRESS && f.Source != nil {
+			return f.Source.Labels
+		}
+	}
+	return nil
+}
+
 func peerKey(peerLabels []string) string {
 	selected := labels.SelectLabels(peerLabels)
 	keys := make([]string, 0, len(selected))
@@ -158,47 +151,30 @@ func peerKey(peerLabels []string) string {
 
 // flowProto describes the protocol extracted from a flow's L4 layer.
 type flowProto struct {
-	port  string       // port number for TCP/UDP, ICMP type number for ICMP
-	proto api.L4Proto  // ProtoTCP, ProtoUDP, ProtoICMP, or ProtoICMPv6
-	icmp  bool         // true if this is an ICMP flow
+	port  uint32
+	proto api.L4Proto
+	icmp  bool
 }
 
-// extractProto extracts protocol information from a flow's L4 layer.
-// Returns nil if L4 is nil or has no recognized protocol.
 func extractProto(f *flowpb.Flow) *flowProto {
 	if f.L4 == nil {
 		return nil
 	}
 	if tcp := f.L4.GetTCP(); tcp != nil {
-		return &flowProto{
-			port:  strconv.FormatUint(uint64(tcp.DestinationPort), 10),
-			proto: api.ProtoTCP,
-		}
+		return &flowProto{port: tcp.DestinationPort, proto: api.ProtoTCP}
 	}
 	if udp := f.L4.GetUDP(); udp != nil {
-		return &flowProto{
-			port:  strconv.FormatUint(uint64(udp.DestinationPort), 10),
-			proto: api.ProtoUDP,
-		}
+		return &flowProto{port: udp.DestinationPort, proto: api.ProtoUDP}
 	}
 	if icmp4 := f.L4.GetICMPv4(); icmp4 != nil {
-		return &flowProto{
-			port:  strconv.FormatUint(uint64(icmp4.Type), 10),
-			proto: api.ProtoICMP,
-			icmp:  true,
-		}
+		return &flowProto{port: icmp4.Type, proto: api.ProtoICMP, icmp: true}
 	}
 	if icmp6 := f.L4.GetICMPv6(); icmp6 != nil {
-		return &flowProto{
-			port:  strconv.FormatUint(uint64(icmp6.Type), 10),
-			proto: api.ProtoICMPv6,
-			icmp:  true,
-		}
+		return &flowProto{port: icmp6.Type, proto: api.ProtoICMPv6, icmp: true}
 	}
 	return nil
 }
 
-// icmpFamily returns the ICMP family string for a protocol.
 func icmpFamily(proto api.L4Proto) string {
 	if proto == api.ProtoICMPv6 {
 		return api.IPv6Family
@@ -208,316 +184,205 @@ func icmpFamily(proto api.L4Proto) string {
 
 // peerRules collects ports and ICMP types for a peer grouping.
 type peerRules struct {
-	ports    []api.PortProtocol
+	ports      []api.PortProtocol
 	icmpFields []api.ICMPField
-	seen     map[string]struct{}
-}
-
-func (pr *peerRules) addFlow(fp *flowProto) {
-	dedupKey := fp.port + "/" + string(fp.proto)
-	if _, dup := pr.seen[dedupKey]; dup {
-		return
-	}
-	pr.seen[dedupKey] = struct{}{}
-	if fp.icmp {
-		icmpType := intstr.FromInt32(int32(mustAtoi(fp.port)))
-		pr.icmpFields = append(pr.icmpFields, api.ICMPField{
-			Family: icmpFamily(fp.proto),
-			Type:   &icmpType,
-		})
-	} else {
-		pr.ports = append(pr.ports, api.PortProtocol{
-			Port:     fp.port,
-			Protocol: fp.proto,
-		})
-	}
+	seen       map[string]struct{}
 }
 
 func newPeerRules() *peerRules {
 	return &peerRules{seen: make(map[string]struct{})}
 }
 
-func mustAtoi(s string) int {
-	n, _ := strconv.Atoi(s)
-	return n
+func (pr *peerRules) addFlow(fp *flowProto) {
+	portStr := strconv.FormatUint(uint64(fp.port), 10)
+	dedupKey := portStr + "/" + string(fp.proto)
+	if _, dup := pr.seen[dedupKey]; dup {
+		return
+	}
+	pr.seen[dedupKey] = struct{}{}
+	if fp.icmp {
+		icmpType := intstr.FromInt32(int32(fp.port))
+		pr.icmpFields = append(pr.icmpFields, api.ICMPField{
+			Family: icmpFamily(fp.proto),
+			Type:   &icmpType,
+		})
+		return
+	}
+	pr.ports = append(pr.ports, api.PortProtocol{
+		Port:     portStr,
+		Protocol: fp.proto,
+	})
 }
 
-// buildIngressRules groups ingress flows by source peer and builds IngressRules.
-// Handles endpoint selectors, CIDR (world), reserved entities, and ICMP.
+// endpointBucket groups rules for an endpoint peer matched by labels.
+type endpointBucket struct {
+	selector api.EndpointSelector
+	*peerRules
+}
+
+// cidrBucket groups rules for a CIDR peer (world identity).
+type cidrBucket struct {
+	cidr api.CIDR
+	*peerRules
+}
+
+// peerBuckets accumulates grouped flows during directional traversal.
+type peerBuckets struct {
+	peers       map[string]*endpointBucket
+	cidrs       map[string]*cidrBucket
+	entities    map[api.Entity]*peerRules
+	peerOrder   []string
+	cidrOrder   []string
+	entityOrder []api.Entity
+}
+
+func newPeerBuckets() *peerBuckets {
+	return &peerBuckets{
+		peers:    make(map[string]*endpointBucket),
+		cidrs:    make(map[string]*cidrBucket),
+		entities: make(map[api.Entity]*peerRules),
+	}
+}
+
+// reasons are tracker reasons used per direction.
+type reasons struct {
+	nilPeer   UnhandledReason
+	unknownL4 UnhandledReason
+	worldNoIP UnhandledReason
+}
+
+var (
+	ingressReasons = reasons{nilPeer: ReasonNilSource, unknownL4: ReasonUnknownProtocol, worldNoIP: ReasonWorldNoIP}
+	egressReasons  = reasons{nilPeer: ReasonNilDestination, unknownL4: ReasonUnknownProtocol, worldNoIP: ReasonWorldNoIP}
+)
+
+// groupFlows walks flows and distributes them into entity/cidr/endpoint buckets.
+// peer and peerIP extract the direction-specific endpoint and IP respectively.
+func groupFlows(
+	flows []*flowpb.Flow,
+	policyNamespace string,
+	tracker FlowTracker,
+	r reasons,
+	peer func(*flowpb.Flow) *flowpb.Endpoint,
+	peerIP func(*flowpb.Flow) string,
+) *peerBuckets {
+	b := newPeerBuckets()
+	for _, f := range flows {
+		ep := peer(f)
+		if ep == nil {
+			if tracker != nil {
+				tracker.Track(f, r.nilPeer)
+			}
+			continue
+		}
+		fp := extractProto(f)
+		if fp == nil {
+			if tracker != nil {
+				tracker.Track(f, r.unknownL4)
+			}
+			continue
+		}
+		if entity := reservedEntity(ep); entity != "" {
+			er, exists := b.entities[entity]
+			if !exists {
+				er = newPeerRules()
+				b.entities[entity] = er
+				b.entityOrder = append(b.entityOrder, entity)
+			}
+			er.addFlow(fp)
+			continue
+		}
+		if isWorldIdentity(ep) {
+			ip := peerIP(f)
+			if ip == "" {
+				if tracker != nil {
+					tracker.Track(f, r.worldNoIP)
+				}
+				continue
+			}
+			cidrStr := ip + "/32"
+			cb, exists := b.cidrs[cidrStr]
+			if !exists {
+				cb = &cidrBucket{cidr: api.CIDR(cidrStr), peerRules: newPeerRules()}
+				b.cidrs[cidrStr] = cb
+				b.cidrOrder = append(b.cidrOrder, cidrStr)
+			}
+			cb.addFlow(fp)
+			continue
+		}
+		key := peerKey(ep.Labels)
+		eb, exists := b.peers[key]
+		if !exists {
+			eb = &endpointBucket{
+				selector:  labels.BuildPeerSelector(ep.Labels, ep.Namespace, policyNamespace),
+				peerRules: newPeerRules(),
+			}
+			b.peers[key] = eb
+			b.peerOrder = append(b.peerOrder, key)
+		}
+		eb.addFlow(fp)
+	}
+	return b
+}
+
 func buildIngressRules(flows []*flowpb.Flow, policyNamespace string, tracker FlowTracker) []api.IngressRule {
-	peers := make(map[string]*struct {
-		selector api.EndpointSelector
-		*peerRules
-	})
-	cidrs := make(map[string]*struct {
-		cidr api.CIDR
-		*peerRules
-	})
-	entities := make(map[api.Entity]*peerRules)
-	var peerOrder, cidrOrder []string
-	var entityOrder []api.Entity
-
-	for _, f := range flows {
-		if f.Source == nil {
-			if tracker != nil {
-				tracker.Track(f, "nil_source")
-			}
-			continue
-		}
-		fp := extractProto(f)
-		if fp == nil {
-			if tracker != nil {
-				tracker.Track(f, "unknown_protocol")
-			}
-			continue
-		}
-
-		// Reserved entities (kube-apiserver, host, remote-node, etc.)
-		if entity := reservedEntity(f.Source); entity != "" {
-			er, exists := entities[entity]
-			if !exists {
-				er = newPeerRules()
-				entities[entity] = er
-				entityOrder = append(entityOrder, entity)
-			}
-			er.addFlow(fp)
-			continue
-		}
-
-		// World identity → CIDR rule
-		if isWorldIdentity(f.Source) {
-			ip := getSourceIP(f)
-			if ip == "" {
-				if tracker != nil {
-					tracker.Track(f, "world_no_ip")
-				}
-				continue
-			}
-			cidrStr := ip + "/32"
-			cp, exists := cidrs[cidrStr]
-			if !exists {
-				cp = &struct {
-					cidr api.CIDR
-					*peerRules
-				}{cidr: api.CIDR(cidrStr), peerRules: newPeerRules()}
-				cidrs[cidrStr] = cp
-				cidrOrder = append(cidrOrder, cidrStr)
-			}
-			cp.addFlow(fp)
-			continue
-		}
-
-		// Regular endpoint
-		key := peerKey(f.Source.Labels)
-		pp, exists := peers[key]
-		if !exists {
-			pp = &struct {
-				selector api.EndpointSelector
-				*peerRules
-			}{
-				selector:  labels.BuildPeerSelector(f.Source.Labels, f.Source.Namespace, policyNamespace),
-				peerRules: newPeerRules(),
-			}
-			peers[key] = pp
-			peerOrder = append(peerOrder, key)
-		}
-		pp.addFlow(fp)
-	}
-
+	b := groupFlows(flows, policyNamespace, tracker, ingressReasons,
+		func(f *flowpb.Flow) *flowpb.Endpoint { return f.Source },
+		flowSourceIP)
 	var rules []api.IngressRule
-
-	// Entity rules — ICMPs and ToPorts must be in separate rules per Cilium spec
-	for _, entity := range entityOrder {
-		er := entities[entity]
-		common := api.IngressCommonRule{FromEntities: api.EntitySlice{entity}}
-		if len(er.ports) > 0 {
-			rules = append(rules, api.IngressRule{
-				IngressCommonRule: common,
-				ToPorts:           api.PortRules{{Ports: er.ports}},
-			})
-		}
-		if len(er.icmpFields) > 0 {
-			rules = append(rules, api.IngressRule{
-				IngressCommonRule: common,
-				ICMPs:             api.ICMPRules{{Fields: er.icmpFields}},
-			})
-		}
+	for _, entity := range b.entityOrder {
+		er := b.entities[entity]
+		rules = append(rules, ingressRulesFrom(api.IngressCommonRule{FromEntities: api.EntitySlice{entity}}, er.ports, er.icmpFields)...)
 	}
-
-	// CIDR rules
-	for _, key := range cidrOrder {
-		cp := cidrs[key]
-		common := api.IngressCommonRule{FromCIDR: api.CIDRSlice{cp.cidr}}
-		if len(cp.ports) > 0 {
-			rules = append(rules, api.IngressRule{
-				IngressCommonRule: common,
-				ToPorts:           api.PortRules{{Ports: cp.ports}},
-			})
-		}
-		if len(cp.icmpFields) > 0 {
-			rules = append(rules, api.IngressRule{
-				IngressCommonRule: common,
-				ICMPs:             api.ICMPRules{{Fields: cp.icmpFields}},
-			})
-		}
+	for _, key := range b.cidrOrder {
+		cb := b.cidrs[key]
+		rules = append(rules, ingressRulesFrom(api.IngressCommonRule{FromCIDR: api.CIDRSlice{cb.cidr}}, cb.ports, cb.icmpFields)...)
 	}
-
-	// Endpoint selector rules
-	for _, key := range peerOrder {
-		pp := peers[key]
-		common := api.IngressCommonRule{FromEndpoints: []api.EndpointSelector{pp.selector}}
-		if len(pp.ports) > 0 {
-			rules = append(rules, api.IngressRule{
-				IngressCommonRule: common,
-				ToPorts:           api.PortRules{{Ports: pp.ports}},
-			})
-		}
-		if len(pp.icmpFields) > 0 {
-			rules = append(rules, api.IngressRule{
-				IngressCommonRule: common,
-				ICMPs:             api.ICMPRules{{Fields: pp.icmpFields}},
-			})
-		}
+	for _, key := range b.peerOrder {
+		eb := b.peers[key]
+		rules = append(rules, ingressRulesFrom(api.IngressCommonRule{FromEndpoints: []api.EndpointSelector{eb.selector}}, eb.ports, eb.icmpFields)...)
 	}
 	return rules
 }
 
-// buildEgressRules groups egress flows by destination peer and builds EgressRules.
-// Handles endpoint selectors, CIDR (world), reserved entities, and ICMP.
 func buildEgressRules(flows []*flowpb.Flow, policyNamespace string, tracker FlowTracker) []api.EgressRule {
-	peers := make(map[string]*struct {
-		selector api.EndpointSelector
-		*peerRules
-	})
-	cidrs := make(map[string]*struct {
-		cidr api.CIDR
-		*peerRules
-	})
-	entities := make(map[api.Entity]*peerRules)
-	var peerOrder, cidrOrder []string
-	var entityOrder []api.Entity
-
-	for _, f := range flows {
-		if f.Destination == nil {
-			if tracker != nil {
-				tracker.Track(f, "nil_destination")
-			}
-			continue
-		}
-		fp := extractProto(f)
-		if fp == nil {
-			if tracker != nil {
-				tracker.Track(f, "unknown_protocol")
-			}
-			continue
-		}
-
-		// Reserved entities (kube-apiserver, host, remote-node, etc.)
-		if entity := reservedEntity(f.Destination); entity != "" {
-			er, exists := entities[entity]
-			if !exists {
-				er = newPeerRules()
-				entities[entity] = er
-				entityOrder = append(entityOrder, entity)
-			}
-			er.addFlow(fp)
-			continue
-		}
-
-		// World identity → CIDR rule
-		if isWorldIdentity(f.Destination) {
-			ip := getDestinationIP(f)
-			if ip == "" {
-				if tracker != nil {
-					tracker.Track(f, "world_no_ip")
-				}
-				continue
-			}
-			cidrStr := ip + "/32"
-			cp, exists := cidrs[cidrStr]
-			if !exists {
-				cp = &struct {
-					cidr api.CIDR
-					*peerRules
-				}{cidr: api.CIDR(cidrStr), peerRules: newPeerRules()}
-				cidrs[cidrStr] = cp
-				cidrOrder = append(cidrOrder, cidrStr)
-			}
-			cp.addFlow(fp)
-			continue
-		}
-
-		// Regular endpoint
-		key := peerKey(f.Destination.Labels)
-		pp, exists := peers[key]
-		if !exists {
-			pp = &struct {
-				selector api.EndpointSelector
-				*peerRules
-			}{
-				selector:  labels.BuildPeerSelector(f.Destination.Labels, f.Destination.Namespace, policyNamespace),
-				peerRules: newPeerRules(),
-			}
-			peers[key] = pp
-			peerOrder = append(peerOrder, key)
-		}
-		pp.addFlow(fp)
-	}
-
+	b := groupFlows(flows, policyNamespace, tracker, egressReasons,
+		func(f *flowpb.Flow) *flowpb.Endpoint { return f.Destination },
+		flowDestinationIP)
 	var rules []api.EgressRule
-
-	// Entity rules — ICMPs and ToPorts must be in separate rules per Cilium spec
-	for _, entity := range entityOrder {
-		er := entities[entity]
-		common := api.EgressCommonRule{ToEntities: api.EntitySlice{entity}}
-		if len(er.ports) > 0 {
-			rules = append(rules, api.EgressRule{
-				EgressCommonRule: common,
-				ToPorts:          api.PortRules{{Ports: er.ports}},
-			})
-		}
-		if len(er.icmpFields) > 0 {
-			rules = append(rules, api.EgressRule{
-				EgressCommonRule: common,
-				ICMPs:            api.ICMPRules{{Fields: er.icmpFields}},
-			})
-		}
+	for _, entity := range b.entityOrder {
+		er := b.entities[entity]
+		rules = append(rules, egressRulesFrom(api.EgressCommonRule{ToEntities: api.EntitySlice{entity}}, er.ports, er.icmpFields)...)
 	}
-
-	// CIDR rules
-	for _, key := range cidrOrder {
-		cp := cidrs[key]
-		common := api.EgressCommonRule{ToCIDR: api.CIDRSlice{cp.cidr}}
-		if len(cp.ports) > 0 {
-			rules = append(rules, api.EgressRule{
-				EgressCommonRule: common,
-				ToPorts:          api.PortRules{{Ports: cp.ports}},
-			})
-		}
-		if len(cp.icmpFields) > 0 {
-			rules = append(rules, api.EgressRule{
-				EgressCommonRule: common,
-				ICMPs:            api.ICMPRules{{Fields: cp.icmpFields}},
-			})
-		}
+	for _, key := range b.cidrOrder {
+		cb := b.cidrs[key]
+		rules = append(rules, egressRulesFrom(api.EgressCommonRule{ToCIDR: api.CIDRSlice{cb.cidr}}, cb.ports, cb.icmpFields)...)
 	}
-
-	// Endpoint selector rules
-	for _, key := range peerOrder {
-		pp := peers[key]
-		common := api.EgressCommonRule{ToEndpoints: []api.EndpointSelector{pp.selector}}
-		if len(pp.ports) > 0 {
-			rules = append(rules, api.EgressRule{
-				EgressCommonRule: common,
-				ToPorts:          api.PortRules{{Ports: pp.ports}},
-			})
-		}
-		if len(pp.icmpFields) > 0 {
-			rules = append(rules, api.EgressRule{
-				EgressCommonRule: common,
-				ICMPs:            api.ICMPRules{{Fields: pp.icmpFields}},
-			})
-		}
+	for _, key := range b.peerOrder {
+		eb := b.peers[key]
+		rules = append(rules, egressRulesFrom(api.EgressCommonRule{ToEndpoints: []api.EndpointSelector{eb.selector}}, eb.ports, eb.icmpFields)...)
 	}
 	return rules
+}
+
+func ingressRulesFrom(common api.IngressCommonRule, ports []api.PortProtocol, icmps []api.ICMPField) []api.IngressRule {
+	var out []api.IngressRule
+	if len(ports) > 0 {
+		out = append(out, api.IngressRule{IngressCommonRule: common, ToPorts: api.PortRules{{Ports: ports}}})
+	}
+	if len(icmps) > 0 {
+		out = append(out, api.IngressRule{IngressCommonRule: common, ICMPs: api.ICMPRules{{Fields: icmps}}})
+	}
+	return out
+}
+
+func egressRulesFrom(common api.EgressCommonRule, ports []api.PortProtocol, icmps []api.ICMPField) []api.EgressRule {
+	var out []api.EgressRule
+	if len(ports) > 0 {
+		out = append(out, api.EgressRule{EgressCommonRule: common, ToPorts: api.PortRules{{Ports: ports}}})
+	}
+	if len(icmps) > 0 {
+		out = append(out, api.EgressRule{EgressCommonRule: common, ICMPs: api.ICMPRules{{Fields: icmps}}})
+	}
+	return out
 }
