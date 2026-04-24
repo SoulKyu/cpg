@@ -8,21 +8,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/SoulKyu/cpg/pkg/labels"
-)
-
-// UnhandledReason identifies why a flow was not converted to a policy rule.
-type UnhandledReason string
-
-const (
-	ReasonNoL4            UnhandledReason = "no_l4"
-	ReasonNilSource       UnhandledReason = "nil_source"
-	ReasonNilDestination  UnhandledReason = "nil_destination"
-	ReasonNilEndpoint     UnhandledReason = "nil_endpoint"
-	ReasonEmptyNamespace  UnhandledReason = "empty_namespace"
-	ReasonUnknownProtocol UnhandledReason = "unknown_protocol"
-	ReasonWorldNoIP       UnhandledReason = "world_no_ip"
-	ReasonReservedID      UnhandledReason = "reserved_identity"
-	ReasonUnknownDir      UnhandledReason = "unknown_direction"
+	"github.com/SoulKyu/cpg/pkg/policy"
 )
 
 // UnhandledTracker tracks flows that CPG cannot convert to policy rules.
@@ -47,13 +33,14 @@ func NewUnhandledTracker(logger *zap.Logger) *UnhandledTracker {
 // Track records an unhandled flow. On first occurrence (unique src+dst+port+proto+reason),
 // it emits a DEBUG log with flow details and destination labels. It always increments the
 // reason counter for the periodic summary.
-func (t *UnhandledTracker) Track(f *flowpb.Flow, reason string) {
-	key := t.dedupKey(f, reason)
+func (t *UnhandledTracker) Track(f *flowpb.Flow, reason policy.UnhandledReason) {
+	reasonStr := string(reason)
+	key := t.dedupKey(f, reasonStr)
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	t.counters[reason]++
+	t.counters[reasonStr]++
 
 	if _, seen := t.seen[key]; seen {
 		return
@@ -66,7 +53,7 @@ func (t *UnhandledTracker) Track(f *flowpb.Flow, reason string) {
 		zap.String("dst", dst),
 		zap.String("port", port),
 		zap.String("proto", proto),
-		zap.String("reason", reason),
+		zap.String("reason", reasonStr),
 		zap.Strings("dst_labels", dstLabels),
 	)
 }

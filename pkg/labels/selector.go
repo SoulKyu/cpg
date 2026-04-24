@@ -70,11 +70,26 @@ func hasDenylistedPrefix(key string) bool {
 	return false
 }
 
+// findPriorityLabel returns the first label in filtered whose key matches any
+// entry in priorityKeys, preserving priorityKeys order. Returns nil when no
+// priority key matches.
+func findPriorityLabel(filtered []labels.Label) *labels.Label {
+	for _, key := range priorityKeys {
+		for i := range filtered {
+			if filtered[i].Key == key {
+				return &filtered[i]
+			}
+		}
+	}
+	return nil
+}
+
 // SelectLabels extracts the most relevant labels from Hubble flow endpoint labels.
 // It implements a 3-tier hierarchy:
 //  1. If app.kubernetes.io/name is present, return only that label
-//  2. If app is present, return only that label
-//  3. Otherwise return all k8s labels after denylist filtering
+//  2. If app.kubernetes.io/component is present, return only that label
+//  3. If app is present, return only that label
+//  4. Otherwise return all k8s labels after denylist filtering
 //
 // Returns an empty map if all labels are denylisted or non-k8s.
 func SelectLabels(endpointLabels []string) map[string]string {
@@ -83,13 +98,8 @@ func SelectLabels(endpointLabels []string) map[string]string {
 		return map[string]string{}
 	}
 
-	// Check priority labels in order
-	for _, key := range priorityKeys {
-		for _, l := range filtered {
-			if l.Key == key {
-				return map[string]string{l.Key: l.Value}
-			}
-		}
+	if l := findPriorityLabel(filtered); l != nil {
+		return map[string]string{l.Key: l.Value}
 	}
 
 	// Fallback: all remaining labels
@@ -103,22 +113,18 @@ func SelectLabels(endpointLabels []string) map[string]string {
 // WorkloadName derives a deterministic workload name from endpoint labels.
 // It follows the same priority hierarchy as SelectLabels:
 //  1. Value of app.kubernetes.io/name
-//  2. Value of app
-//  3. Sorted label values joined with "-", truncated to 63 chars (K8s name limit)
-//  4. "unknown" if no usable labels remain
+//  2. Value of app.kubernetes.io/component
+//  3. Value of app
+//  4. Sorted label values joined with "-", truncated to 63 chars (K8s name limit)
+//  5. "unknown" if no usable labels remain
 func WorkloadName(endpointLabels []string) string {
 	filtered := filterK8sLabels(endpointLabels)
 	if len(filtered) == 0 {
 		return "unknown"
 	}
 
-	// Check priority labels in order
-	for _, key := range priorityKeys {
-		for _, l := range filtered {
-			if l.Key == key {
-				return l.Value
-			}
-		}
+	if l := findPriorityLabel(filtered); l != nil {
+		return l.Value
 	}
 
 	// Fallback: sort values deterministically and join

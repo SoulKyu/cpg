@@ -16,7 +16,7 @@ import (
 
 // FlowTracker receives flows that cannot be converted to policy rules.
 type FlowTracker interface {
-	Track(f *flowpb.Flow, reason string)
+	Track(f *flowpb.Flow, reason UnhandledReason)
 }
 
 // ReservedWorldIdentity is the Cilium reserved identity for external/world traffic.
@@ -106,7 +106,7 @@ func BuildPolicy(namespace, workload string, flows []*flowpb.Flow, tracker FlowT
 	for _, f := range flows {
 		if f.L4 == nil {
 			if tracker != nil {
-				tracker.Track(f, "no_l4")
+				tracker.Track(f, ReasonNoL4)
 			}
 			continue
 		}
@@ -246,14 +246,14 @@ func newPeerBuckets() *peerBuckets {
 
 // reasons are tracker reasons used per direction.
 type reasons struct {
-	nilPeer   string
-	unknownL4 string
-	worldNoIP string
+	nilPeer   UnhandledReason
+	unknownL4 UnhandledReason
+	worldNoIP UnhandledReason
 }
 
 var (
-	ingressReasons = reasons{nilPeer: "nil_source", unknownL4: "unknown_protocol", worldNoIP: "world_no_ip"}
-	egressReasons  = reasons{nilPeer: "nil_destination", unknownL4: "unknown_protocol", worldNoIP: "world_no_ip"}
+	ingressReasons = reasons{nilPeer: ReasonNilSource, unknownL4: ReasonUnknownProtocol, worldNoIP: ReasonWorldNoIP}
+	egressReasons  = reasons{nilPeer: ReasonNilDestination, unknownL4: ReasonUnknownProtocol, worldNoIP: ReasonWorldNoIP}
 )
 
 // groupFlows walks flows and distributes them into entity/cidr/endpoint buckets.

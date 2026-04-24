@@ -97,6 +97,9 @@ func ingressRuleKey(r api.IngressRule) string {
 	for _, cidr := range r.FromCIDR {
 		parts = append(parts, "cidr:"+string(cidr))
 	}
+	for _, entity := range r.FromEntities {
+		parts = append(parts, "entity:"+string(entity))
+	}
 	sort.Strings(parts)
 	return fmt.Sprintf("%v", parts)
 }
@@ -116,6 +119,9 @@ func egressRuleKey(r api.EgressRule) string {
 	}
 	for _, cidr := range r.ToCIDR {
 		parts = append(parts, "cidr:"+string(cidr))
+	}
+	for _, entity := range r.ToEntities {
+		parts = append(parts, "entity:"+string(entity))
 	}
 	sort.Strings(parts)
 	return fmt.Sprintf("%v", parts)

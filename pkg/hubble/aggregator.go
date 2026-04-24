@@ -84,12 +84,12 @@ func (a *Aggregator) keyFromFlow(f *flowpb.Flow) (key AggKey, skip bool) {
 	case flowpb.TrafficDirection_EGRESS:
 		ep = f.Source
 	default:
-		a.tracker.Track(f, string(ReasonUnknownDir))
+		a.tracker.Track(f, policy.ReasonUnknownDir)
 		return AggKey{}, true
 	}
 
 	if ep == nil {
-		a.tracker.Track(f, string(ReasonNilEndpoint))
+		a.tracker.Track(f, policy.ReasonNilEndpoint)
 		return AggKey{}, true
 	}
 
@@ -104,7 +104,7 @@ func (a *Aggregator) keyFromFlow(f *flowpb.Flow) (key AggKey, skip bool) {
 				)
 			}
 		} else {
-			a.tracker.Track(f, "empty_namespace")
+			a.tracker.Track(f, policy.ReasonEmptyNamespace)
 		}
 		return AggKey{}, true
 	}
