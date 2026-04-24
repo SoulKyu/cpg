@@ -214,20 +214,27 @@ func TestCrossFlushDedup_SkipsSamePolicy(t *testing.T) {
 	// so the second flush tick has observed it.
 	flowCh <- flow
 	require.Eventually(t, func() bool { return len(flowCh) == 0 }, 5*time.Second, 5*time.Millisecond)
-	// Wait for two consecutive ModTime reads to be equal after at least one
-	// flush cycle elapsed — matches require.Eventually usage elsewhere in this
-	// file and removes the race window time.Sleep would leave open under CI load.
+
+	// Wait until two consecutive poll samples one flush-interval apart agree on
+	// ModTime. `require.Eventually` polls on its own interval, so relying on
+	// distinct poll samples (state across attempts) avoids sleeping inside the
+	// callback — matches the Eventually style used elsewhere in this file.
+	var prevModTime time.Time
 	require.Eventually(t, func() bool {
-		first, err := os.Stat(serverPolicy)
+		info, err := os.Stat(serverPolicy)
 		if err != nil {
 			return false
 		}
-		time.Sleep(cfg.FlushInterval)
-		second, err := os.Stat(serverPolicy)
-		if err != nil {
+		current := info.ModTime()
+		if prevModTime.IsZero() {
+			prevModTime = current
 			return false
 		}
-		return first.ModTime().Equal(second.ModTime())
+		if !current.Equal(prevModTime) {
+			prevModTime = current
+			return false
+		}
+		return true
 	}, 10*time.Second, cfg.FlushInterval)
 
 	// File should not be rewritten (cross-flush dedup)

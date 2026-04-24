@@ -182,15 +182,10 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 			}
 		}
 
-		clusterPolicies = make(map[string]*ciliumv2.CiliumNetworkPolicy)
-		for _, ns := range f.clusterDedupNamespaces() {
-			policies, err := k8s.LoadClusterPolicies(ctx, kubeConfig, ns)
-			if err != nil {
-				return fmt.Errorf("loading cluster policies for dedup: %w", err)
-			}
-			for name, pol := range policies {
-				clusterPolicies[name] = pol
-			}
+		var err error
+		clusterPolicies, err = k8s.LoadClusterPoliciesForNamespaces(ctx, kubeConfig, f.clusterDedupNamespaces())
+		if err != nil {
+			return fmt.Errorf("loading cluster policies for dedup: %w", err)
 		}
 
 		logger.Info("loaded cluster policies for dedup",

@@ -10,6 +10,8 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
+
+	"github.com/SoulKyu/cpg/pkg/policy"
 )
 
 func TestTrack_Dedup(t *testing.T) {
@@ -34,8 +36,8 @@ func TestTrack_Dedup(t *testing.T) {
 		},
 	}
 
-	tracker.Track(flow, "no_l4")
-	tracker.Track(flow, "no_l4") // duplicate
+	tracker.Track(flow, policy.ReasonNoL4)
+	tracker.Track(flow, policy.ReasonNoL4) // duplicate
 
 	debugLogs := filterLogs(logs, zapcore.DebugLevel, "unhandled flow")
 	assert.Len(t, debugLogs, 1, "duplicate flow should only produce one DEBUG log")
@@ -79,8 +81,8 @@ func TestTrack_DifferentFlows(t *testing.T) {
 		},
 	}
 
-	tracker.Track(flow1, "no_l4")
-	tracker.Track(flow2, "world_no_ip")
+	tracker.Track(flow1, policy.ReasonNoL4)
+	tracker.Track(flow2, policy.ReasonWorldNoIP)
 
 	debugLogs := filterLogs(logs, zapcore.DebugLevel, "unhandled flow")
 	assert.Len(t, debugLogs, 2, "different flows should produce separate DEBUG logs")
@@ -103,8 +105,8 @@ func TestTrack_SameFlowDifferentReason(t *testing.T) {
 		},
 	}
 
-	tracker.Track(flow, "no_l4")
-	tracker.Track(flow, "unknown_protocol")
+	tracker.Track(flow, policy.ReasonNoL4)
+	tracker.Track(flow, policy.ReasonUnknownProtocol)
 
 	debugLogs := filterLogs(logs, zapcore.DebugLevel, "unhandled flow")
 	assert.Len(t, debugLogs, 2, "same flow with different reasons should produce separate DEBUG logs")
@@ -141,9 +143,9 @@ func TestFlush_EmitsSummary(t *testing.T) {
 		},
 	}
 
-	tracker.Track(flow1, "no_l4")
-	tracker.Track(flow1, "no_l4") // dup — counter still increments
-	tracker.Track(flow2, "world_no_ip")
+	tracker.Track(flow1, policy.ReasonNoL4)
+	tracker.Track(flow1, policy.ReasonNoL4) // dup — counter still increments
+	tracker.Track(flow2, policy.ReasonWorldNoIP)
 
 	tracker.Flush()
 
@@ -166,11 +168,11 @@ func TestFlush_ResetsCountersNotSeen(t *testing.T) {
 		Destination:      &flowpb.Endpoint{Labels: []string{"k8s:app=b"}, Namespace: "prod"},
 	}
 
-	tracker.Track(flow, "no_l4")
+	tracker.Track(flow, policy.ReasonNoL4)
 	tracker.Flush()
 
 	// Track same flow again — counter increments but no new DEBUG log
-	tracker.Track(flow, "no_l4")
+	tracker.Track(flow, policy.ReasonNoL4)
 	tracker.Flush()
 
 	debugLogs := filterLogs(logs, zapcore.DebugLevel, "unhandled flow")
@@ -194,7 +196,7 @@ func TestFlush_SkipsZeroCounters(t *testing.T) {
 		Destination:      &flowpb.Endpoint{Labels: []string{"k8s:app=b"}, Namespace: "prod"},
 	}
 
-	tracker.Track(flow, "no_l4")
+	tracker.Track(flow, policy.ReasonNoL4)
 	tracker.Flush()
 
 	// No new tracks — flush should emit nothing
