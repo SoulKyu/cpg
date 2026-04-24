@@ -30,13 +30,23 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 
 <!-- Current scope for v1.1. -->
 
-- [ ] Generate L7 HTTP policies (method, path, headers) from Hubble L7 flows
-- [ ] Generate L7 DNS policies (FQDN matchPattern) from Hubble DNS flows
-- [ ] `cpg apply` command: apply generated policies to cluster (dry-run by default, --force to apply)
+- [ ] Offline replay from Hubble jsonpb captures (`cpg replay <file>`)
+- [ ] Per-rule flow evidence persisted to XDG cache
+- [ ] `cpg explain <target>` to surface flows behind any generated rule
+- [ ] `--dry-run` with unified YAML diff on generate and replay
+
+### Planned
+
+<!-- Scope for v1.2 — L7 policies and auto-apply. Moved from v1.1 to make room for
+     the offline-workflow milestone first, which is foundational for iterating
+     on L7 policies once we have them. -->
+
+- [ ] Generate L7 HTTP policies (method, path, headers) from Hubble L7 flows — v1.2
+- [ ] Generate L7 DNS policies (FQDN matchPattern) from Hubble DNS flows — v1.2
+- [ ] `cpg apply` command: apply generated policies to cluster (dry-run by default, --force to apply) — v1.2
 
 ### Out of Scope
 
-- JSON file/stdin input mode — gRPC only, no offline mode
 - Named port resolution — use exact port numbers only
 - CiliumClusterwideNetworkPolicy generation — namespace-scoped only
 - Web UI or dashboard — CLI tool only
@@ -64,7 +74,7 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| gRPC only (no JSON stdin/file) | Simplifies architecture, uses native proto types, eliminates custom parsing | — Pending |
+| gRPC only initially | Simplified v1 architecture — offline jsonpb ingestion added in v1.1 for iteration workflow | Revised v1.1 |
 | Auto port-forward to Hubble Relay | UX parity with hubble CLI, zero manual setup | — Pending |
 | One file per policy output | Easier to review, git-diff friendly, selective apply | — Pending |
 | Smart label defaults over configurable | Reduces config burden, app.kubernetes.io labels are standard | — Pending |
@@ -73,14 +83,22 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 | Exact ports over named ports | Simpler, no ambiguity, matches flow data directly | — Pending |
 | Both local + cluster dedup | Comprehensive dedup prevents duplicate policies in all scenarios | — Pending |
 
-## Current Milestone: v1.1 L7 Policies & Auto-Apply
+## Current Milestone: v1.1 Offline Replay & Policy Analysis
 
-**Goal:** Extend cpg with L7 policy generation (HTTP methods/paths/headers, DNS FQDN patterns) and a safe apply command with dry-run by default.
+**Goal:** Add an offline iteration workflow (capture once, replay many), per-rule
+flow evidence (`cpg explain`), and a dry-run mode with unified diff, so users can
+iterate on policy generation without reproducing traffic and audit why each rule
+was generated.
 
 **Target features:**
-- L7 HTTP policy rules from Hubble L7 flow data
-- L7 DNS policy rules (FQDN matching) from Hubble DNS flow data
-- `cpg apply` command with dry-run default and `--force` for real apply
+- `cpg replay <file.jsonl>` — ingest Hubble jsonpb dumps through the same pipeline
+- Per-rule evidence persisted under `$XDG_CACHE_HOME/cpg/evidence`
+- `cpg explain <NAMESPACE/WORKLOAD>` with filters and multi-format output
+- `--dry-run` with unified YAML diff on both `generate` and `replay`
+
+## Next Milestone: v1.2 L7 Policies & Auto-Apply
+
+Pushed from v1.1 to v1.2. See the "Planned" section above.
 
 ---
-*Last updated: 2026-03-09 after v1.1 milestone start*
+*Last updated: 2026-04-24 — v1.1 scope changed from L7+Auto-Apply to Offline Workflow; L7+Auto-Apply moved to v1.2.*

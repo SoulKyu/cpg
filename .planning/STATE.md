@@ -1,13 +1,13 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.1
-milestone_name: L7 Policies & Auto-Apply
-status: defining-requirements
+milestone_name: Offline Replay & Policy Analysis
+status: planned
 stopped_at: null
-last_updated: "2026-03-09T00:00:00Z"
-last_activity: 2026-03-09 -- Milestone v1.1 started
+last_updated: "2026-04-24T14:20:00Z"
+last_activity: 2026-04-24 -- v1.1 rescoped to Offline Replay & Analysis; L7+Auto-Apply moved to v1.2
 progress:
-  total_phases: 0
+  total_phases: 3
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-09)
 
 **Core value:** Automatically generate correct CiliumNetworkPolicies from observed Hubble denials so that SREs spend zero time manually writing network policies in default-deny environments.
-**Current focus:** Defining requirements for v1.1
+**Current focus:** v1.1 Offline Replay & Analysis — 3 phases planned, awaiting execution
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: --
-Status: Defining requirements
-Last activity: 2026-03-09 -- Milestone v1.1 started
+Phase: 4 (Offline Replay Core) — not started
+Plan: Master plan `docs/superpowers/plans/2026-04-24-offline-replay-and-analysis.md`
+Status: Planned — ready to execute
+Last activity: 2026-04-24 -- v1.1 rescoped; master spec + plan written
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -96,6 +96,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-08T20:24:01Z
-Stopped at: Completed 03-02-PLAN.md (final plan)
-Resume file: All plans complete. Project milestone v1.0 reached.
+Last session: 2026-04-24T14:20:00Z
+Stopped at: v1.1 rescoped — spec + master plan written, phases 4–6 created
+Resume file: Start Phase 4 via `/gsd:plan-phase 04-offline-replay-core` or execute inline from the master plan.

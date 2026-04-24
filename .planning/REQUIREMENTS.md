@@ -36,30 +36,73 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **DEDP-02**: Tool deduplicates against live CiliumNetworkPolicies in cluster via client-go
 - [x] **DEDP-03**: Tool aggregates similar flows before generating policies (avoid one policy per packet)
 
-## v2 Requirements
+## v1.1 Requirements (Offline Replay & Policy Analysis)
+
+Spec: `docs/superpowers/specs/2026-04-24-offline-replay-and-analysis-design.md`
+Plan: `docs/superpowers/plans/2026-04-24-offline-replay-and-analysis.md`
+
+### Offline Replay
+
+- [ ] **OFFL-01**: Tool ingests Hubble jsonpb dumps (`hubble observe --output jsonpb`)
+      through a new `cpg replay <file>` subcommand
+- [ ] **OFFL-02**: Replay supports stdin (`-`) and transparent gzip (`.gz`)
+- [ ] **OFFL-03**: Non-DROPPED verdicts and malformed lines are skipped with counters
+      surfaced in the session summary
+
+### Per-rule Evidence
+
+- [ ] **EVID-01**: Every rule emitted by `generate` / `replay` is attributed to its
+      contributing flows (samples + counters + first/last seen) on disk
+- [ ] **EVID-02**: Evidence lives under `$XDG_CACHE_HOME/cpg/evidence`, keyed by a
+      hash of the output directory; `--evidence-dir` overrides the location
+- [ ] **EVID-03**: Evidence is bounded by `--evidence-samples` (per rule) and
+      `--evidence-sessions` (per policy); FIFO by time
+- [ ] **EVID-04**: Evidence merges across sessions mirror the merge semantics of
+      the policy YAML (preserve rules not re-emitted in the current session)
+
+### Explain
+
+- [ ] **EXPL-01**: `cpg explain <NAMESPACE/WORKLOAD | path/to/policy.yaml>` reads the
+      evidence file and renders per-rule flow attribution
+- [ ] **EXPL-02**: Filters: `--ingress` / `--egress`, `--port`, `--peer KEY=VAL`,
+      `--peer-cidr`, `--since`
+- [ ] **EXPL-03**: Output formats: text (default, ANSI on TTY), `--json`, and
+      `--format yaml`
+
+### Dry-run
+
+- [ ] **DRYR-01**: `--dry-run` on `generate` and `replay` suppresses filesystem
+      writes (policies and evidence) while running the full pipeline
+- [ ] **DRYR-02**: `--dry-run` prints a unified YAML diff against existing files on
+      disk; `--no-diff` disables just the diff
+
+## v1.2 Requirements (L7 Policies & Auto-Apply)
 
 ### L7 Policy Generation
 
 - **L7-01**: Tool generates L7 policies (HTTP path/method, DNS names) from L7 flows
 - **L7-02**: Tool supports two-step workflow (deploy L4, observe L7, then generate L7 policies)
 
+### Auto-Apply
+
+- **APLY-01**: `cpg apply` command applies generated policies to the cluster
+- **APLY-02**: `cpg apply` defaults to dry-run semantics; `--force` performs the real apply
+
 ### Advanced Features
 
 - **ADV-01**: Tool merges/consolidates multiple granular policies into fewer broader ones
 - **ADV-02**: Tool integrates with Cilium policy audit mode for automated audit-then-enforce workflow
 - **ADV-03**: Tool exposes Prometheus metrics for long-running instances
-- **ADV-04**: Tool shows policy diff against existing cluster state
+- **ADV-04**: Tool shows policy diff against existing cluster state (subsumed by DRYR-02 once v1.1 ships)
 
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| JSON file/stdin input mode | gRPC only -- eliminates custom JSON parsing, uses native proto types |
 | Named port resolution | Exact port numbers are unambiguous and match datapath directly |
-| CiliumClusterwideNetworkPolicy | Namespace-scoped only -- cluster-wide policies are hand-crafted by platform teams |
-| Web UI / dashboard | CLI tool only -- editor.networkpolicy.io exists for visualization |
-| Policy simulation / dry-run | Cilium audit mode already provides this -- don't reimplement |
-| Auto kubectl apply | Dangerous in production -- users apply via their GitOps pipeline |
+| CiliumClusterwideNetworkPolicy | Namespace-scoped only — cluster-wide policies are hand-crafted by platform teams |
+| Web UI / dashboard | CLI tool only — editor.networkpolicy.io exists for visualization |
+| Auto kubectl apply without safeguards | Dangerous in production — v1.2 apply defaults to dry-run |
 
 ## Traceability
 
@@ -85,11 +128,23 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DEDP-02 | Phase 3 | Complete |
 | DEDP-03 | Phase 3 | Complete |
 
+| OFFL-01 | Phase 4 | Planned |
+| OFFL-02 | Phase 4 | Planned |
+| OFFL-03 | Phase 4 | Planned |
+| EVID-01 | Phase 4 | Planned |
+| EVID-02 | Phase 4 | Planned |
+| EVID-03 | Phase 4 | Planned |
+| EVID-04 | Phase 4 | Planned |
+| EXPL-01 | Phase 6 | Planned |
+| EXPL-02 | Phase 6 | Planned |
+| EXPL-03 | Phase 6 | Planned |
+| DRYR-01 | Phase 5 | Planned |
+| DRYR-02 | Phase 5 | Planned |
+
 **Coverage:**
-- v1 requirements: 17 total
-- Mapped to phases: 17
-- Unmapped: 0
+- v1.0 requirements: 17 total, all complete
+- v1.1 requirements: 12 total, mapped to phases 4–6
 
 ---
 *Requirements defined: 2026-03-08*
-*Last updated: 2026-03-08 after roadmap creation*
+*Last updated: 2026-04-24 — added v1.1 offline replay, evidence, explain, dry-run; pushed L7 + auto-apply to v1.2.*
