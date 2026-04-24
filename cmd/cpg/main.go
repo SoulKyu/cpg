@@ -52,6 +52,8 @@ func main() {
 	rootCmd.PersistentFlags().Bool("json", false, "output logs in JSON format")
 
 	rootCmd.AddCommand(newGenerateCmd())
+	rootCmd.AddCommand(newReplayCmd())
+	rootCmd.AddCommand(newExplainCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

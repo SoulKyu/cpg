@@ -19,20 +19,20 @@ func TestGenerateFlags_Validate(t *testing.T) {
 		},
 		{
 			name:  "namespace filter only is valid",
-			flags: generateFlags{namespaces: []string{"prod"}},
+			flags: generateFlags{commonFlags: commonFlags{namespaces: []string{"prod"}}},
 		},
 		{
 			name:  "all-namespaces only is valid",
-			flags: generateFlags{allNamespaces: true},
+			flags: generateFlags{commonFlags: commonFlags{allNamespaces: true}},
 		},
 		{
 			name:    "namespace + all-namespaces is rejected",
-			flags:   generateFlags{namespaces: []string{"prod"}, allNamespaces: true},
+			flags:   generateFlags{commonFlags: commonFlags{namespaces: []string{"prod"}, allNamespaces: true}},
 			wantErr: "mutually exclusive",
 		},
 		{
 			name:    "multiple namespaces + all-namespaces is rejected",
-			flags:   generateFlags{namespaces: []string{"prod", "staging"}, allNamespaces: true},
+			flags:   generateFlags{commonFlags: commonFlags{namespaces: []string{"prod", "staging"}, allNamespaces: true}},
 			wantErr: "mutually exclusive",
 		},
 	}
@@ -63,22 +63,22 @@ func TestGenerateFlags_ClusterDedupNamespaces(t *testing.T) {
 		},
 		{
 			name:  "all-namespaces yields cluster-wide listing",
-			flags: generateFlags{allNamespaces: true},
+			flags: generateFlags{commonFlags: commonFlags{allNamespaces: true}},
 			want:  []string{""},
 		},
 		{
 			name:  "single namespace filter is passed through",
-			flags: generateFlags{namespaces: []string{"prod"}},
+			flags: generateFlags{commonFlags: commonFlags{namespaces: []string{"prod"}}},
 			want:  []string{"prod"},
 		},
 		{
 			name:  "multiple namespace filters are passed through",
-			flags: generateFlags{namespaces: []string{"prod", "staging"}},
+			flags: generateFlags{commonFlags: commonFlags{namespaces: []string{"prod", "staging"}}},
 			want:  []string{"prod", "staging"},
 		},
 		{
 			name:  "all-namespaces wins over namespace filter",
-			flags: generateFlags{namespaces: []string{"prod"}, allNamespaces: true},
+			flags: generateFlags{commonFlags: commonFlags{namespaces: []string{"prod"}, allNamespaces: true}},
 			want:  []string{""},
 		},
 	}

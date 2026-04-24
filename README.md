@@ -81,6 +81,21 @@ That's it. Leave it running. Go generate some traffic (or wait for someone else 
 
 Policies show up in `./policies/<namespace>/<workload>.yaml`.
 
+## Quick start (offline replay)
+
+Prefer to iterate on policy generation without reproducing traffic? Capture once, replay many:
+
+```bash
+# Capture dropped flows for N minutes
+hubble observe --output jsonpb --follow > drops.jsonl
+# Ctrl+C when done capturing
+
+# Replay through cpg — reuse the file as many times as you want
+cpg replay drops.jsonl -n production
+```
+
+`cpg replay` accepts `-` to read from stdin and transparently decompresses `.gz` files.
+
 ## Flags
 
 ```
@@ -136,6 +151,42 @@ spec:
 
 External traffic (world identity) gets CIDR-based rules (`fromCIDR` / `toCIDR`) with /32 addresses instead of endpoint selectors, because you can't exactly match a label on the internet.
 
+## Offline replay
+
+`cpg replay <file>` feeds a Hubble jsonpb capture through the same pipeline as the live stream. It is the right tool when you want:
+
+- **Deterministic iteration.** Re-run the same input as you tweak label selection, dedup logic, or flush intervals.
+- **Offline workflow.** Capture on a jumphost, replay on your laptop.
+- **Post-mortem reproduction.** Keep the capture alongside the policy in your GitOps repo so anyone can reproduce what cpg saw.
+
+Capture:
+
+```bash
+hubble observe --output jsonpb --follow > drops.jsonl
+```
+
+Replay:
+
+```bash
+cpg replay drops.jsonl -n production
+cpg replay drops.jsonl.gz -n production    # gzip transparent
+cat drops.jsonl | cpg replay -              # stdin
+```
+
+Flags shared with `generate` (`--output-dir`, `--cluster-dedup`, `--flush-interval`) work identically. Non-DROPPED verdicts and malformed lines are skipped with counters surfaced in the session summary.
+
+## Dry-run
+
+Preview what `generate` or `replay` would write without touching any file:
+
+```bash
+cpg replay drops.jsonl --dry-run           # with unified diff
+cpg replay drops.jsonl --dry-run --no-diff # log-only
+cpg generate -n production --dry-run
+```
+
+In `--dry-run` mode, all stages of the pipeline run normally: you still see unhandled-flow warnings, cluster-dedup hits, and aggregation logs. Only the filesystem write step is suppressed. When an existing file would change, a unified diff is printed to stdout (colored on a tty, plain otherwise).
+
 ## Deduplication
 
 cpg tries hard not to waste your time:
@@ -186,6 +237,55 @@ DEBUG Unhandled flow  {"src": "default/nginx", "dst": "kube-system/coredns", "po
 ```
 
 Reserved identity flows (like `reserved:host` or `reserved:kube-apiserver`) are reported separately as WARN logs with guidance to use CiliumClusterwideNetworkPolicy instead.
+
+## Explain policies
+
+After a run, every emitted rule has per-flow evidence recorded alongside the YAML. Inspect it with `cpg explain`:
+
+```bash
+cpg explain production/api-server
+cpg explain production/api-server --peer app=frontend
+cpg explain production/api-server --ingress --port 8080
+cpg explain ./policies/production/api-server.yaml --since 1h --json
+```
+
+Example output:
+
+```
+Policy: cpg-api-server (production)
+Latest session: 2026-04-24 14:02 → 14:15 (source: replay)
+
+Ingress rule
+  Peer:        app=frontend (endpoint)
+  Port:        8080/TCP
+  Flow count:  23
+  First seen:  2026-04-24 14:02:11
+  Last seen:   2026-04-24 14:15:48
+
+  Sample flows:
+    14:02:11  default/frontend → production/api-server  TCP/8080
+    14:02:13  default/frontend → production/api-server  TCP/8080
+    ...
+```
+
+### Where is evidence stored?
+
+Evidence lives outside the output directory to keep GitOps clean:
+
+- **Linux:** `$XDG_CACHE_HOME/cpg/evidence` (defaults to `~/.cache/cpg/evidence`)
+- **macOS:** `~/Library/Caches/cpg/evidence`
+
+The path is keyed by a hash of the absolute output directory, so multiple workspaces coexist without collision.
+
+To share evidence with a colleague or archive it:
+
+```bash
+cpg replay drops.jsonl -n production --evidence-dir ./evidence
+# ... ship ./evidence alongside the policies
+cpg explain production/api-server --evidence-dir ./evidence
+```
+
+Disable capture with `--no-evidence`. Tune retention per rule with `--evidence-samples` (default 10) and per policy with `--evidence-sessions` (default 10).
 
 ## Label selection
 
@@ -245,12 +345,15 @@ plugins:
 ## Project structure
 
 ```
-cmd/cpg/           CLI entrypoint (cobra)
+cmd/cpg/           CLI entrypoint (cobra): generate, replay, explain
 pkg/labels/        Label selection, denylist, endpoint/peer selector builders
-pkg/policy/        Flow-to-CiliumNetworkPolicy builder, merge logic, semantic dedup
+pkg/policy/        Flow-to-CiliumNetworkPolicy builder, merge, semantic dedup, attribution
 pkg/output/        Directory-organized YAML writer with merge-on-write
-pkg/hubble/        gRPC client, temporal aggregator, pipeline orchestration
+pkg/hubble/        Live gRPC client, aggregator, pipeline orchestration
 pkg/k8s/           Kubeconfig loading, port-forward, cluster policy fetching
+pkg/flowsource/    Flow stream abstraction: live gRPC or jsonpb file source
+pkg/evidence/      Per-rule flow attribution (cpg explain)
+pkg/diff/          Unified YAML diff (cpg generate/replay --dry-run)
 ```
 
 ## Development

@@ -51,6 +51,13 @@ func NewAggregator(interval time.Duration, logger *zap.Logger, tracker flushingT
 	}
 }
 
+// SetMaxSamples configures how many per-rule flow samples the policy builder
+// retains when producing attribution. Zero disables attribution entirely.
+// Safe to call before Run().
+func (a *Aggregator) SetMaxSamples(n int) {
+	a.maxSamples = n
+}
+
 // Run reads flows from in, accumulates them by AggKey, and sends PolicyEvents
 // to out on each ticker flush, channel close, or context cancellation.
 // It closes the out channel when it returns.

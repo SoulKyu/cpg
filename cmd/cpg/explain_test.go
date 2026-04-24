@@ -1,0 +1,140 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/SoulKyu/cpg/pkg/evidence"
+)
+
+func sampleEvidence() evidence.PolicyEvidence {
+	return evidence.PolicyEvidence{
+		SchemaVersion: 1,
+		Policy:        evidence.PolicyRef{Name: "cpg-api", Namespace: "prod", Workload: "api"},
+		Sessions: []evidence.SessionInfo{{
+			ID:        "s1",
+			StartedAt: time.Date(2026, 4, 24, 14, 0, 0, 0, time.UTC),
+			EndedAt:   time.Date(2026, 4, 24, 14, 15, 0, 0, time.UTC),
+			Source:    evidence.SourceInfo{Type: "replay", File: "f.jsonl"},
+		}},
+		Rules: []evidence.RuleEvidence{{
+			Key: "ingress:ep:app=x:TCP:8080", Direction: "ingress",
+			Peer: evidence.PeerRef{Type: "endpoint", Labels: map[string]string{"app": "x"}},
+			Port: "8080", Protocol: "TCP",
+			FlowCount: 3, FirstSeen: time.Date(2026, 4, 24, 14, 0, 1, 0, time.UTC), LastSeen: time.Date(2026, 4, 24, 14, 2, 5, 0, time.UTC),
+			Samples: []evidence.FlowSample{{
+				Time: time.Date(2026, 4, 24, 14, 0, 1, 0, time.UTC),
+				Src:  evidence.FlowEndpoint{Namespace: "default", Workload: "client"},
+				Dst:  evidence.FlowEndpoint{Namespace: "prod", Workload: "api"},
+				Port: 8080, Protocol: "TCP", Verdict: "DROPPED",
+			}},
+		}},
+	}
+}
+
+func TestRenderTextShowsRuleMeta(t *testing.T) {
+	buf := new(bytes.Buffer)
+	require.NoError(t, renderText(buf, sampleEvidence(), sampleEvidence().Rules, 10, false))
+
+	out := buf.String()
+	assert.Contains(t, out, "Policy: cpg-api")
+	assert.Contains(t, out, "Ingress rule")
+	assert.Contains(t, out, "app=x")
+	assert.Contains(t, out, "8080/TCP")
+	assert.Contains(t, out, "Flow count:  3")
+	assert.Contains(t, out, "default/client")
+}
+
+func TestRenderJSON(t *testing.T) {
+	buf := new(bytes.Buffer)
+	require.NoError(t, renderJSON(buf, sampleEvidence(), sampleEvidence().Rules))
+	var got explainOutput
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &got))
+	assert.Equal(t, "cpg-api", got.Policy.Name)
+	assert.Len(t, got.MatchedRules, 1)
+}
+
+func TestRenderYAML(t *testing.T) {
+	buf := new(bytes.Buffer)
+	require.NoError(t, renderYAML(buf, sampleEvidence(), sampleEvidence().Rules))
+	assert.Contains(t, buf.String(), "policy:")
+	assert.Contains(t, buf.String(), "matched_rules:")
+}
+
+func TestRenderTextEmptyMatchListsAvailable(t *testing.T) {
+	buf := new(bytes.Buffer)
+	err := renderText(buf, sampleEvidence(), nil, 10, false)
+	require.NoError(t, err)
+	assert.Contains(t, buf.String(), "No rules matched")
+	assert.Contains(t, buf.String(), "Available rules:")
+	assert.Contains(t, buf.String(), "app=x")
+}
+
+func seedEvidence(t *testing.T, evDir, outDir string) {
+	t.Helper()
+	hash := evidence.HashOutputDir(outDir)
+	p := filepath.Join(evDir, hash, "prod", "api.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+	data, err := json.Marshal(sampleEvidence())
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(p, data, 0o644))
+}
+
+func TestExplainFindsEvidenceAndPrintsText(t *testing.T) {
+	outDir := t.TempDir()
+	evDir := t.TempDir()
+	seedEvidence(t, evDir, outDir)
+
+	initLoggerForTesting(t)
+
+	cmd := newExplainCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"prod/api", "--output-dir", outDir, "--evidence-dir", evDir})
+	require.NoError(t, cmd.Execute())
+
+	out := buf.String()
+	assert.Contains(t, out, "Policy: cpg-api")
+	assert.Contains(t, out, "app=x")
+}
+
+func TestExplainReturnsClearErrorWhenEvidenceMissing(t *testing.T) {
+	outDir := t.TempDir()
+	evDir := t.TempDir()
+	initLoggerForTesting(t)
+
+	cmd := newExplainCmd()
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SilenceUsage = true
+	cmd.SetArgs([]string{"prod/api", "--output-dir", outDir, "--evidence-dir", evDir})
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no evidence found")
+}
+
+func TestExplainJSONOutput(t *testing.T) {
+	outDir := t.TempDir()
+	evDir := t.TempDir()
+	seedEvidence(t, evDir, outDir)
+	initLoggerForTesting(t)
+
+	cmd := newExplainCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"prod/api", "--output-dir", outDir, "--evidence-dir", evDir, "--json"})
+	require.NoError(t, cmd.Execute())
+
+	var got explainOutput
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &got))
+	assert.Len(t, got.MatchedRules, 1)
+}

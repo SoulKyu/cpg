@@ -98,6 +98,9 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 
 	tracker := NewUnhandledTracker(cfg.Logger)
 	agg := NewAggregator(cfg.FlushInterval, cfg.Logger, tracker)
+	if cfg.EvidenceEnabled {
+		agg.SetMaxSamples(cfg.EvidenceCaps.MaxSamples)
+	}
 	writer := output.NewWriter(cfg.OutputDir, cfg.Logger)
 	stats := &SessionStats{
 		StartTime: time.Now(),
