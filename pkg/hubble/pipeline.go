@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/SoulKyu/cpg/pkg/evidence"
 	"github.com/SoulKyu/cpg/pkg/flowsource"
 	"github.com/SoulKyu/cpg/pkg/output"
 	"github.com/SoulKyu/cpg/pkg/policy"
@@ -28,16 +29,33 @@ type PipelineConfig struct {
 	// policy name. When set (via --cluster-dedup), policies matching the cluster
 	// state are skipped. This is a startup snapshot; no periodic refresh.
 	ClusterPolicies map[string]*ciliumv2.CiliumNetworkPolicy
+
+	// Dry-run mode: skip all filesystem writes (policies and evidence),
+	// optionally emit a unified YAML diff against existing files.
+	DryRun      bool
+	DryRunDiff  bool
+	DryRunColor bool
+
+	// Evidence capture (pkg/evidence).
+	EvidenceEnabled bool
+	EvidenceDir     string
+	OutputHash      string
+	EvidenceCaps    evidence.MergeCaps
+	SessionID       string
+	SessionSource   evidence.SourceInfo
+	CPGVersion      string
 }
 
 // SessionStats tracks pipeline metrics for the session summary.
 type SessionStats struct {
-	StartTime       time.Time
-	FlowsSeen       uint64
-	PoliciesWritten uint64
-	PoliciesSkipped uint64
-	LostEvents      uint64
-	OutputDir       string
+	StartTime          time.Time
+	FlowsSeen          uint64
+	PoliciesWritten    uint64
+	PoliciesSkipped    uint64
+	PoliciesWouldWrite uint64 // dry-run counter
+	PoliciesWouldSkip  uint64 // dry-run counter
+	LostEvents         uint64
+	OutputDir          string
 }
 
 // Log outputs the session summary to the logger.
@@ -47,6 +65,8 @@ func (s *SessionStats) Log(logger *zap.Logger) {
 		zap.Uint64("flows_seen", s.FlowsSeen),
 		zap.Uint64("policies_written", s.PoliciesWritten),
 		zap.Uint64("policies_skipped", s.PoliciesSkipped),
+		zap.Uint64("policies_would_write", s.PoliciesWouldWrite),
+		zap.Uint64("policies_would_skip", s.PoliciesWouldSkip),
 		zap.Uint64("lost_events", s.LostEvents),
 		zap.String("output_dir", s.OutputDir),
 	)

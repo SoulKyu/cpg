@@ -2,10 +2,15 @@ package hubble
 
 import (
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 
 	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
 	"go.uber.org/zap"
+	sigyaml "sigs.k8s.io/yaml"
 
+	"github.com/SoulKyu/cpg/pkg/diff"
 	"github.com/SoulKyu/cpg/pkg/output"
 	"github.com/SoulKyu/cpg/pkg/policy"
 )
@@ -21,6 +26,13 @@ type policyWriter struct {
 	written         map[string]*ciliumv2.CiliumNetworkPolicy
 	stats           *SessionStats
 	logger          *zap.Logger
+
+	// Dry-run knobs. When dryRun is true, handle() logs and optionally prints
+	// a unified diff instead of writing to disk.
+	dryRun      bool
+	dryRunDiff  bool
+	dryRunColor bool
+	diffOut     io.Writer // test injection; defaults to os.Stdout when nil
 }
 
 func newPolicyWriter(w *output.Writer, clusterPolicies map[string]*ciliumv2.CiliumNetworkPolicy, stats *SessionStats, logger *zap.Logger) *policyWriter {
@@ -38,13 +50,20 @@ func newPolicyWriter(w *output.Writer, clusterPolicies map[string]*ciliumv2.Cili
 // error: individual write failures are logged but do not kill the pipeline.
 func (w *policyWriter) handle(pe policy.PolicyEvent) {
 	if w.skipForClusterMatch(pe) {
-		w.stats.PoliciesSkipped++
+		w.bumpSkip()
 		return
 	}
 
 	dedupKey := fmt.Sprintf("%s/%s", pe.Namespace, pe.Workload)
 	if w.skipForCrossFlushMatch(pe, dedupKey) {
-		w.stats.PoliciesSkipped++
+		w.bumpSkip()
+		return
+	}
+
+	if w.dryRun {
+		w.dryRunEmit(pe)
+		w.stats.PoliciesWouldWrite++
+		w.written[dedupKey] = pe.Policy
 		return
 	}
 
@@ -58,6 +77,50 @@ func (w *policyWriter) handle(pe policy.PolicyEvent) {
 	}
 	w.stats.PoliciesWritten++
 	w.written[dedupKey] = pe.Policy
+}
+
+func (w *policyWriter) bumpSkip() {
+	if w.dryRun {
+		w.stats.PoliciesWouldSkip++
+	} else {
+		w.stats.PoliciesSkipped++
+	}
+}
+
+func (w *policyWriter) dryRunEmit(pe policy.PolicyEvent) {
+	w.logger.Info("would write policy",
+		zap.String("namespace", pe.Namespace),
+		zap.String("workload", pe.Workload),
+	)
+	if !w.dryRunDiff {
+		return
+	}
+
+	rendered, err := sigyaml.Marshal(pe.Policy)
+	if err != nil {
+		w.logger.Warn("dry-run render failed", zap.Error(err))
+		return
+	}
+
+	existing, err := w.writer.ReadExisting(pe.Namespace, pe.Workload)
+	if err != nil {
+		existing = nil
+	}
+
+	target := filepath.Join(w.writer.OutputDir(), pe.Namespace, pe.Workload+".yaml")
+	d, err := diff.UnifiedYAML(target, target+" (in memory)", existing, rendered, w.dryRunColor)
+	if err != nil {
+		w.logger.Warn("diff failed", zap.Error(err))
+		return
+	}
+	if d == "" {
+		return
+	}
+	out := w.diffOut
+	if out == nil {
+		out = os.Stdout
+	}
+	_, _ = io.WriteString(out, d)
 }
 
 func (w *policyWriter) skipForClusterMatch(pe policy.PolicyEvent) bool {

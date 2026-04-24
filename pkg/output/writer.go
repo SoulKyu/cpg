@@ -81,6 +81,26 @@ func (w *Writer) Write(event policy.PolicyEvent) error {
 	return nil
 }
 
+// OutputDir returns the root directory this writer targets.
+func (w *Writer) OutputDir() string {
+	return w.outputDir
+}
+
+// ReadExisting returns the raw YAML bytes of the file on disk for the given
+// namespace/workload, or nil if no such file exists. Errors other than "not
+// exist" are returned as-is.
+func (w *Writer) ReadExisting(namespace, workload string) ([]byte, error) {
+	path := filepath.Join(w.outputDir, namespace, workload+".yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return data, nil
+}
+
 // readExistingPolicy reads and unmarshals a CiliumNetworkPolicy from disk.
 // Returns nil, nil if the file does not exist.
 func readExistingPolicy(path string) (*ciliumv2.CiliumNetworkPolicy, error) {
