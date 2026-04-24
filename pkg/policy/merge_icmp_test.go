@@ -13,20 +13,20 @@ import (
 
 func TestMergePolicy_ICMPAppendedToExistingTCPPeer(t *testing.T) {
 	// Existing: peer A with TCP port 8080
-	existing := policy.BuildPolicy("coroot", "clickhouse", []*flowpb.Flow{
+	existing, _ := policy.BuildPolicy("coroot", "clickhouse", []*flowpb.Flow{
 		testdata.IngressTCPFlow(
 			[]string{"k8s:app.kubernetes.io/component=coroot-node-agent"},
 			[]string{"k8s:app.kubernetes.io/component=clickhouse"},
 			"coroot", 8080,
 		),
-	}, nil)
+	}, nil, policy.AttributionOptions{})
 	// Incoming: same peer A with ICMP EchoRequest (type 8)
-	incoming := policy.BuildPolicy("coroot", "clickhouse", []*flowpb.Flow{
+	incoming, _ := policy.BuildPolicy("coroot", "clickhouse", []*flowpb.Flow{
 		testdata.IngressICMPv4Flow(
 			[]string{"k8s:app.kubernetes.io/component=coroot-node-agent"}, "coroot",
 			[]string{"k8s:app.kubernetes.io/component=clickhouse"}, "coroot", 8,
 		),
-	}, nil)
+	}, nil, policy.AttributionOptions{})
 
 	merged := policy.MergePolicy(existing, incoming)
 	require.NotNil(t, merged.Spec)
@@ -51,18 +51,18 @@ func TestMergePolicy_ICMPAppendedToExistingTCPPeer(t *testing.T) {
 
 func TestMergePolicy_ICMPDedup(t *testing.T) {
 	// Both have ICMP type 8 from same peer
-	existing := policy.BuildPolicy("default", "server", []*flowpb.Flow{
+	existing, _ := policy.BuildPolicy("default", "server", []*flowpb.Flow{
 		testdata.IngressICMPv4Flow(
 			[]string{"k8s:app=client"}, "default",
 			[]string{"k8s:app=server"}, "default", 8,
 		),
-	}, nil)
-	incoming := policy.BuildPolicy("default", "server", []*flowpb.Flow{
+	}, nil, policy.AttributionOptions{})
+	incoming, _ := policy.BuildPolicy("default", "server", []*flowpb.Flow{
 		testdata.IngressICMPv4Flow(
 			[]string{"k8s:app=client"}, "default",
 			[]string{"k8s:app=server"}, "default", 8,
 		),
-	}, nil)
+	}, nil, policy.AttributionOptions{})
 
 	merged := policy.MergePolicy(existing, incoming)
 	require.NotNil(t, merged.Spec)
@@ -75,19 +75,19 @@ func TestMergePolicy_ICMPDedup(t *testing.T) {
 
 func TestMergePolicy_ICMPNewTypeMerged(t *testing.T) {
 	// Existing: ICMP type 8 (EchoRequest)
-	existing := policy.BuildPolicy("default", "server", []*flowpb.Flow{
+	existing, _ := policy.BuildPolicy("default", "server", []*flowpb.Flow{
 		testdata.IngressICMPv4Flow(
 			[]string{"k8s:app=client"}, "default",
 			[]string{"k8s:app=server"}, "default", 8,
 		),
-	}, nil)
+	}, nil, policy.AttributionOptions{})
 	// Incoming: ICMP type 0 (EchoReply)
-	incoming := policy.BuildPolicy("default", "server", []*flowpb.Flow{
+	incoming, _ := policy.BuildPolicy("default", "server", []*flowpb.Flow{
 		testdata.IngressICMPv4Flow(
 			[]string{"k8s:app=client"}, "default",
 			[]string{"k8s:app=server"}, "default", 0,
 		),
-	}, nil)
+	}, nil, policy.AttributionOptions{})
 
 	merged := policy.MergePolicy(existing, incoming)
 	require.NotNil(t, merged.Spec)
@@ -100,19 +100,19 @@ func TestMergePolicy_ICMPNewTypeMerged(t *testing.T) {
 
 func TestMergePolicy_EntityRulesAppended(t *testing.T) {
 	// Existing: ingress from kube-apiserver on port 443
-	existing := policy.BuildPolicy("default", "server", []*flowpb.Flow{
+	existing, _ := policy.BuildPolicy("default", "server", []*flowpb.Flow{
 		testdata.EntityIngressFlow(
 			[]string{"reserved:kube-apiserver"},
 			[]string{"k8s:app=server"}, "default", 443,
 		),
-	}, nil)
+	}, nil, policy.AttributionOptions{})
 	// Incoming: ingress from host on port 8080
-	incoming := policy.BuildPolicy("default", "server", []*flowpb.Flow{
+	incoming, _ := policy.BuildPolicy("default", "server", []*flowpb.Flow{
 		testdata.EntityIngressFlow(
 			[]string{"reserved:host"},
 			[]string{"k8s:app=server"}, "default", 8080,
 		),
-	}, nil)
+	}, nil, policy.AttributionOptions{})
 
 	merged := policy.MergePolicy(existing, incoming)
 	require.NotNil(t, merged.Spec)
@@ -123,18 +123,18 @@ func TestMergePolicy_EntityRulesAppended(t *testing.T) {
 
 func TestMergePolicy_EntityPortsMerged(t *testing.T) {
 	// Both from kube-apiserver, different ports
-	existing := policy.BuildPolicy("default", "server", []*flowpb.Flow{
+	existing, _ := policy.BuildPolicy("default", "server", []*flowpb.Flow{
 		testdata.EntityIngressFlow(
 			[]string{"reserved:kube-apiserver"},
 			[]string{"k8s:app=server"}, "default", 443,
 		),
-	}, nil)
-	incoming := policy.BuildPolicy("default", "server", []*flowpb.Flow{
+	}, nil, policy.AttributionOptions{})
+	incoming, _ := policy.BuildPolicy("default", "server", []*flowpb.Flow{
 		testdata.EntityIngressFlow(
 			[]string{"reserved:kube-apiserver"},
 			[]string{"k8s:app=server"}, "default", 6443,
 		),
-	}, nil)
+	}, nil, policy.AttributionOptions{})
 
 	merged := policy.MergePolicy(existing, incoming)
 	require.NotNil(t, merged.Spec)
@@ -147,19 +147,19 @@ func TestMergePolicy_EntityPortsMerged(t *testing.T) {
 
 func TestMergePolicy_EgressICMPAppended(t *testing.T) {
 	// Existing: egress TCP to peer
-	existing := policy.BuildPolicy("default", "client", []*flowpb.Flow{
+	existing, _ := policy.BuildPolicy("default", "client", []*flowpb.Flow{
 		testdata.EgressUDPFlow(
 			[]string{"k8s:app=client"},
 			[]string{"k8s:app=dns"}, "default", 53,
 		),
-	}, nil)
+	}, nil, policy.AttributionOptions{})
 	// Incoming: egress ICMP to same peer
-	incoming := policy.BuildPolicy("default", "client", []*flowpb.Flow{
+	incoming, _ := policy.BuildPolicy("default", "client", []*flowpb.Flow{
 		testdata.EgressICMPv4Flow(
 			[]string{"k8s:app=client"}, "default",
 			[]string{"k8s:app=dns"}, "10.0.0.1", 8,
 		),
-	}, nil)
+	}, nil, policy.AttributionOptions{})
 
 	merged := policy.MergePolicy(existing, incoming)
 	require.NotNil(t, merged.Spec)

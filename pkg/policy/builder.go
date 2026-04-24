@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
 	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
@@ -80,13 +81,14 @@ func flowDestinationIP(f *flowpb.Flow) string {
 
 // PolicyEvent wraps a generated CiliumNetworkPolicy with its target location.
 type PolicyEvent struct {
-	Namespace string
-	Workload  string
-	Policy    *ciliumv2.CiliumNetworkPolicy
+	Namespace   string
+	Workload    string
+	Policy      *ciliumv2.CiliumNetworkPolicy
+	Attribution []RuleAttribution // nil when AttributionOptions.MaxSamples == 0
 }
 
 // BuildPolicy transforms a set of Hubble dropped flows into a CiliumNetworkPolicy.
-func BuildPolicy(namespace, workload string, flows []*flowpb.Flow, tracker FlowTracker) *ciliumv2.CiliumNetworkPolicy {
+func BuildPolicy(namespace, workload string, flows []*flowpb.Flow, tracker FlowTracker, opts AttributionOptions) (*ciliumv2.CiliumNetworkPolicy, []RuleAttribution) {
 	cnp := &ciliumv2.CiliumNetworkPolicy{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "cilium.io/v2",
@@ -122,9 +124,18 @@ func BuildPolicy(namespace, workload string, flows []*flowpb.Flow, tracker FlowT
 		cnp.Spec.EndpointSelector = labels.BuildEndpointSelector(selectorLabels)
 	}
 
-	cnp.Spec.Ingress = buildIngressRules(ingressFlows, namespace, tracker)
-	cnp.Spec.Egress = buildEgressRules(egressFlows, namespace, tracker)
-	return cnp
+	ingressRules, ingressAttrib := buildIngressRules(ingressFlows, namespace, tracker, opts)
+	egressRules, egressAttrib := buildEgressRules(egressFlows, namespace, tracker, opts)
+	cnp.Spec.Ingress = ingressRules
+	cnp.Spec.Egress = egressRules
+
+	var attrib []RuleAttribution
+	attrib = append(attrib, ingressAttrib...)
+	attrib = append(attrib, egressAttrib...)
+	if len(attrib) == 0 {
+		attrib = nil
+	}
+	return cnp, attrib
 }
 
 func pickSelectorLabels(flows []*flowpb.Flow) []string {
@@ -187,10 +198,39 @@ type peerRules struct {
 	ports      []api.PortProtocol
 	icmpFields []api.ICMPField
 	seen       map[string]struct{}
+	// attribution: one entry per rule key produced from this bucket
+	attrib map[string]*RuleAttribution
 }
 
 func newPeerRules() *peerRules {
-	return &peerRules{seen: make(map[string]struct{})}
+	return &peerRules{seen: make(map[string]struct{}), attrib: make(map[string]*RuleAttribution)}
+}
+
+func (pr *peerRules) recordAttribution(key RuleKey, f *flowpb.Flow, maxSamples int) {
+	if maxSamples <= 0 {
+		return
+	}
+	k := key.String()
+	entry, ok := pr.attrib[k]
+	if !ok {
+		entry = &RuleAttribution{Key: key}
+		pr.attrib[k] = entry
+	}
+	entry.FlowCount++
+	if ts := flowTime(f); !ts.IsZero() {
+		if entry.FirstSeen.IsZero() || ts.Before(entry.FirstSeen) {
+			entry.FirstSeen = ts
+		}
+		if ts.After(entry.LastSeen) {
+			entry.LastSeen = ts
+		}
+	}
+	if len(entry.Samples) < maxSamples {
+		entry.Samples = append(entry.Samples, f)
+	} else {
+		// FIFO newest: drop oldest, append new
+		entry.Samples = append(entry.Samples[1:], f)
+	}
 }
 
 func (pr *peerRules) addFlow(fp *flowProto) {
@@ -263,6 +303,8 @@ func groupFlows(
 	policyNamespace string,
 	tracker FlowTracker,
 	r reasons,
+	direction string,
+	opts AttributionOptions,
 	peer func(*flowpb.Flow) *flowpb.Endpoint,
 	peerIP func(*flowpb.Flow) string,
 ) *peerBuckets {
@@ -290,6 +332,7 @@ func groupFlows(
 				b.entityOrder = append(b.entityOrder, entity)
 			}
 			er.addFlow(fp)
+			er.recordAttribution(ruleKeyFor(direction, Peer{Type: PeerEntity, Entity: string(entity)}, fp), f, opts.MaxSamples)
 			continue
 		}
 		if isWorldIdentity(ep) {
@@ -308,6 +351,7 @@ func groupFlows(
 				b.cidrOrder = append(b.cidrOrder, cidrStr)
 			}
 			cb.addFlow(fp)
+			cb.recordAttribution(ruleKeyFor(direction, Peer{Type: PeerCIDR, CIDR: cidrStr}, fp), f, opts.MaxSamples)
 			continue
 		}
 		key := peerKey(ep.Labels)
@@ -321,48 +365,69 @@ func groupFlows(
 			b.peerOrder = append(b.peerOrder, key)
 		}
 		eb.addFlow(fp)
+		eb.recordAttribution(ruleKeyFor(direction, Peer{Type: PeerEndpoint, Labels: selectedLabelsFromFlow(ep)}, fp), f, opts.MaxSamples)
 	}
 	return b
 }
 
-func buildIngressRules(flows []*flowpb.Flow, policyNamespace string, tracker FlowTracker) []api.IngressRule {
-	b := groupFlows(flows, policyNamespace, tracker, ingressReasons,
+func buildIngressRules(flows []*flowpb.Flow, policyNamespace string, tracker FlowTracker, opts AttributionOptions) ([]api.IngressRule, []RuleAttribution) {
+	b := groupFlows(flows, policyNamespace, tracker, ingressReasons, "ingress", opts,
 		func(f *flowpb.Flow) *flowpb.Endpoint { return f.Source },
 		flowSourceIP)
 	var rules []api.IngressRule
+	var attrib []RuleAttribution
 	for _, entity := range b.entityOrder {
 		er := b.entities[entity]
 		rules = append(rules, ingressRulesFrom(api.IngressCommonRule{FromEntities: api.EntitySlice{entity}}, er.ports, er.icmpFields)...)
+		for _, a := range er.attrib {
+			attrib = append(attrib, *a)
+		}
 	}
 	for _, key := range b.cidrOrder {
 		cb := b.cidrs[key]
 		rules = append(rules, ingressRulesFrom(api.IngressCommonRule{FromCIDR: api.CIDRSlice{cb.cidr}}, cb.ports, cb.icmpFields)...)
+		for _, a := range cb.attrib {
+			attrib = append(attrib, *a)
+		}
 	}
 	for _, key := range b.peerOrder {
 		eb := b.peers[key]
 		rules = append(rules, ingressRulesFrom(api.IngressCommonRule{FromEndpoints: []api.EndpointSelector{eb.selector}}, eb.ports, eb.icmpFields)...)
+		for _, a := range eb.attrib {
+			attrib = append(attrib, *a)
+		}
 	}
-	return rules
+	return rules, attrib
 }
 
-func buildEgressRules(flows []*flowpb.Flow, policyNamespace string, tracker FlowTracker) []api.EgressRule {
-	b := groupFlows(flows, policyNamespace, tracker, egressReasons,
+func buildEgressRules(flows []*flowpb.Flow, policyNamespace string, tracker FlowTracker, opts AttributionOptions) ([]api.EgressRule, []RuleAttribution) {
+	b := groupFlows(flows, policyNamespace, tracker, egressReasons, "egress", opts,
 		func(f *flowpb.Flow) *flowpb.Endpoint { return f.Destination },
 		flowDestinationIP)
 	var rules []api.EgressRule
+	var attrib []RuleAttribution
 	for _, entity := range b.entityOrder {
 		er := b.entities[entity]
 		rules = append(rules, egressRulesFrom(api.EgressCommonRule{ToEntities: api.EntitySlice{entity}}, er.ports, er.icmpFields)...)
+		for _, a := range er.attrib {
+			attrib = append(attrib, *a)
+		}
 	}
 	for _, key := range b.cidrOrder {
 		cb := b.cidrs[key]
 		rules = append(rules, egressRulesFrom(api.EgressCommonRule{ToCIDR: api.CIDRSlice{cb.cidr}}, cb.ports, cb.icmpFields)...)
+		for _, a := range cb.attrib {
+			attrib = append(attrib, *a)
+		}
 	}
 	for _, key := range b.peerOrder {
 		eb := b.peers[key]
 		rules = append(rules, egressRulesFrom(api.EgressCommonRule{ToEndpoints: []api.EndpointSelector{eb.selector}}, eb.ports, eb.icmpFields)...)
+		for _, a := range eb.attrib {
+			attrib = append(attrib, *a)
+		}
 	}
-	return rules
+	return rules, attrib
 }
 
 func ingressRulesFrom(common api.IngressCommonRule, ports []api.PortProtocol, icmps []api.ICMPField) []api.IngressRule {
@@ -385,4 +450,44 @@ func egressRulesFrom(common api.EgressCommonRule, ports []api.PortProtocol, icmp
 		out = append(out, api.EgressRule{EgressCommonRule: common, ICMPs: api.ICMPRules{{Fields: icmps}}})
 	}
 	return out
+}
+
+// ruleKeyFor builds a RuleKey for the given direction, peer and flow protocol.
+func ruleKeyFor(direction string, peer Peer, fp *flowProto) RuleKey {
+	return RuleKey{
+		Direction: direction,
+		Peer:      peer,
+		Port:      strconv.FormatUint(uint64(fp.port), 10),
+		Protocol:  protoDisplayName(fp.proto),
+	}
+}
+
+// protoDisplayName returns a human-readable protocol name.
+func protoDisplayName(p api.L4Proto) string {
+	switch p {
+	case api.ProtoTCP:
+		return "TCP"
+	case api.ProtoUDP:
+		return "UDP"
+	case api.ProtoICMP:
+		return "ICMPv4"
+	case api.ProtoICMPv6:
+		return "ICMPv6"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// selectedLabelsFromFlow returns the selected labels for an endpoint as a map.
+func selectedLabelsFromFlow(ep *flowpb.Endpoint) map[string]string {
+	return labels.SelectLabels(ep.Labels)
+}
+
+// flowTime extracts a timestamp from a Hubble flow, falling back to zero when
+// absent (Hubble always populates this in practice but tests may omit it).
+func flowTime(f *flowpb.Flow) time.Time {
+	if f == nil || f.Time == nil {
+		return time.Time{}
+	}
+	return f.Time.AsTime()
 }

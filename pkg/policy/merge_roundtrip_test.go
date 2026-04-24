@@ -27,7 +27,7 @@ func TestMergeAfterYAMLRoundtrip_EndpointRules(t *testing.T) {
 	)
 
 	// Flush 1: build and "write to disk"
-	original := policy.BuildPolicy("default", "server", []*flowpb.Flow{flows}, nil)
+	original, _ := policy.BuildPolicy("default", "server", []*flowpb.Flow{flows}, nil, policy.AttributionOptions{})
 	originalYAML, err := yaml.Marshal(original)
 	require.NoError(t, err)
 	t.Logf("Original YAML:\n%s", originalYAML)
@@ -38,7 +38,7 @@ func TestMergeAfterYAMLRoundtrip_EndpointRules(t *testing.T) {
 	require.NoError(t, err)
 
 	// Flush 2: same flows → same policy
-	incoming := policy.BuildPolicy("default", "server", []*flowpb.Flow{flows}, nil)
+	incoming, _ := policy.BuildPolicy("default", "server", []*flowpb.Flow{flows}, nil, policy.AttributionOptions{})
 
 	// Merge
 	merged := policy.MergePolicy(&fromDisk, incoming)
@@ -64,7 +64,7 @@ func TestMergeAfterYAMLRoundtrip_MultipleRules(t *testing.T) {
 		testdata.IngressTCPFlow([]string{"k8s:app=client-a"}, []string{"k8s:app=server"}, "default", 80),
 		testdata.IngressTCPFlow([]string{"k8s:app=client-b"}, []string{"k8s:app=server"}, "default", 443),
 	}
-	original := policy.BuildPolicy("default", "server", flows1, nil)
+	original, _ := policy.BuildPolicy("default", "server", flows1, nil, policy.AttributionOptions{})
 	originalYAML, err := yaml.Marshal(original)
 	require.NoError(t, err)
 	t.Logf("Original YAML:\n%s", originalYAML)
@@ -75,7 +75,7 @@ func TestMergeAfterYAMLRoundtrip_MultipleRules(t *testing.T) {
 	require.NoError(t, err)
 
 	// Flush 2: same flows
-	incoming := policy.BuildPolicy("default", "server", flows1, nil)
+	incoming, _ := policy.BuildPolicy("default", "server", flows1, nil, policy.AttributionOptions{})
 
 	// Merge
 	merged := policy.MergePolicy(&fromDisk, incoming)
@@ -93,7 +93,7 @@ func TestMergeAfterYAMLRoundtrip_CIDRRules(t *testing.T) {
 		testdata.WorldIngressTCPFlow("1.2.3.4", 80, []string{"k8s:app=server"}, "default"),
 	}
 
-	original := policy.BuildPolicy("default", "server", flows, nil)
+	original, _ := policy.BuildPolicy("default", "server", flows, nil, policy.AttributionOptions{})
 	originalYAML, err := yaml.Marshal(original)
 	require.NoError(t, err)
 	t.Logf("Original YAML:\n%s", originalYAML)
@@ -102,7 +102,7 @@ func TestMergeAfterYAMLRoundtrip_CIDRRules(t *testing.T) {
 	err = yaml.Unmarshal(originalYAML, &fromDisk)
 	require.NoError(t, err)
 
-	incoming := policy.BuildPolicy("default", "server", flows, nil)
+	incoming, _ := policy.BuildPolicy("default", "server", flows, nil, policy.AttributionOptions{})
 	merged := policy.MergePolicy(&fromDisk, incoming)
 	mergedYAML, err := yaml.Marshal(merged)
 	require.NoError(t, err)
@@ -119,7 +119,7 @@ func TestMergeAfterYAMLRoundtrip_MixedEndpointAndCIDR(t *testing.T) {
 		testdata.WorldIngressTCPFlow("1.2.3.4", 443, []string{"k8s:app=server"}, "default"),
 	}
 
-	original := policy.BuildPolicy("default", "server", flows, nil)
+	original, _ := policy.BuildPolicy("default", "server", flows, nil, policy.AttributionOptions{})
 	originalYAML, err := yaml.Marshal(original)
 	require.NoError(t, err)
 	t.Logf("Original YAML:\n%s", originalYAML)
@@ -128,7 +128,7 @@ func TestMergeAfterYAMLRoundtrip_MixedEndpointAndCIDR(t *testing.T) {
 	err = yaml.Unmarshal(originalYAML, &fromDisk)
 	require.NoError(t, err)
 
-	incoming := policy.BuildPolicy("default", "server", flows, nil)
+	incoming, _ := policy.BuildPolicy("default", "server", flows, nil, policy.AttributionOptions{})
 	merged := policy.MergePolicy(&fromDisk, incoming)
 	mergedYAML, err := yaml.Marshal(merged)
 	require.NoError(t, err)
@@ -146,7 +146,7 @@ func TestMergeAfterYAMLRoundtrip_ThreeFlushCycles(t *testing.T) {
 	flush1 := []*flowpb.Flow{
 		testdata.IngressTCPFlow([]string{"k8s:app=client-a"}, []string{"k8s:app=server"}, "default", 80),
 	}
-	policy1 := policy.BuildPolicy("default", "server", flush1, nil)
+	policy1, _ := policy.BuildPolicy("default", "server", flush1, nil, policy.AttributionOptions{})
 	yaml1, err := yaml.Marshal(policy1)
 	require.NoError(t, err)
 	t.Logf("After flush 1:\n%s", yaml1)
@@ -155,7 +155,7 @@ func TestMergeAfterYAMLRoundtrip_ThreeFlushCycles(t *testing.T) {
 	flush2 := []*flowpb.Flow{
 		testdata.IngressTCPFlow([]string{"k8s:app=client-b"}, []string{"k8s:app=server"}, "default", 443),
 	}
-	policy2 := policy.BuildPolicy("default", "server", flush2, nil)
+	policy2, _ := policy.BuildPolicy("default", "server", flush2, nil, policy.AttributionOptions{})
 
 	// Read existing from "disk" and merge
 	var disk1 ciliumv2.CiliumNetworkPolicy
@@ -170,7 +170,7 @@ func TestMergeAfterYAMLRoundtrip_ThreeFlushCycles(t *testing.T) {
 	flush3 := []*flowpb.Flow{
 		testdata.IngressTCPFlow([]string{"k8s:app=client-a"}, []string{"k8s:app=server"}, "default", 80),
 	}
-	policy3 := policy.BuildPolicy("default", "server", flush3, nil)
+	policy3, _ := policy.BuildPolicy("default", "server", flush3, nil, policy.AttributionOptions{})
 
 	var disk2 ciliumv2.CiliumNetworkPolicy
 	require.NoError(t, yaml.Unmarshal(yaml2, &disk2))
@@ -190,7 +190,7 @@ func TestMergeAfterYAMLRoundtrip_EgressCIDR(t *testing.T) {
 		testdata.WorldEgressTCPFlow([]string{"k8s:app=client"}, "default", "8.8.8.8", 443),
 	}
 
-	original := policy.BuildPolicy("default", "client", flows, nil)
+	original, _ := policy.BuildPolicy("default", "client", flows, nil, policy.AttributionOptions{})
 	originalYAML, err := yaml.Marshal(original)
 	require.NoError(t, err)
 	t.Logf("Original YAML:\n%s", originalYAML)
@@ -198,7 +198,7 @@ func TestMergeAfterYAMLRoundtrip_EgressCIDR(t *testing.T) {
 	var fromDisk ciliumv2.CiliumNetworkPolicy
 	require.NoError(t, yaml.Unmarshal(originalYAML, &fromDisk))
 
-	incoming := policy.BuildPolicy("default", "client", flows, nil)
+	incoming, _ := policy.BuildPolicy("default", "client", flows, nil, policy.AttributionOptions{})
 	merged := policy.MergePolicy(&fromDisk, incoming)
 	mergedYAML, err := yaml.Marshal(merged)
 	require.NoError(t, err)

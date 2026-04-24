@@ -36,7 +36,7 @@ func TestMergeRoundtrip_CrossNamespace(t *testing.T) {
 		},
 	}
 
-	original := policy.BuildPolicy("coroot", "coroot", flows, nil)
+	original, _ := policy.BuildPolicy("coroot", "coroot", flows, nil, policy.AttributionOptions{})
 	origYAML, err := yaml.Marshal(original)
 	require.NoError(t, err)
 	t.Logf("Original YAML:\n%s", origYAML)
@@ -44,7 +44,7 @@ func TestMergeRoundtrip_CrossNamespace(t *testing.T) {
 	var fromDisk ciliumv2.CiliumNetworkPolicy
 	require.NoError(t, yaml.Unmarshal(origYAML, &fromDisk))
 
-	incoming := policy.BuildPolicy("coroot", "coroot", flows, nil)
+	incoming, _ := policy.BuildPolicy("coroot", "coroot", flows, nil, policy.AttributionOptions{})
 	merged := policy.MergePolicy(&fromDisk, incoming)
 	mergedYAML, err := yaml.Marshal(merged)
 	require.NoError(t, err)
@@ -77,7 +77,7 @@ func TestMergeRoundtrip_FallbackLabels(t *testing.T) {
 		},
 	}
 
-	original := policy.BuildPolicy("coroot", "coroot", flows, nil)
+	original, _ := policy.BuildPolicy("coroot", "coroot", flows, nil, policy.AttributionOptions{})
 	origYAML, err := yaml.Marshal(original)
 	require.NoError(t, err)
 	t.Logf("Original YAML:\n%s", origYAML)
@@ -85,7 +85,7 @@ func TestMergeRoundtrip_FallbackLabels(t *testing.T) {
 	var fromDisk ciliumv2.CiliumNetworkPolicy
 	require.NoError(t, yaml.Unmarshal(origYAML, &fromDisk))
 
-	incoming := policy.BuildPolicy("coroot", "coroot", flows, nil)
+	incoming, _ := policy.BuildPolicy("coroot", "coroot", flows, nil, policy.AttributionOptions{})
 	merged := policy.MergePolicy(&fromDisk, incoming)
 	mergedYAML, err := yaml.Marshal(merged)
 	require.NoError(t, err)
@@ -113,7 +113,7 @@ func TestMergeRoundtrip_MultiPeerAccumulation(t *testing.T) {
 	}
 
 	// Flush 1
-	p1 := policy.BuildPolicy("default", "server", flowsFlush1, nil)
+	p1, _ := policy.BuildPolicy("default", "server", flowsFlush1, nil, policy.AttributionOptions{})
 	yaml1, err := yaml.Marshal(p1)
 	require.NoError(t, err)
 	t.Logf("After flush 1:\n%s", yaml1)
@@ -121,7 +121,7 @@ func TestMergeRoundtrip_MultiPeerAccumulation(t *testing.T) {
 	// Flush 2: merge new peer
 	var disk1 ciliumv2.CiliumNetworkPolicy
 	require.NoError(t, yaml.Unmarshal(yaml1, &disk1))
-	p2 := policy.BuildPolicy("default", "server", flowsFlush2, nil)
+	p2, _ := policy.BuildPolicy("default", "server", flowsFlush2, nil, policy.AttributionOptions{})
 	merged2 := policy.MergePolicy(&disk1, p2)
 	yaml2, err := yaml.Marshal(merged2)
 	require.NoError(t, err)
@@ -131,7 +131,7 @@ func TestMergeRoundtrip_MultiPeerAccumulation(t *testing.T) {
 	// Flush 3: same as flush 1 (peer A) - should NOT duplicate
 	var disk2 ciliumv2.CiliumNetworkPolicy
 	require.NoError(t, yaml.Unmarshal(yaml2, &disk2))
-	p3 := policy.BuildPolicy("default", "server", flowsFlush3, nil)
+	p3, _ := policy.BuildPolicy("default", "server", flowsFlush3, nil, policy.AttributionOptions{})
 	merged3 := policy.MergePolicy(&disk2, p3)
 	yaml3, err := yaml.Marshal(merged3)
 	require.NoError(t, err)
@@ -154,7 +154,7 @@ func TestMergeRoundtrip_MixedWorldAndEndpoints_Accumulation(t *testing.T) {
 	}
 
 	// Flush 1
-	p1 := policy.BuildPolicy("default", "server", flowsFlush1, nil)
+	p1, _ := policy.BuildPolicy("default", "server", flowsFlush1, nil, policy.AttributionOptions{})
 	yaml1, err := yaml.Marshal(p1)
 	require.NoError(t, err)
 	t.Logf("After flush 1:\n%s", yaml1)
@@ -162,7 +162,7 @@ func TestMergeRoundtrip_MixedWorldAndEndpoints_Accumulation(t *testing.T) {
 	// Flush 2: new CIDR
 	var disk1 ciliumv2.CiliumNetworkPolicy
 	require.NoError(t, yaml.Unmarshal(yaml1, &disk1))
-	p2 := policy.BuildPolicy("default", "server", flowsFlush2, nil)
+	p2, _ := policy.BuildPolicy("default", "server", flowsFlush2, nil, policy.AttributionOptions{})
 	merged2 := policy.MergePolicy(&disk1, p2)
 	yaml2, err := yaml.Marshal(merged2)
 	require.NoError(t, err)
@@ -171,7 +171,7 @@ func TestMergeRoundtrip_MixedWorldAndEndpoints_Accumulation(t *testing.T) {
 	// Flush 3: same as flush 1 (should NOT duplicate)
 	var disk2 ciliumv2.CiliumNetworkPolicy
 	require.NoError(t, yaml.Unmarshal(yaml2, &disk2))
-	p3 := policy.BuildPolicy("default", "server", flowsFlush1, nil)
+	p3, _ := policy.BuildPolicy("default", "server", flowsFlush1, nil, policy.AttributionOptions{})
 	merged3 := policy.MergePolicy(&disk2, p3)
 	yaml3, err := yaml.Marshal(merged3)
 	require.NoError(t, err)

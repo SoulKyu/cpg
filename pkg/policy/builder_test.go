@@ -22,7 +22,7 @@ func TestBuildPolicy_IngressTCP(t *testing.T) {
 		8080,
 	)
 
-	p := policy.BuildPolicy("default", "server", []*flowpb.Flow{f}, nil)
+	p, _ := policy.BuildPolicy("default", "server", []*flowpb.Flow{f}, nil, policy.AttributionOptions{})
 	require.NotNil(t, p)
 	require.NotNil(t, p.Spec)
 
@@ -49,7 +49,7 @@ func TestBuildPolicy_EgressUDP(t *testing.T) {
 		53,
 	)
 
-	p := policy.BuildPolicy("default", "client", []*flowpb.Flow{f}, nil)
+	p, _ := policy.BuildPolicy("default", "client", []*flowpb.Flow{f}, nil, policy.AttributionOptions{})
 	require.NotNil(t, p)
 	require.NotNil(t, p.Spec)
 
@@ -80,7 +80,7 @@ func TestBuildPolicy_MixedDirections(t *testing.T) {
 		53,
 	)
 
-	p := policy.BuildPolicy("default", "server", []*flowpb.Flow{ingress, egress}, nil)
+	p, _ := policy.BuildPolicy("default", "server", []*flowpb.Flow{ingress, egress}, nil, policy.AttributionOptions{})
 	require.NotNil(t, p)
 	require.NotNil(t, p.Spec)
 
@@ -96,7 +96,7 @@ func TestBuildPolicy_TypeMeta(t *testing.T) {
 		80,
 	)
 
-	p := policy.BuildPolicy("default", "server", []*flowpb.Flow{f}, nil)
+	p, _ := policy.BuildPolicy("default", "server", []*flowpb.Flow{f}, nil, policy.AttributionOptions{})
 	assert.Equal(t, "cilium.io/v2", p.APIVersion)
 	assert.Equal(t, "CiliumNetworkPolicy", p.Kind)
 }
@@ -109,7 +109,7 @@ func TestBuildPolicy_ObjectMeta(t *testing.T) {
 		443,
 	)
 
-	p := policy.BuildPolicy("production", "server", []*flowpb.Flow{f}, nil)
+	p, _ := policy.BuildPolicy("production", "server", []*flowpb.Flow{f}, nil, policy.AttributionOptions{})
 	assert.Equal(t, "cpg-server", p.Name)
 	assert.Equal(t, "production", p.Namespace)
 	assert.Equal(t, "cpg", p.Labels["app.kubernetes.io/managed-by"])
@@ -119,7 +119,7 @@ func TestBuildPolicy_NilL4(t *testing.T) {
 	f := testdata.NilL4Flow()
 
 	// Should not panic
-	p := policy.BuildPolicy("default", "server", []*flowpb.Flow{f}, nil)
+	p, _ := policy.BuildPolicy("default", "server", []*flowpb.Flow{f}, nil, policy.AttributionOptions{})
 	require.NotNil(t, p)
 	require.NotNil(t, p.Spec)
 	assert.Empty(t, p.Spec.Ingress)
@@ -140,7 +140,7 @@ func TestBuildPolicy_SamePeerDifferentPorts(t *testing.T) {
 		443,
 	)
 
-	p := policy.BuildPolicy("default", "server", []*flowpb.Flow{f1, f2}, nil)
+	p, _ := policy.BuildPolicy("default", "server", []*flowpb.Flow{f1, f2}, nil, policy.AttributionOptions{})
 	require.NotNil(t, p.Spec)
 
 	// Same peer -> single rule with multiple ports
@@ -168,7 +168,7 @@ func TestBuildPolicy_DifferentPeers(t *testing.T) {
 		80,
 	)
 
-	p := policy.BuildPolicy("default", "server", []*flowpb.Flow{f1, f2}, nil)
+	p, _ := policy.BuildPolicy("default", "server", []*flowpb.Flow{f1, f2}, nil, policy.AttributionOptions{})
 	require.NotNil(t, p.Spec)
 
 	// Different peers -> separate rules
@@ -183,7 +183,7 @@ func TestBuildPolicy_WorldEgressCIDR(t *testing.T) {
 		443,
 	)
 
-	p := policy.BuildPolicy("default", "client", []*flowpb.Flow{f}, nil)
+	p, _ := policy.BuildPolicy("default", "client", []*flowpb.Flow{f}, nil, policy.AttributionOptions{})
 	require.NotNil(t, p)
 	require.NotNil(t, p.Spec)
 
@@ -210,7 +210,7 @@ func TestBuildPolicy_WorldIngressCIDR(t *testing.T) {
 		"default",
 	)
 
-	p := policy.BuildPolicy("default", "server", []*flowpb.Flow{f}, nil)
+	p, _ := policy.BuildPolicy("default", "server", []*flowpb.Flow{f}, nil, policy.AttributionOptions{})
 	require.NotNil(t, p)
 	require.NotNil(t, p.Spec)
 
@@ -243,7 +243,7 @@ func TestBuildPolicy_MixedWorldAndManaged(t *testing.T) {
 		53,
 	)
 
-	p := policy.BuildPolicy("default", "client", []*flowpb.Flow{worldFlow, managedFlow}, nil)
+	p, _ := policy.BuildPolicy("default", "client", []*flowpb.Flow{worldFlow, managedFlow}, nil, policy.AttributionOptions{})
 	require.NotNil(t, p)
 	require.NotNil(t, p.Spec)
 
@@ -269,7 +269,7 @@ func TestBuildPolicy_WorldNilIP(t *testing.T) {
 	f := testdata.WorldFlowNilIP()
 
 	// Should not panic, world flow with nil IP is skipped
-	p := policy.BuildPolicy("default", "client", []*flowpb.Flow{f}, nil)
+	p, _ := policy.BuildPolicy("default", "client", []*flowpb.Flow{f}, nil, policy.AttributionOptions{})
 	require.NotNil(t, p)
 	require.NotNil(t, p.Spec)
 	assert.Empty(t, p.Spec.Egress, "world flow with nil IP should be skipped")
@@ -284,7 +284,7 @@ func TestBuildPolicy_EgressICMPv4(t *testing.T) {
 		8, // EchoRequest
 	)
 
-	p := policy.BuildPolicy("external-dns", "external-dns", []*flowpb.Flow{f}, nil)
+	p, _ := policy.BuildPolicy("external-dns", "external-dns", []*flowpb.Flow{f}, nil, policy.AttributionOptions{})
 	require.NotNil(t, p)
 	require.NotNil(t, p.Spec)
 
@@ -313,7 +313,7 @@ func TestBuildPolicy_EntityEgressTCP(t *testing.T) {
 		6443,
 	)
 
-	p := policy.BuildPolicy("external-dns", "external-dns", []*flowpb.Flow{f}, nil)
+	p, _ := policy.BuildPolicy("external-dns", "external-dns", []*flowpb.Flow{f}, nil, policy.AttributionOptions{})
 	require.NotNil(t, p)
 	require.NotNil(t, p.Spec)
 
@@ -347,7 +347,7 @@ func TestBuildPolicy_MixedTCPAndICMP(t *testing.T) {
 		6443,
 	)
 
-	p := policy.BuildPolicy("external-dns", "external-dns", []*flowpb.Flow{icmpFlow, tcpFlow}, nil)
+	p, _ := policy.BuildPolicy("external-dns", "external-dns", []*flowpb.Flow{icmpFlow, tcpFlow}, nil, policy.AttributionOptions{})
 	require.NotNil(t, p)
 	require.NotNil(t, p.Spec)
 
@@ -376,7 +376,7 @@ func TestBuildPolicy_WorldICMP(t *testing.T) {
 		8,
 	)
 
-	p := policy.BuildPolicy("external-dns", "external-dns", []*flowpb.Flow{f}, nil)
+	p, _ := policy.BuildPolicy("external-dns", "external-dns", []*flowpb.Flow{f}, nil, policy.AttributionOptions{})
 	require.NotNil(t, p)
 	require.NotNil(t, p.Spec)
 
@@ -401,7 +401,7 @@ func TestBuildPolicy_EntityICMPYAMLRoundtrip(t *testing.T) {
 		8,
 	)
 
-	p := policy.BuildPolicy("external-dns", "external-dns", []*flowpb.Flow{f}, nil)
+	p, _ := policy.BuildPolicy("external-dns", "external-dns", []*flowpb.Flow{f}, nil, policy.AttributionOptions{})
 	data, err := yaml.Marshal(p)
 	require.NoError(t, err)
 
@@ -422,7 +422,7 @@ func TestBuildPolicy_YAMLRoundtrip(t *testing.T) {
 		8080,
 	)
 
-	p := policy.BuildPolicy("default", "server", []*flowpb.Flow{f}, nil)
+	p, _ := policy.BuildPolicy("default", "server", []*flowpb.Flow{f}, nil, policy.AttributionOptions{})
 
 	data, err := yaml.Marshal(p)
 	require.NoError(t, err)

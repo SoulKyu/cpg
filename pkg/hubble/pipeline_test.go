@@ -344,7 +344,7 @@ func TestClusterDedup_SkipsMatchingPolicy(t *testing.T) {
 	)
 
 	// Build the policy that would be generated from this flow
-	generatedPolicy := policy.BuildPolicy("production", "server", []*flowpb.Flow{flow}, nil)
+	generatedPolicy, _ := policy.BuildPolicy("production", "server", []*flowpb.Flow{flow}, nil, policy.AttributionOptions{})
 
 	// Create cluster policies map with the same policy
 	clusterPolicies := map[string]*ciliumv2.CiliumNetworkPolicy{

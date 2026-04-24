@@ -36,6 +36,7 @@ type Aggregator struct {
 	logger         *zap.Logger
 	warnedReserved map[string]struct{}
 	tracker        flushingTracker
+	maxSamples     int
 }
 
 // NewAggregator creates a new Aggregator with the given flush interval.
@@ -134,11 +135,12 @@ func (a *Aggregator) keyFromFlow(f *flowpb.Flow) (key AggKey, skip bool) {
 // flush sends PolicyEvents for all accumulated buckets and clears them.
 func (a *Aggregator) flush(buckets map[AggKey][]*flowpb.Flow, out chan<- policy.PolicyEvent) {
 	for key, flows := range buckets {
-		cnp := policy.BuildPolicy(key.Namespace, key.Workload, flows, a.tracker)
+		cnp, attrib := policy.BuildPolicy(key.Namespace, key.Workload, flows, a.tracker, policy.AttributionOptions{MaxSamples: a.maxSamples})
 		out <- policy.PolicyEvent{
-			Namespace: key.Namespace,
-			Workload:  key.Workload,
-			Policy:    cnp,
+			Namespace:   key.Namespace,
+			Workload:    key.Workload,
+			Policy:      cnp,
+			Attribution: attrib,
 		}
 	}
 	for k := range buckets {

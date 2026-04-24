@@ -22,10 +22,11 @@ func buildTestEvent(ns, workload string) policy.PolicyEvent {
 			ns, 80,
 		),
 	}
+	cnp, _ := policy.BuildPolicy(ns, workload, flows, nil, policy.AttributionOptions{})
 	return policy.PolicyEvent{
 		Namespace: ns,
 		Workload:  workload,
-		Policy:    policy.BuildPolicy(ns, workload, flows, nil),
+		Policy:    cnp,
 	}
 }
 
@@ -90,10 +91,11 @@ func TestWriter_MergeOnWrite(t *testing.T) {
 			"default", 443,
 		),
 	}
+	cnp2, _ := policy.BuildPolicy("default", "server", flows2, nil, policy.AttributionOptions{})
 	event2 := policy.PolicyEvent{
 		Namespace: "default",
 		Workload:  "server",
-		Policy:    policy.BuildPolicy("default", "server", flows2, nil),
+		Policy:    cnp2,
 	}
 	err = w.Write(event2)
 	require.NoError(t, err)
@@ -195,10 +197,11 @@ func TestWriter_WritesDifferentPolicy(t *testing.T) {
 			"default", 443,
 		),
 	}
+	cnp2, _ := policy.BuildPolicy("default", "server", flows2, nil, policy.AttributionOptions{})
 	event2 := policy.PolicyEvent{
 		Namespace: "default",
 		Workload:  "server",
-		Policy:    policy.BuildPolicy("default", "server", flows2, nil),
+		Policy:    cnp2,
 	}
 	err = w.Write(event2)
 	require.NoError(t, err)
