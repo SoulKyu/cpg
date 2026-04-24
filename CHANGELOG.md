@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/SoulKyu/cpg/compare/v1.5.0...v1.5.1) (2026-04-24)
+
+
+### Miscellaneous Chores
+
+* release 1.5.1 ([95572e1](https://github.com/SoulKyu/cpg/commit/95572e1f08790e102f53268bc0bea69b35aa055e))
+
 ## [1.5.0](https://github.com/SoulKyu/cpg/compare/v1.4.0...v1.5.0) (2026-03-11)
 
 
