@@ -217,7 +217,7 @@ func (pr *peerRules) recordAttribution(key RuleKey, f *flowpb.Flow, maxSamples i
 		pr.attrib[k] = entry
 	}
 	entry.FlowCount++
-	if ts := flowTime(f); !ts.IsZero() {
+	if ts := FlowTime(f); !ts.IsZero() {
 		if entry.FirstSeen.IsZero() || ts.Before(entry.FirstSeen) {
 			entry.FirstSeen = ts
 		}
@@ -485,7 +485,7 @@ func selectedLabelsFromFlow(ep *flowpb.Endpoint) map[string]string {
 
 // flowTime extracts a timestamp from a Hubble flow, falling back to zero when
 // absent (Hubble always populates this in practice but tests may omit it).
-func flowTime(f *flowpb.Flow) time.Time {
+func FlowTime(f *flowpb.Flow) time.Time {
 	if f == nil || f.Time == nil {
 		return time.Time{}
 	}

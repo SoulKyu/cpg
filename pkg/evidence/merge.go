@@ -14,8 +14,19 @@ type MergeCaps struct {
 // capped FIFO by time. first_seen is the earliest time ever recorded for a
 // rule; last_seen is the latest.
 func Merge(existing *PolicyEvidence, session SessionInfo, newRules []RuleEvidence, caps MergeCaps) {
-	// Append session, cap newest-first by StartedAt.
-	existing.Sessions = append(existing.Sessions, session)
+	// Upsert session by ID — finalize() re-writes the same session with
+	// updated flow counters, and we don't want duplicate entries.
+	replaced := false
+	for i := range existing.Sessions {
+		if existing.Sessions[i].ID == session.ID {
+			existing.Sessions[i] = session
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		existing.Sessions = append(existing.Sessions, session)
+	}
 	if caps.MaxSessions > 0 && len(existing.Sessions) > caps.MaxSessions {
 		sort.SliceStable(existing.Sessions, func(i, j int) bool {
 			return existing.Sessions[i].StartedAt.Before(existing.Sessions[j].StartedAt)

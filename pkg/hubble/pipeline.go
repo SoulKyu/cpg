@@ -105,19 +105,57 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 	}
 
 	policies := make(chan policy.PolicyEvent, 64)
+	policyCh := make(chan policy.PolicyEvent, 64)
+	evidenceCh := make(chan policy.PolicyEvent, 64)
+
+	var ew *evidenceWriter
+	if cfg.EvidenceEnabled && !cfg.DryRun {
+		session := evidence.SessionInfo{
+			ID:         cfg.SessionID,
+			StartedAt:  stats.StartTime,
+			CPGVersion: cfg.CPGVersion,
+			Source:     cfg.SessionSource,
+		}
+		ew = newEvidenceWriter(cfg.EvidenceDir, cfg.OutputHash, cfg.EvidenceCaps, session, cfg.Logger)
+	}
 
 	g, gctx := errgroup.WithContext(ctx)
 
-	// Stage 1: Aggregate flows and build policies
+	// Stage 1: Aggregate flows and build policies.
 	g.Go(func() error {
 		return agg.Run(gctx, flows, policies)
 	})
 
-	// Stage 2: Write policies to disk with dedup checks
+	// Stage 1b: Fan out PolicyEvent to the policy writer and evidence writer.
+	// Neither consumer may block the other.
+	g.Go(func() error {
+		defer close(policyCh)
+		defer close(evidenceCh)
+		for pe := range policies {
+			policyCh <- pe
+			evidenceCh <- pe
+		}
+		return nil
+	})
+
+	// Stage 2: Write policies to disk with dedup checks.
 	g.Go(func() error {
 		pw := newPolicyWriter(writer, cfg.ClusterPolicies, stats, cfg.Logger)
-		for pe := range policies {
+		pw.dryRun = cfg.DryRun
+		pw.dryRunDiff = cfg.DryRunDiff
+		pw.dryRunColor = cfg.DryRunColor
+		for pe := range policyCh {
 			pw.handle(pe)
+		}
+		return nil
+	})
+
+	// Stage 2b: Persist evidence (drained no-op when disabled or dry-run).
+	g.Go(func() error {
+		for pe := range evidenceCh {
+			if ew != nil {
+				ew.handle(pe)
+			}
 		}
 		return nil
 	})
@@ -130,6 +168,10 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 	err = g.Wait()
 	// Final flush for any unhandled flows tracked after the last aggregation cycle
 	tracker.Flush()
+	if ew != nil {
+		ew.session.EndedAt = time.Now()
+		ew.finalize(int64(stats.FlowsSeen), int64(stats.LostEvents))
+	}
 	stats.Log(cfg.Logger)
 	return err
 }
