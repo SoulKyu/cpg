@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -12,12 +13,47 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
 	"github.com/SoulKyu/cpg/pkg/evidence"
 	"github.com/SoulKyu/cpg/pkg/hubble"
 	"github.com/SoulKyu/cpg/pkg/k8s"
 )
+
+// l7ClientFactory builds a kubernetes.Interface from a rest.Config. Extracted
+// as a package-level variable so tests can substitute a fake client without
+// touching the production code path.
+var l7ClientFactory = func(cfg *rest.Config) (kubernetes.Interface, error) {
+	return kubernetes.NewForConfig(cfg)
+}
+
+// maybeRunL7Preflight runs pkg/k8s.RunL7Preflight when L7 generation is
+// requested and pre-flight is not explicitly disabled. Pre-flight is advisory:
+// any failure to construct a client is logged as a warning and the pipeline
+// proceeds. Pre-flight is invoked AT MOST ONCE per cpg invocation.
+//
+// Caller contract: invoke from cpg generate ONLY. cpg replay is offline by
+// definition and must never call this function regardless of --l7.
+func maybeRunL7Preflight(ctx context.Context, kubeConfig *rest.Config, l7Enabled, noPreflight bool, logger *zap.Logger) {
+	if !l7Enabled || noPreflight {
+		return
+	}
+	if kubeConfig == nil {
+		var err error
+		kubeConfig, err = k8s.LoadKubeConfig()
+		if err != nil {
+			logger.Warn("--l7 preflight skipped: kubeconfig not available", zap.Error(err))
+			return
+		}
+	}
+	client, err := l7ClientFactory(kubeConfig)
+	if err != nil {
+		logger.Warn("--l7 preflight skipped: failed to construct kubernetes client", zap.Error(err))
+		return
+	}
+	k8s.RunL7Preflight(ctx, client, logger)
+}
 
 func newGenerateCmd() *cobra.Command {
 	bin := "cpg"
@@ -66,15 +102,20 @@ Examples:
 	cmd.Flags().BoolP("tls", "", false, "enable TLS for gRPC connection")
 	cmd.Flags().Duration("timeout", 10*time.Second, "connection timeout")
 
+	// generate-specific L7 pre-flight skip flag (VIS-06). Not part of replay
+	// because replay is offline by definition and never invokes pre-flight.
+	cmd.Flags().Bool("no-l7-preflight", false, "skip L7 cluster pre-flight checks (VIS-06); useful for restricted-RBAC CI or air-gapped use")
+
 	return cmd
 }
 
 // generateFlags extends commonFlags with the connection flags specific to live streaming.
 type generateFlags struct {
 	commonFlags
-	server     string
-	tlsEnabled bool
-	timeout    time.Duration
+	server        string
+	tlsEnabled    bool
+	timeout       time.Duration
+	noL7Preflight bool
 }
 
 func (f generateFlags) validate() error {
@@ -96,6 +137,7 @@ func parseGenerateFlags(cmd *cobra.Command) generateFlags {
 	f.server, _ = cmd.Flags().GetString("server")
 	f.tlsEnabled, _ = cmd.Flags().GetBool("tls")
 	f.timeout, _ = cmd.Flags().GetDuration("timeout")
+	f.noL7Preflight, _ = cmd.Flags().GetBool("no-l7-preflight")
 	return f
 }
 
@@ -162,6 +204,12 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 		absOutDir = f.outputDir
 	}
 
+	// VIS-04/05/06: run L7 cluster pre-flight ONCE before the pipeline starts.
+	// Skipped when --l7 is unset, when --no-l7-preflight wins, or when no
+	// kubeconfig is reachable. Pre-flight is advisory: warnings only, never
+	// blocking.
+	maybeRunL7Preflight(ctx, kubeConfig, f.l7, f.noL7Preflight, logger)
+
 	return hubble.RunPipeline(ctx, hubble.PipelineConfig{
 		Server:          server,
 		TLSEnabled:      f.tlsEnabled,
@@ -187,6 +235,8 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 		SessionID:     fmt.Sprintf("%s-%s", time.Now().UTC().Format(time.RFC3339), uuid.New().String()[:4]),
 		SessionSource: evidence.SourceInfo{Type: "live", Server: server},
 		CPGVersion:    version,
+
+		L7Enabled: f.l7,
 	})
 }
 

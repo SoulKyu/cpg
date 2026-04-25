@@ -107,6 +107,10 @@ func runReplay(cmd *cobra.Command, args []string) error {
 		SessionID:     fmt.Sprintf("%s-%s", time.Now().UTC().Format(time.RFC3339), uuid.New().String()[:4]),
 		SessionSource: sessionSource,
 		CPGVersion:    version,
+
+		// L7Enabled is plumbed through but is a no-op for codegen in v1.2 Phase 7.
+		// cpg replay NEVER invokes L7 pre-flight (offline path) regardless of --l7.
+		L7Enabled: f.l7,
 	}
 
 	return hubble.RunPipelineWithSource(ctx, cfg, source)

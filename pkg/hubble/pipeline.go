@@ -44,6 +44,9 @@ type PipelineConfig struct {
 	SessionID       string
 	SessionSource   evidence.SourceInfo
 	CPGVersion      string
+
+	// L7Enabled: no-op in v1.2 Phase 7; Phase 8 (HTTP) and Phase 9 (DNS) light up codegen.
+	L7Enabled bool
 }
 
 // SessionStats tracks pipeline metrics for the session summary.

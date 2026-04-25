@@ -21,6 +21,8 @@ type commonFlags struct {
 	evidenceDir      string
 	evidenceSamples  int
 	evidenceSessions int
+
+	l7 bool
 }
 
 // addCommonFlags wires the shared flags onto the given command.
@@ -42,6 +44,8 @@ func addCommonFlags(cmd *cobra.Command) {
 	f.String("evidence-dir", "", "override evidence storage path (default: XDG_CACHE_HOME/cpg/evidence)")
 	f.Int("evidence-samples", 10, "samples kept per rule in evidence files")
 	f.Int("evidence-sessions", 10, "sessions kept per policy in evidence files")
+
+	f.Bool("l7", false, "enable L7 (HTTP/DNS) policy generation; Phase 7 plumbs the flag, codegen lights up in v1.2 Phase 8/9")
 }
 
 func parseCommonFlags(cmd *cobra.Command) commonFlags {
@@ -58,5 +62,6 @@ func parseCommonFlags(cmd *cobra.Command) commonFlags {
 	out.evidenceDir, _ = f.GetString("evidence-dir")
 	out.evidenceSamples, _ = f.GetInt("evidence-samples")
 	out.evidenceSessions, _ = f.GetInt("evidence-sessions")
+	out.l7, _ = f.GetBool("l7")
 	return out
 }
