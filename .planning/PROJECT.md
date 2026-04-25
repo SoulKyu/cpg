@@ -29,21 +29,32 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 - ✓ Per-rule flow evidence persisted to `$XDG_CACHE_HOME/cpg/evidence` with FIFO caps — v1.1
 - ✓ `cpg explain <NS/workload | policy.yaml>` with filters + text/JSON/YAML renderers — v1.1
 - ✓ `--dry-run` with unified YAML diff on `generate` and `replay` (ANSI on TTY) — v1.1
+- ✓ L7 HTTP policy generation (`toPorts.rules.http`: method + RE2-anchored path) via `--l7` — v1.2
+- ✓ L7 DNS policy generation (`toFQDNs.matchName` + paired `dns.matchName`) via `--l7` — v1.2
+- ✓ Mandatory companion DNS-53 rule auto-injected for every CNP with `toFQDNs` — v1.2
+- ✓ Pre-flight cluster checks (`cilium-config.enable-l7-proxy`, `cilium-envoy` DaemonSet) with warn-and-proceed — v1.2
+- ✓ VIS-01 single-warning when `--l7` set but zero L7 records arrive — v1.2
+- ✓ Two-step workflow + starter L7-visibility CNP documented in README — v1.2
+- ✓ `cpg explain --http-method`/`--http-path`/`--dns-pattern` exact-match filters + L7 rendering — v1.2
 
 ### Active
 
-<!-- v1.2 scope: L7 policies only. Locked via /gsd:new-milestone on 2026-04-25. -->
+<!-- Awaiting v1.3 scoping via /gsd:new-milestone. -->
 
-- [ ] Generate L7 HTTP policies (method, path, headers) from Hubble L7 flows — v1.2
-- [ ] Generate L7 DNS policies (FQDN matchPattern) from Hubble DNS flows — v1.2
+- _(defined during `/gsd:new-milestone`)_
 
 ### Planned
 
-<!-- Deferred from v1.2 scoping on 2026-04-25 to keep the milestone focused. -->
+<!-- v1.3 candidates carried over from v1.2 deferrals. -->
 
 - [ ] `cpg apply` command (dry-run by default, `--force` to apply) — v1.3 candidate
 - [ ] Policy consolidation / merging into broader rules — v1.3 candidate
 - [ ] Prometheus metrics for long-running instances — v1.3 candidate
+- [ ] HTTP path auto-collapse (`--l7-collapse-paths`) + FQDN wildcard inference (`--l7-fqdn-wildcard-depth`) — v1.3 candidate (HTTP-FUT-01, DNS-FUT-01)
+- [ ] kube-dns selector autodetection (EKS / GKE / AKS / vanilla) — v1.3 candidate (DNS-FUT-02)
+- [ ] ToFQDNs from IP→name correlation when DNS records are missed — v1.3 candidate (DNS-FUT-03)
+- [ ] `--include-l7-forwarded` for DNS REFUSED denials surfaced as `Verdict_FORWARDED` — v1.3 candidate (L7-FUT-01)
+- [ ] `--min-flows-per-l7-rule N` low-confidence gate — v1.3 candidate (L7-FUT-02)
 - [ ] AI-assisted semantic plausibility verdict on `cpg explain` — shelved (see notes below)
 
 <!-- AI feature: design explored on 2026-04-24, spec drafted, then dropped on
@@ -101,30 +112,36 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 | `--dry-run` covers policies AND evidence | Pure preview semantics — no filesystem side effects | ✓ Good — shipped v1.1 |
 | `cpg explain` rejects non-`cpg-` YAML names | Guards against explaining hand-crafted/non-cpg policies | ✓ Good — shipped v1.1 |
 | Drop AI-assisted plausibility analysis from v1.2 scope | Signal quality depends on label hygiene; hallucination risk on confident reasoning; blast-radius analysis (static, deterministic) is more operationally useful for the same problem space | — Decided 2026-04-25 |
-| v1.2 scoped to L7 policies only | Smaller focused milestone; `cpg apply`, consolidation, metrics deferred to v1.3 | — Decided 2026-04-25 |
+| v1.2 scoped to L7 policies only | Smaller focused milestone; `cpg apply`, consolidation, metrics deferred to v1.3 | ✓ Good — shipped 2026-04-25 |
+| `--l7` opt-in default OFF (no auto-detect) | Preserves v1.1 behavior; avoids silent semantic shift when L7 records appear in flows | ✓ Good — shipped v1.2 |
+| HTTP path = `regexp.QuoteMeta` + `^…$` (no inference) | Cilium HTTP path is RE2 regex; under-anchoring matches substrings and broadens allow-list silently | ✓ Good — shipped v1.2 |
+| HTTP `headerMatches`/`host`/`hostExact` NEVER emitted (anti-feature) | Risk of leaking `Authorization`/`Cookie`/session tokens into committed YAML | ✓ Good — shipped v1.2 |
+| Mandatory companion DNS-53 rule for every `toFQDNs` | Without companion, DNS resolution denied → policy never matches → silent total breakage | ✓ Good — shipped v1.2 (idempotent post-process invariant) |
+| Pre-flight checks warn-and-proceed (no abort) | Operators with reduced K8s permissions (CI service accounts) must not be locked out | ✓ Good — shipped v1.2 |
+| Evidence schema v2 with no v1 back-compat | v1.1 shipped 2026-04-24 (24h prior); zero production caches; clean cut keeps reader simple | ✓ Good — shipped v1.2 |
+| AggKey does NOT extend with L7 fields | L7 is a property of port-rule inside bucket, not of bucket; extending AggKey would shatter buckets | ✓ Good — pipeline structurally unchanged |
+| kube-dns companion selector hardcoded `k8s-app=kube-dns` | Auto-detection across CNI distributions adds complexity without v1.2 value | — Deferred to v1.3 (DNS-FUT-02) |
+| DROPPED-only verdict filter (kept) | REDIRECTED means Cilium PROXIED; new rules from already-policied traffic would be wrong | ✓ Good — REFUSED gap deferred to v1.3 (L7-FUT-01) |
 
 ## Current State
 
-**Shipped:** v1.0 (2026-03-08) and v1.1 (2026-04-24).
+**Shipped:** v1.0 (2026-03-08), v1.1 (2026-04-24), and v1.2 (2026-04-25).
 
-**Codebase:** 9 packages (`pkg/{labels,policy,output,hubble,k8s,dedup,flowsource,evidence,diff}` + `cmd/`). 180 tests passing. Release-please tagged `v1.6.0` (latest product release).
+**Codebase:** 9 packages (`pkg/{labels,policy,output,hubble,k8s,dedup,flowsource,evidence,diff}` + `cmd/`) with new files in `pkg/policy/{l7.go, companion_dns.go}` + `pkg/k8s/preflight.go`. **319 tests passing** across 9 packages (up from 180 at v1.1 close, +77%). Release-please continues to handle product SemVer tagging.
 
-**Next milestone:** v1.2 L7 Policies — focused, no other scope.
+**Next milestone:** v1.3 — awaiting scoping. See Planned section above for candidates.
 
-## Next Milestone: v1.2 L7 Policies
+## Next Milestone: v1.3 (to be scoped)
 
-**Goal:** generate L7 CiliumNetworkPolicies from Hubble L7 flows so users can move from L4 (port + protocol) to L7 (HTTP method/path, DNS FQDN) without leaving the cpg workflow.
-
-**Scope:**
-- L7 HTTP policy generation from Hubble L7 flows (method, path, headers as available in the flow record)
-- L7 DNS policy generation (FQDN matchPattern) from Hubble DNS flows
-- Documented two-step workflow: deploy L4 policies first, observe L7 traffic, then run cpg with L7 enabled to refine
-
-**Deferred to v1.3 (or later):**
-- `cpg apply` (dry-run-default + `--force`)
+Candidate themes carried over from v1.2 deferrals — subject to revision during `/gsd:new-milestone`:
+- `cpg apply` command with dry-run-by-default + `--force`
 - Policy consolidation across overlapping rules
 - Prometheus metrics for long-running deployments
-- AI-assisted plausibility analysis (shelved — see Requirements / Planned section)
+- HTTP path / FQDN auto-collapse heuristics
+- ToFQDNs from IP→name correlation
+- kube-dns selector autodetection across CNI distributions
+- `--include-l7-forwarded` for DNS REFUSED denials
+- `--min-flows-per-l7-rule N` low-confidence gate
 
 ---
-*Last updated: 2026-04-25 — v1.2 scope locked to L7 policies only; AI feature shelved before implementation.*
+*Last updated: 2026-04-25 — v1.2 L7 Policies milestone shipped (12 plans, 22 REQs, 319 tests).*
