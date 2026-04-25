@@ -3,6 +3,7 @@ package hubble
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -37,6 +38,30 @@ type Aggregator struct {
 	warnedReserved map[string]struct{}
 	tracker        flushingTracker
 	maxSamples     int
+
+	// l7Enabled gates the HTTP L7 codegen branch in BuildPolicy. Forwarded
+	// from PipelineConfig.L7Enabled via SetL7Enabled before Run().
+	l7Enabled bool
+
+	// l7HTTPCount counts flows carrying a non-nil Flow.L7.Http record observed
+	// during the session (independent of l7Enabled — counter is diagnostic and
+	// powers the VIS-01 empty-records warning in pipeline.Finalize).
+	l7HTTPCount uint64
+	// l7DNSCount mirrors l7HTTPCount for DNS records. Declared here so the
+	// VIS-01 sum check is one-line ready for Phase 9; no Phase 8 callsite
+	// increments it.
+	l7DNSCount uint64
+
+	// flowsSeen counts every flow that survived keyFromFlow() (i.e. landed in
+	// a bucket). Surfaced via FlowsSeen() so SessionStats reports a real
+	// number rather than the always-zero placeholder shipped through v1.1
+	// (see v1.0 audit BUG-01).
+	flowsSeen uint64
+
+	// seenWorkloads records every (namespace/workload) bucket key observed
+	// during the session. Surfaced sorted via ObservedWorkloads() to populate
+	// the VIS-01 warning's `workloads` field.
+	seenWorkloads map[string]struct{}
 }
 
 // NewAggregator creates a new Aggregator with the given flush interval.
@@ -48,7 +73,44 @@ func NewAggregator(interval time.Duration, logger *zap.Logger, tracker flushingT
 		logger:         logger,
 		warnedReserved: make(map[string]struct{}),
 		tracker:        tracker,
+		seenWorkloads:  make(map[string]struct{}),
 	}
+}
+
+// SetL7Enabled toggles the HTTP L7 codegen branch in BuildPolicy. Safe to
+// call before Run().
+func (a *Aggregator) SetL7Enabled(enabled bool) {
+	a.l7Enabled = enabled
+}
+
+// L7HTTPCount returns the number of flows with non-nil Flow.L7.Http observed
+// across the session. Independent of L7Enabled; used by VIS-01.
+func (a *Aggregator) L7HTTPCount() uint64 {
+	return a.l7HTTPCount
+}
+
+// L7DNSCount mirrors L7HTTPCount for DNS records. Always 0 in Phase 8.
+func (a *Aggregator) L7DNSCount() uint64 {
+	return a.l7DNSCount
+}
+
+// FlowsSeen returns the count of flows that survived keyFromFlow (i.e.
+// landed in an aggregation bucket). Used by SessionStats for the VIS-01
+// gate (`flows > 0`).
+func (a *Aggregator) FlowsSeen() uint64 {
+	return a.flowsSeen
+}
+
+// ObservedWorkloads returns every (namespace/workload) the aggregator routed
+// flows to during the session, sorted lexicographically for deterministic
+// VIS-01 warning output.
+func (a *Aggregator) ObservedWorkloads() []string {
+	out := make([]string, 0, len(a.seenWorkloads))
+	for k := range a.seenWorkloads {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // SetMaxSamples configures how many per-rule flow samples the policy builder
@@ -75,10 +137,18 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan *flowpb.Flow, out chan<-
 				a.flush(buckets, out)
 				return nil
 			}
+			// Count L7 HTTP records on every observed flow, regardless of
+			// whether the flow makes it into a bucket. The counter powers
+			// VIS-01's empty-records detection, which is purely diagnostic.
+			if f.GetL7().GetHttp() != nil {
+				a.l7HTTPCount++
+			}
 			key, skip := a.keyFromFlow(f)
 			if skip {
 				continue
 			}
+			a.flowsSeen++
+			a.seenWorkloads[key.Namespace+"/"+key.Workload] = struct{}{}
 			buckets[key] = append(buckets[key], f)
 
 		case <-ticker.C:
@@ -142,7 +212,10 @@ func (a *Aggregator) keyFromFlow(f *flowpb.Flow) (key AggKey, skip bool) {
 // flush sends PolicyEvents for all accumulated buckets and clears them.
 func (a *Aggregator) flush(buckets map[AggKey][]*flowpb.Flow, out chan<- policy.PolicyEvent) {
 	for key, flows := range buckets {
-		cnp, attrib := policy.BuildPolicy(key.Namespace, key.Workload, flows, a.tracker, policy.AttributionOptions{MaxSamples: a.maxSamples})
+		cnp, attrib := policy.BuildPolicy(key.Namespace, key.Workload, flows, a.tracker, policy.AttributionOptions{
+			MaxSamples: a.maxSamples,
+			L7Enabled:  a.l7Enabled,
+		})
 		out <- policy.PolicyEvent{
 			Namespace:   key.Namespace,
 			Workload:    key.Workload,

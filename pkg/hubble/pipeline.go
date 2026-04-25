@@ -58,7 +58,13 @@ type SessionStats struct {
 	PoliciesWouldWrite uint64 // dry-run counter
 	PoliciesWouldSkip  uint64 // dry-run counter
 	LostEvents         uint64
-	OutputDir          string
+	// L7HTTPCount: number of flows whose L7.Http record was observed during
+	// the session. Diagnostic counter; populated regardless of L7Enabled.
+	L7HTTPCount uint64
+	// L7DNSCount mirrors L7HTTPCount for DNS records. Phase 8 leaves this at
+	// 0; Phase 9 wires the increment.
+	L7DNSCount uint64
+	OutputDir  string
 }
 
 // Log outputs the session summary to the logger.
@@ -71,6 +77,8 @@ func (s *SessionStats) Log(logger *zap.Logger) {
 		zap.Uint64("policies_would_write", s.PoliciesWouldWrite),
 		zap.Uint64("policies_would_skip", s.PoliciesWouldSkip),
 		zap.Uint64("lost_events", s.LostEvents),
+		zap.Uint64("l7_http_count", s.L7HTTPCount),
+		zap.Uint64("l7_dns_count", s.L7DNSCount),
 		zap.String("output_dir", s.OutputDir),
 	)
 }
@@ -101,6 +109,7 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 
 	tracker := NewUnhandledTracker(cfg.Logger)
 	agg := NewAggregator(cfg.FlushInterval, cfg.Logger, tracker)
+	agg.SetL7Enabled(cfg.L7Enabled)
 	if cfg.EvidenceEnabled {
 		agg.SetMaxSamples(cfg.EvidenceCaps.MaxSamples)
 	}
@@ -174,6 +183,27 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 	err = g.Wait()
 	// Final flush for any unhandled flows tracked after the last aggregation cycle
 	tracker.Flush()
+
+	// Surface aggregator-side counters on SessionStats so the summary log and
+	// VIS-01 gate share the same numbers. This also fixes v1.0 BUG-01 for
+	// flows_seen which had been stuck at 0 since v1.0.
+	stats.FlowsSeen = agg.FlowsSeen()
+	stats.L7HTTPCount = agg.L7HTTPCount()
+	stats.L7DNSCount = agg.L7DNSCount()
+
+	// VIS-01: passive empty-L7-records detection. Single warning per pipeline
+	// run, fired only when --l7 was requested AND at least one flow was
+	// observed AND zero L7 records (HTTP + DNS) materialized. The DNS branch
+	// is wired here in advance of Phase 9 — agg.L7DNSCount() returns 0 in
+	// Phase 8, so the gate degrades gracefully.
+	if cfg.L7Enabled && stats.FlowsSeen > 0 && agg.L7HTTPCount()+agg.L7DNSCount() == 0 {
+		cfg.Logger.Warn("--l7 set but no L7 records observed in window",
+			zap.Strings("workloads", agg.ObservedWorkloads()),
+			zap.Uint64("flows", stats.FlowsSeen),
+			zap.String("hint", "see README L7 prerequisites: #l7-prerequisites"),
+		)
+	}
+
 	if ew != nil {
 		ew.session.EndedAt = time.Now()
 		ew.finalize(int64(stats.FlowsSeen), int64(stats.LostEvents))
