@@ -89,10 +89,10 @@ Scope locked to L7 HTTP + DNS generation only. `cpg apply`, policy consolidation
   4. `cpg explain` accepts `--http-method`, `--http-path`, `--dns-pattern` exact-match filters; rendering an evidence v2 record with L7 attribution shows HTTP method+path or DNS matchName per rule across text/JSON/YAML formats (L7CLI-02, L7CLI-03).
   5. The README documents the two-step workflow (L4 deploy → enable L7 visibility → re-run with `--l7`) and ships a copy-pasteable starter L7-visibility CNP snippet for bootstrapping a workload (VIS-02, VIS-03).
 **Plans**: 4 plans
-- [ ] 07-01-PLAN.md — merge.Rules preserve + normalizeRule L7 sort + RuleKey L7 discriminator (EVID2-02/03/04)
-- [ ] 07-02-PLAN.md — evidence schema v1→v2 with optional L7Ref + reader rejection naming $XDG_CACHE_HOME/cpg/evidence/ (EVID2-01)
-- [x] 07-03-PLAN.md — pkg/k8s/preflight.go cilium-config + cilium-envoy checks with warn-and-proceed (VIS-04, VIS-05)
-- [ ] 07-04-PLAN.md — --l7 / --no-l7-preflight flag plumbing + PipelineConfig.L7Enabled + byte-stability integration test (L7CLI-01, VIS-06)
+- [x] 09-01-PLAN.md — extractDNSQuery + ensureKubeDNSCompanion + builder DNS L7 codegen (DNS-01, DNS-02, DNS-03)
+- [ ] 09-02-PLAN.md — aggregator L7DNSCount + evidence DNS branch + pipeline DNS integration test (DNS-01, DNS-02)
+- [ ] 09-03-PLAN.md — cpg explain --http-method/--http-path/--dns-pattern filters + L7 rendering text/JSON/YAML (L7CLI-02, L7CLI-03)
+- [ ] 09-04-PLAN.md — README two-step workflow + starter L7-visibility CNP + l7_dns.jsonl fixture + e2e replay test (VIS-02, VIS-03, DNS-01..DNS-04)
 **UI hint**: no
 
 ## Progress

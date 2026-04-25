@@ -27,9 +27,9 @@ Each requirement maps to exactly one phase. Traceability table at bottom.
 
 ### DNS L7 Generation
 
-- [ ] **DNS-01**: When `--l7` is set and `Flow.L7.Dns` records are present for an egress dropped flow, cpg generates an egress rule with `toFQDNs.matchName` (literal hostname) for the queried name, paired with `toPorts.rules.dns.matchName`.
-- [ ] **DNS-02**: For every CNP that contains `toFQDNs`, cpg automatically emits a companion egress rule allowing UDP+TCP/53 to kube-dns (selector hardcoded for v1.2 with a YAML comment naming the assumption; autodetection deferred to v1.3).
-- [ ] **DNS-03**: DNS `matchPattern` (glob) is NOT auto-generated from observed names in v1.2 — only `matchName` (literal). Wildcard inference is deferred to v1.3.
+- [x] **DNS-01**: When `--l7` is set and `Flow.L7.Dns` records are present for an egress dropped flow, cpg generates an egress rule with `toFQDNs.matchName` (literal hostname) for the queried name, paired with `toPorts.rules.dns.matchName`.
+- [x] **DNS-02**: For every CNP that contains `toFQDNs`, cpg automatically emits a companion egress rule allowing UDP+TCP/53 to kube-dns (selector hardcoded for v1.2 with a YAML comment naming the assumption; autodetection deferred to v1.3).
+- [x] **DNS-03**: DNS `matchPattern` (glob) is NOT auto-generated from observed names in v1.2 — only `matchName` (literal). Wildcard inference is deferred to v1.3.
 - [ ] **DNS-04**: When `Flow.L7.Dns` is absent (DNS proxy disabled or no DNS denials in window), cpg falls back to the existing v1.1 CIDR-based egress rule for external traffic, with no behavior change vs v1.1.
 
 ### Evidence Schema (Internal Contract)

@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: L7 Policies (HTTP + DNS)
-status: executing
-stopped_at: Completed 08-04-PLAN.md (Phase 8 complete)
-last_updated: "2026-04-25T08:21:26Z"
-last_activity: "2026-04-25 -- Plan 08-04 complete: e2e cpg replay --l7 tests for HTTP-01..HTTP-05 + VIS-01; README #l7-prerequisites anchor reserved; 279 tests pass. Phase 8 closed."
+status: in_progress
+stopped_at: Completed 09-01-PLAN.md
+last_updated: "2026-04-25T11:34:31.126Z"
+last_activity: "2026-04-25 -- Plan 09-01 complete: extractDNSQuery + ensureKubeDNSCompanion + BuildPolicy DNS branch wired; DNS-01/02/03 closed; 299 tests pass across 9 packages."
 progress:
   total_phases: 3
   completed_phases: 2
-  total_plans: 8
-  completed_plans: 8
+  total_plans: 12
+  completed_plans: 9
 ---
 
 # Project State
@@ -24,12 +24,12 @@ See: .planning/PROJECT.md (updated 2026-04-25)
 
 ## Current Position
 
-Phase: 8 ✅ complete (4/4 plans) → next: Phase 9 (DNS L7 generation + docs)
-Plan: 08-04 ✅ complete
-Status: Phase 8 closed. v1.2 milestone 2/3 phases done.
-Last activity: 2026-04-25 -- Plan 08-04 complete: e2e cpg replay --l7 tests for HTTP-01..HTTP-05 + VIS-01; README #l7-prerequisites anchor reserved; 279 tests pass.
+Phase: 9 (DNS L7 generation + docs) 🚧 in progress (1/4 plans)
+Plan: 09-01 ✅ complete → next: 09-02
+Status: Phase 9 started. v1.2 milestone 2/3 phases done; phase 9 first plan complete.
+Last activity: 2026-04-25 -- Plan 09-01 complete: extractDNSQuery + ensureKubeDNSCompanion + BuildPolicy DNS branch wired; DNS-01/02/03 closed; 299 tests pass across 9 packages.
 
-Progress: v1.0 ✅ · v1.1 ✅ · v1.2 🚧 phases 7 ✅ · 8 ✅ · 9 pending (2/3 complete)
+Progress: v1.0 ✅ · v1.1 ✅ · v1.2 🚧 phases 7 ✅ · 8 ✅ · 9 🚧 (1/4)
 
 ## Performance Metrics
 
@@ -63,6 +63,7 @@ Progress: v1.0 ✅ · v1.1 ✅ · v1.2 🚧 phases 7 ✅ · 8 ✅ · 9 pending (
 | Phase 08 P02 | 12 | 3 tasks | 3 files |
 | Phase 08 P03 | 4m | 2 tasks | 5 files |
 | Phase 08 P04 | 12m | 2 tasks | 3 files |
+| Phase 09 P01 | 25m | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -96,10 +97,11 @@ Recent decisions affecting v1.2 work (research-confirmed 2026-04-25):
 - [Phase 08-03]: VIS-01 emitted from a single deterministic site (post g.Wait, pre stats.Log); workload list sorted for deterministic test assertions; HTTP+DNS sum gate ready for one-line Phase 9 plug-in.
 - [Phase 08-04]: Observed-logger pattern in cmd/cpg via package-level swap (`initObservedLoggerForTesting` returns *observer.ObservedLogs, t.Cleanup restores prev). Avoids refactoring PipelineConfig plumbing.
 - [Phase 08-04]: README `#l7-prerequisites` anchor placeholder reserved before Phase 9 ships content; VIS-01 hint string in `pkg/hubble/pipeline.go:203` already references it.
+- [Phase 09]: DNS-01/02/03: extractDNSQuery + ensureKubeDNSCompanion enforce literal matchName + idempotent kube-dns companion injection at BuildPolicy post-process; ToFQDNs in dedicated EgressRule per Cilium API mutual exclusivity
 
 ### Pending Todos
 
-- Run `/gsd:plan-phase 9` to plan Phase 9 (DNS L7 generation + docs/two-step workflow + README #l7-prerequisites content).
+- Phase 9 plans 09-02, 09-03, 09-04 remaining (hubble pipeline DNS branch, cpg explain L7 filters/render, README + visibility CNP).
 
 ### Blockers/Concerns
 
@@ -110,6 +112,6 @@ None open. Research-flagged items (deferred to phase planning):
 
 ## Session Continuity
 
-Last session: 2026-04-25T08:21:26Z
-Stopped at: Completed 08-04-PLAN.md (Phase 8 complete)
+Last session: 2026-04-25T11:33:55.967Z
+Stopped at: Completed 09-01-PLAN.md
 Resume: Run `/gsd:plan-phase 9` to start Phase 9 (DNS L7 generation + docs).
