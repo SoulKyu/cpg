@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: L7 Policies (HTTP + DNS)
 status: executing
-stopped_at: Completed 08-03-PLAN.md
-last_updated: "2026-04-25T08:17:15.913Z"
-last_activity: "2026-04-25 -- Plan 08-03 complete: pipeline forwards L7Enabled, VIS-01 fires on empty-L7-records, evidence v2 carries L7Ref{Protocol:http}; 276 tests pass"
+stopped_at: Completed 08-04-PLAN.md (Phase 8 complete)
+last_updated: "2026-04-25T08:21:26Z"
+last_activity: "2026-04-25 -- Plan 08-04 complete: e2e cpg replay --l7 tests for HTTP-01..HTTP-05 + VIS-01; README #l7-prerequisites anchor reserved; 279 tests pass. Phase 8 closed."
 progress:
   total_phases: 3
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 8
   completed_plans: 8
 ---
@@ -24,12 +24,12 @@ See: .planning/PROJECT.md (updated 2026-04-25)
 
 ## Current Position
 
-Phase: 8 (in progress, 3/4 plans) → next: Plan 08-04 (replay end-to-end + integration test consuming testdata/flows/l7_http.jsonl)
-Plan: 08-03 ✅ complete
-Status: Phase 8 in progress (3/4 plans). v1.2 milestone 1/3 phases done; phase 8 at 75%.
-Last activity: 2026-04-25 -- Plan 08-03 complete: pipeline forwards L7Enabled, VIS-01 empty-records warning, evidence v2 L7Ref population; 276 tests pass (HTTP-01, HTTP-04, VIS-01)
+Phase: 8 ✅ complete (4/4 plans) → next: Phase 9 (DNS L7 generation + docs)
+Plan: 08-04 ✅ complete
+Status: Phase 8 closed. v1.2 milestone 2/3 phases done.
+Last activity: 2026-04-25 -- Plan 08-04 complete: e2e cpg replay --l7 tests for HTTP-01..HTTP-05 + VIS-01; README #l7-prerequisites anchor reserved; 279 tests pass.
 
-Progress: v1.0 ✅ · v1.1 ✅ · v1.2 🚧 phases 7 ✅ · 8-9 pending (1/3 complete)
+Progress: v1.0 ✅ · v1.1 ✅ · v1.2 🚧 phases 7 ✅ · 8 ✅ · 9 pending (2/3 complete)
 
 ## Performance Metrics
 
@@ -62,6 +62,7 @@ Progress: v1.0 ✅ · v1.1 ✅ · v1.2 🚧 phases 7 ✅ · 8-9 pending (1/3 com
 | Phase 08 P01 | 12min | 2 tasks | 2 files |
 | Phase 08 P02 | 12 | 3 tasks | 3 files |
 | Phase 08 P03 | 4m | 2 tasks | 5 files |
+| Phase 08 P04 | 12m | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -93,10 +94,12 @@ Recent decisions affecting v1.2 work (research-confirmed 2026-04-25):
 - [Phase 08]: L7 attribution subsumes L4 attribution per-flow: when recordL7 emits HTTP-discriminated keys, the bare L4 RuleKey is skipped, preventing double-counting in evidence buckets.
 - [Phase 08-03]: SessionStats counters hydrated post-Wait from aggregator (single source of truth). Incidentally fixed v1.0 audit BUG-01 (FlowsSeen always 0) since VIS-01 needs flowsSeen > 0 gate to be accurate.
 - [Phase 08-03]: VIS-01 emitted from a single deterministic site (post g.Wait, pre stats.Log); workload list sorted for deterministic test assertions; HTTP+DNS sum gate ready for one-line Phase 9 plug-in.
+- [Phase 08-04]: Observed-logger pattern in cmd/cpg via package-level swap (`initObservedLoggerForTesting` returns *observer.ObservedLogs, t.Cleanup restores prev). Avoids refactoring PipelineConfig plumbing.
+- [Phase 08-04]: README `#l7-prerequisites` anchor placeholder reserved before Phase 9 ships content; VIS-01 hint string in `pkg/hubble/pipeline.go:203` already references it.
 
 ### Pending Todos
 
-- Run `/gsd:execute-phase 8` to continue Phase 8 with Plan 08-04 (replay end-to-end + integration test consuming testdata/flows/l7_http.jsonl).
+- Run `/gsd:plan-phase 9` to plan Phase 9 (DNS L7 generation + docs/two-step workflow + README #l7-prerequisites content).
 
 ### Blockers/Concerns
 
@@ -107,6 +110,6 @@ None open. Research-flagged items (deferred to phase planning):
 
 ## Session Continuity
 
-Last session: 2026-04-25T08:16:00Z
-Stopped at: Completed 08-03-PLAN.md
-Resume: Run `/gsd:execute-phase 8` to continue Phase 8 with Plan 08-04.
+Last session: 2026-04-25T08:21:26Z
+Stopped at: Completed 08-04-PLAN.md (Phase 8 complete)
+Resume: Run `/gsd:plan-phase 9` to start Phase 9 (DNS L7 generation + docs).
