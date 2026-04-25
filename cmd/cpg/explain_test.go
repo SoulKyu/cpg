@@ -121,6 +121,30 @@ func TestExplainReturnsClearErrorWhenEvidenceMissing(t *testing.T) {
 	assert.Contains(t, err.Error(), "no evidence found")
 }
 
+func TestBuildFilterNormalizesL7Inputs(t *testing.T) {
+	cmd := newExplainCmd()
+	require.NoError(t, cmd.ParseFlags([]string{
+		"--http-method", "get",
+		"--http-path", "^/foo$",
+		"--dns-pattern", "api.example.com.",
+	}))
+	f, err := buildFilter(cmd)
+	require.NoError(t, err)
+	assert.Equal(t, "GET", f.HTTPMethod, "method should be uppercased")
+	assert.Equal(t, "^/foo$", f.HTTPPath, "path should be left as-is")
+	assert.Equal(t, "api.example.com", f.DNSPattern, "trailing dot should be stripped")
+}
+
+func TestBuildFilterDefaultsEmpty(t *testing.T) {
+	cmd := newExplainCmd()
+	require.NoError(t, cmd.ParseFlags([]string{}))
+	f, err := buildFilter(cmd)
+	require.NoError(t, err)
+	assert.Empty(t, f.HTTPMethod)
+	assert.Empty(t, f.HTTPPath)
+	assert.Empty(t, f.DNSPattern)
+}
+
 func TestExplainJSONOutput(t *testing.T) {
 	outDir := t.TempDir()
 	evDir := t.TempDir()

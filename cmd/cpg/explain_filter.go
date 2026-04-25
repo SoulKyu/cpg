@@ -19,6 +19,13 @@ type explainFilter struct {
 	PeerCIDR *net.IPNet
 	Since    time.Duration
 	Now      time.Time
+
+	// L7 filters. Empty string = unset. Inputs are normalized in buildFilter
+	// (HTTPMethod uppercased, DNSPattern trailing dot stripped). When ANY of
+	// these is set, rules without an L7Ref are dropped from the matched set.
+	HTTPMethod string
+	HTTPPath   string
+	DNSPattern string
 }
 
 func (f explainFilter) match(r evidence.RuleEvidence) bool {
@@ -53,6 +60,26 @@ func (f explainFilter) match(r evidence.RuleEvidence) bool {
 	}
 	if f.Since > 0 && !r.LastSeen.IsZero() && r.LastSeen.Before(f.Now.Add(-f.Since)) {
 		return false
+	}
+	if f.HTTPMethod != "" || f.HTTPPath != "" || f.DNSPattern != "" {
+		if r.L7 == nil {
+			return false
+		}
+		if f.HTTPMethod != "" {
+			if r.L7.Protocol != "http" || r.L7.HTTPMethod != f.HTTPMethod {
+				return false
+			}
+		}
+		if f.HTTPPath != "" {
+			if r.L7.Protocol != "http" || r.L7.HTTPPath != f.HTTPPath {
+				return false
+			}
+		}
+		if f.DNSPattern != "" {
+			if r.L7.Protocol != "dns" || r.L7.DNSMatchName != f.DNSPattern {
+				return false
+			}
+		}
 	}
 	return true
 }

@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -38,6 +39,9 @@ Examples:
 	f.String("port", "", "filter: rules using this port")
 	f.String("peer", "", "filter: endpoint peer with KEY=VAL")
 	f.String("peer-cidr", "", "filter: CIDR peer contained in this CIDR")
+	f.String("http-method", "", "filter: rules attributed to this HTTP method (exact, case-insensitive)")
+	f.String("http-path", "", "filter: rules attributed to this HTTP path (literal exact match)")
+	f.String("dns-pattern", "", "filter: rules attributed to this DNS matchName (literal exact, trailing dot stripped)")
 	f.Duration("since", 0, "filter: flows last seen within this duration")
 	f.Int("samples-limit", 10, "max samples to display per rule")
 	f.Bool("json", false, "output JSON instead of formatted text")
@@ -145,5 +149,14 @@ func buildFilter(cmd *cobra.Command) (explainFilter, error) {
 	}
 
 	f.Since, _ = cmd.Flags().GetDuration("since")
+
+	method, _ := cmd.Flags().GetString("http-method")
+	f.HTTPMethod = strings.ToUpper(strings.TrimSpace(method))
+
+	path, _ := cmd.Flags().GetString("http-path")
+	f.HTTPPath = path
+
+	dns, _ := cmd.Flags().GetString("dns-pattern")
+	f.DNSPattern = strings.TrimSuffix(strings.TrimSpace(dns), ".")
 	return f, nil
 }
