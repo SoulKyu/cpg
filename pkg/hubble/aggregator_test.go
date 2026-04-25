@@ -304,35 +304,27 @@ func TestAggregator_L7DNSCount_Increments(t *testing.T) {
 		Record: &flowpb.Layer7_Dns{Dns: &flowpb.DNS{Query: "api.example.com."}},
 	}
 
-	httpAndDNS := testdata.IngressTCPFlow(
-		[]string{"k8s:app=client"},
-		[]string{"k8s:app=server"},
-		"production", 8080,
-	)
-	httpAndDNS.L7 = &flowpb.Layer7{
-		Record: &flowpb.Layer7_Http{Http: &flowpb.HTTP{Method: "GET", Url: "/"}},
+	// Layer7.Record is a oneof — a single flow cannot carry both Http and Dns.
+	// Use two consecutive flows: one HTTP, one DNS, and assert both counters
+	// move independently.
+	makeBare := func() *flowpb.Flow {
+		return &flowpb.Flow{
+			TrafficDirection: flowpb.TrafficDirection_INGRESS,
+			Source:           &flowpb.Endpoint{Labels: []string{"k8s:app=a"}, Namespace: "production"},
+			Destination:      &flowpb.Endpoint{Labels: []string{"k8s:app=b"}, Namespace: "production"},
+			L4: &flowpb.Layer4{
+				Protocol: &flowpb.Layer4_TCP{TCP: &flowpb.TCP{DestinationPort: 80}},
+			},
+		}
 	}
-	// Manually swap to a flow carrying BOTH http and dns to assert independence.
-	bothFlow := &flowpb.Flow{
-		TrafficDirection: flowpb.TrafficDirection_INGRESS,
-		Source:           &flowpb.Endpoint{Labels: []string{"k8s:app=a"}, Namespace: "production"},
-		Destination:      &flowpb.Endpoint{Labels: []string{"k8s:app=b"}, Namespace: "production"},
-		L4: &flowpb.Layer4{
-			Protocol: &flowpb.Layer4_TCP{TCP: &flowpb.TCP{DestinationPort: 80}},
-		},
-	}
-	// Two L7 sub-records on a single Layer7 wrapper would require oneof — we
-	// can't put both Http and Dns on the same flow because Layer7.Record is a
-	// oneof. Use two consecutive flows: one HTTP, one DNS, and assert both
-	// counters move by exactly one each.
-	httpFlow := *bothFlow
+	httpFlow := makeBare()
 	httpFlow.L7 = &flowpb.Layer7{Record: &flowpb.Layer7_Http{Http: &flowpb.HTTP{Method: "GET", Url: "/"}}}
-	dnsFlow := *bothFlow
+	dnsFlow := makeBare()
 	dnsFlow.L7 = &flowpb.Layer7{Record: &flowpb.Layer7_Dns{Dns: &flowpb.DNS{Query: "x.example.com."}}}
 
 	in <- dnsOnly
-	in <- &httpFlow
-	in <- &dnsFlow
+	in <- httpFlow
+	in <- dnsFlow
 	close(in)
 
 	require.NoError(t, agg.Run(context.Background(), in, out))
