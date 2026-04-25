@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: L7 Policies (HTTP + DNS)
 status: completed
-stopped_at: Completed 09-03-PLAN.md
-last_updated: "2026-04-25T11:48:25.081Z"
-last_activity: "2026-04-25 -- Plan 09-02 complete: aggregator DNS counter + evidence_writer DNS branch + end-to-end pipeline integration test; 304 tests pass across 9 packages."
+stopped_at: Completed 09-04-PLAN.md — v1.2 feature-complete
+last_updated: "2026-04-25T11:55:39.099Z"
+last_activity: "2026-04-25 -- Plan 09-03 complete: cpg explain --http-method/--http-path/--dns-pattern filters + L7 attribution rendering in text/JSON/YAML; L7CLI-02 + L7CLI-03 closed; 317 tests pass across 9 packages."
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 12
-  completed_plans: 11
+  completed_plans: 13
 ---
 
 # Project State
@@ -66,6 +66,7 @@ Progress: v1.0 ✅ · v1.1 ✅ · v1.2 🚧 phases 7 ✅ · 8 ✅ · 9 🚧 (3/4
 | Phase 09 P01 | 25m | 2 tasks | 7 files |
 | Phase 09 P02 | 5m | 2 tasks | 6 files |
 | Phase 09 P03 | 3m | 2 tasks | 5 files |
+| Phase 09 P04 | 12min | 3 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -103,6 +104,7 @@ Recent decisions affecting v1.2 work (research-confirmed 2026-04-25):
 - [Phase 09]: Aggregator DNS counter increments before keyFromFlow skip check (mirrors HTTP) — diagnostic counter must reflect every DNS observation regardless of bucket eligibility or L7Enabled gate.
 - [Phase 09]: evidenceWriter.convert leaves re.L7 nil for unrecognized L7.Protocol values — defensive, keeps malformed Keys off disk.
 - [Phase 09]: Plan 09-03: cpg explain L7 filters (--http-method/--http-path/--dns-pattern) literal exact match, AND-combined; any L7 filter set drops L4-only rules. Long-only flag form. JSON/YAML pass-through via existing schema v2 L7Ref tags.
+- [Phase 09]: Plan 09-04: README #l7-prerequisites filled with two-step workflow + starter visibility CNP (VIS-02, VIS-03); e2e DNS replay tests lock DNS-01..DNS-04 on disk; v1.2 milestone feature-complete (319 tests pass)
 
 ### Pending Todos
 
@@ -117,6 +119,6 @@ None open. Research-flagged items (deferred to phase planning):
 
 ## Session Continuity
 
-Last session: 2026-04-25T11:48:25.075Z
-Stopped at: Completed 09-03-PLAN.md
+Last session: 2026-04-25T11:55:39.090Z
+Stopped at: Completed 09-04-PLAN.md — v1.2 feature-complete
 Resume: Run `/gsd:plan-phase 9` to start Phase 9 (DNS L7 generation + docs).
