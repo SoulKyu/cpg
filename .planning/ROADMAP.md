@@ -75,7 +75,7 @@ Scope locked to L7 HTTP + DNS generation only. `cpg apply`, policy consolidation
 **Plans**: 4 plans
 - [x] 08-01-PLAN.md — pkg/policy/l7.go pure-function HTTP extraction (extractHTTPRules + normalizeHTTPMethod) with HTTP-05 anti-feature lint test (HTTP-02, HTTP-03, HTTP-05)
 - [x] 08-02-PLAN.md — BuildPolicy L7 codegen branch + AttributionOptions.L7Enabled + RuleKey L7 discriminator + byte-stability when L7 disabled (HTTP-01, HTTP-04)
-- [ ] 08-03-PLAN.md — pipeline L7Enabled forwarding + SessionStats.L7HTTPCount + VIS-01 warning + evidence L7Ref emission + l7_http.jsonl fixture (VIS-01, HTTP-01, HTTP-04)
+- [x] 08-03-PLAN.md — pipeline L7Enabled forwarding + SessionStats.L7HTTPCount + VIS-01 warning + evidence L7Ref emission + l7_http.jsonl fixture (VIS-01, HTTP-01, HTTP-04)
 - [ ] 08-04-PLAN.md — end-to-end replay tests for HTTP L7 generation + VIS-01 + README #l7-prerequisites anchor (HTTP-01..HTTP-05, VIS-01)
 
 ### Phase 9: DNS L7 Generation + explain L7 + Docs

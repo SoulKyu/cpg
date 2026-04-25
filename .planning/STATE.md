@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: L7 Policies (HTTP + DNS)
 status: executing
-stopped_at: Completed 08-02-PLAN.md
-last_updated: "2026-04-25T08:09:38.880Z"
-last_activity: "2026-04-25 -- Plan 08-01 complete: extractHTTPRules + normalizeHTTPMethod helpers (HTTP-02/03/05), 262 tests pass"
+stopped_at: Completed 08-03-PLAN.md
+last_updated: "2026-04-25T08:17:15.913Z"
+last_activity: "2026-04-25 -- Plan 08-03 complete: pipeline forwards L7Enabled, VIS-01 fires on empty-L7-records, evidence v2 carries L7Ref{Protocol:http}; 276 tests pass"
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 8
-  completed_plans: 6
+  completed_plans: 8
 ---
 
 # Project State
@@ -24,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-04-25)
 
 ## Current Position
 
-Phase: 8 (in progress, 2/4 plans) → next: Plan 08-03 (pipeline → AttributionOptions.L7Enabled wiring + evidence writer L7Ref)
-Plan: 08-02 ✅ complete
-Status: Phase 8 in progress (2/4 plans). v1.2 milestone 1/3 phases done; phase 8 at 50%.
-Last activity: 2026-04-25 -- Plan 08-02 complete: BuildPolicy emits HTTP rules under L7Enabled (HTTP-01, HTTP-04); 271 tests pass
+Phase: 8 (in progress, 3/4 plans) → next: Plan 08-04 (replay end-to-end + integration test consuming testdata/flows/l7_http.jsonl)
+Plan: 08-03 ✅ complete
+Status: Phase 8 in progress (3/4 plans). v1.2 milestone 1/3 phases done; phase 8 at 75%.
+Last activity: 2026-04-25 -- Plan 08-03 complete: pipeline forwards L7Enabled, VIS-01 empty-records warning, evidence v2 L7Ref population; 276 tests pass (HTTP-01, HTTP-04, VIS-01)
 
 Progress: v1.0 ✅ · v1.1 ✅ · v1.2 🚧 phases 7 ✅ · 8-9 pending (1/3 complete)
 
@@ -61,6 +61,7 @@ Progress: v1.0 ✅ · v1.1 ✅ · v1.2 🚧 phases 7 ✅ · 8-9 pending (1/3 com
 | Phase 07 P04 | 12min | 2 tasks | 7 files |
 | Phase 08 P01 | 12min | 2 tasks | 2 files |
 | Phase 08 P02 | 12 | 3 tasks | 3 files |
+| Phase 08 P03 | 4m | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -90,10 +91,12 @@ Recent decisions affecting v1.2 work (research-confirmed 2026-04-25):
 - [Phase 08]: Plan 08-01: HTTP L7 extraction primitives kept package-private; net/url.Parse handles bare-paths and full-URLs uniformly; empty path emits ^/$; HTTP-05 enforced via dedicated lint test
 - [Phase 08]: BuildPolicy emits per-port PortRules only when L7 rules attach; L4-only path stays collapsed (single PortRule with all ports) to preserve v1.1 byte-stability.
 - [Phase 08]: L7 attribution subsumes L4 attribution per-flow: when recordL7 emits HTTP-discriminated keys, the bare L4 RuleKey is skipped, preventing double-counting in evidence buckets.
+- [Phase 08-03]: SessionStats counters hydrated post-Wait from aggregator (single source of truth). Incidentally fixed v1.0 audit BUG-01 (FlowsSeen always 0) since VIS-01 needs flowsSeen > 0 gate to be accurate.
+- [Phase 08-03]: VIS-01 emitted from a single deterministic site (post g.Wait, pre stats.Log); workload list sorted for deterministic test assertions; HTTP+DNS sum gate ready for one-line Phase 9 plug-in.
 
 ### Pending Todos
 
-- Run `/gsd:execute-phase 8` to continue Phase 8 with Plan 08-02 (BuildPolicy --l7 integration).
+- Run `/gsd:execute-phase 8` to continue Phase 8 with Plan 08-04 (replay end-to-end + integration test consuming testdata/flows/l7_http.jsonl).
 
 ### Blockers/Concerns
 
@@ -104,6 +107,6 @@ None open. Research-flagged items (deferred to phase planning):
 
 ## Session Continuity
 
-Last session: 2026-04-25T08:09:32.670Z
-Stopped at: Completed 08-02-PLAN.md
-Resume: Run `/gsd:execute-phase 8` to continue Phase 8 with Plan 08-02.
+Last session: 2026-04-25T08:16:00Z
+Stopped at: Completed 08-03-PLAN.md
+Resume: Run `/gsd:execute-phase 8` to continue Phase 8 with Plan 08-04.

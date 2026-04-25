@@ -10,7 +10,7 @@ Each requirement maps to exactly one phase. Traceability table at bottom.
 
 ### Visibility & Workflow
 
-- [ ] **VIS-01**: cpg detects when `--l7` is requested but no `Flow.L7` records appear in the observed window, and emits a single, actionable warning that names the workloads missing visibility and links to the README L7 prerequisite section.
+- [x] **VIS-01**: cpg detects when `--l7` is requested but no `Flow.L7` records appear in the observed window, and emits a single, actionable warning that names the workloads missing visibility and links to the README L7 prerequisite section.
 - [ ] **VIS-02**: cpg documents the two-step workflow in the README: (1) deploy L4 policies first, (2) enable L7 visibility (proxy-visibility annotation OR an L7 CNP that triggers Envoy proxy injection), (3) re-run cpg with `--l7` to refine.
 - [ ] **VIS-03**: A starter L7-visibility-trigger CNP snippet ships in the README so users can bootstrap visibility for a workload they want to observe.
 - [x] **VIS-04**: Pre-flight check (`cpg generate --l7` only) reads ConfigMap `kube-system/cilium-config`, verifies `enable-l7-proxy: "true"`. If false or missing, emit a warning naming the offending field with a remediation hint (set in ConfigMap and roll the cilium-agent DaemonSet). On RBAC denied: warn-and-proceed.
