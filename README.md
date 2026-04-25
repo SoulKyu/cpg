@@ -175,6 +175,21 @@ cat drops.jsonl | cpg replay -              # stdin
 
 Flags shared with `generate` (`--output-dir`, `--cluster-dedup`, `--flush-interval`) work identically. Non-DROPPED verdicts and malformed lines are skipped with counters surfaced in the session summary.
 
+## L7 Prerequisites <a id="l7-prerequisites"></a>
+
+> **Note:** This section is a placeholder reserved by Phase 8. The full
+> two-step workflow (deploy L4 → enable L7 visibility → re-run with
+> `--l7`), starter visibility CNP, and capture-window guidance ship in
+> Phase 9 (v1.2 DNS L7 Generation + Docs).
+>
+> For now: if `cpg generate --l7` (or `cpg replay --l7`) emits the warning
+> `--l7 set but no L7 records observed`, the target workloads are not
+> producing L7 flow records via Hubble. This requires either an existing
+> L7 CiliumNetworkPolicy on those workloads or the (legacy)
+> `policy.cilium.io/proxy-visibility` annotation. See the [Cilium L7
+> visibility docs](https://docs.cilium.io/en/stable/observability/visibility/)
+> until Phase 9 lands.
+
 ## Dry-run
 
 Preview what `generate` or `replay` would write without touching any file:
