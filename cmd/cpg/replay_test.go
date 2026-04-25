@@ -345,6 +345,140 @@ func TestReplay_L7HTTP_EmptyFixtureFiresWarning(t *testing.T) {
 	}
 }
 
+// TestReplay_L7DNSGeneration is the e2e acceptance test for DNS-01..DNS-03:
+// running `cpg replay --l7` against an L7 DNS-bearing fixture must emit a CNP
+// YAML with a toFQDNs block (literal matchName entries, lexicographically
+// sorted), the matching toPorts.rules.dns matchName entries, the mandatory
+// kube-dns companion egress rule (DNS-02), and NEVER a matchPattern (DNS-03)
+// or HTTP header/host fields (HTTP-05 invariant survives DNS-only fixtures).
+// Evidence files must carry L7Ref{Protocol:"dns", DNSMatchName:...} for the
+// observed queries.
+func TestReplay_L7DNSGeneration(t *testing.T) {
+	initLoggerForTesting(t)
+
+	outDir := t.TempDir()
+	evDir := t.TempDir()
+
+	cmd := newReplayCmd()
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SilenceUsage = true
+	cmd.SetArgs([]string{
+		"../../testdata/flows/l7_dns.jsonl",
+		"--output-dir", outDir,
+		"--evidence-dir", evDir,
+		"--namespace", "production",
+		"--flush-interval", "100ms",
+		"--l7",
+	})
+	require.NoError(t, cmd.Execute())
+
+	yamlPath := filepath.Join(outDir, "production", "api-server.yaml")
+	data, err := os.ReadFile(yamlPath)
+	require.NoError(t, err, "policy YAML must exist at %s", yamlPath)
+	yaml := string(data)
+
+	// DNS-01: toFQDNs with literal matchName for each observed query
+	// (lexicographically sorted per EVID2-04).
+	assert.Contains(t, yaml, "toFQDNs:", "toFQDNs block expected")
+	assert.Contains(t, yaml, "matchName: api.example.com", "api.example.com matchName expected")
+	assert.Contains(t, yaml, "matchName: www.example.org", "www.example.org matchName expected")
+
+	// DNS-01: matching dns rules sub-block on the toPorts.
+	assert.Contains(t, yaml, "rules:", "rules block expected")
+	assert.Contains(t, yaml, "dns:", "dns sub-block expected")
+
+	// DNS-02: kube-dns companion rule with both UDP+TCP/53.
+	assert.Contains(t, yaml, "k8s-app: kube-dns", "kube-dns companion selector expected")
+	assert.Contains(t, yaml, "io.kubernetes.pod.namespace: kube-system", "kube-system namespace selector expected")
+	// Both UDP and TCP must be present (companion must allow both).
+	assert.Regexp(t, `(?s)protocol:\s+UDP.*protocol:\s+TCP`, yaml, "companion must allow UDP and TCP")
+
+	// DNS-03: NO matchPattern glob anywhere in the YAML.
+	assert.NotContains(t, yaml, "matchPattern", "matchPattern must never be auto-generated in v1.2 (DNS-03)")
+
+	// HTTP-05 invariant: no HTTP header/host fields, even on a DNS-only fixture.
+	assert.NotContains(t, yaml, "headerMatches", "headerMatches must never be emitted")
+	assert.NotContains(t, yaml, "hostExact", "hostExact must never be emitted")
+	assert.NotRegexp(t, `(?m)^\s+host:\s`, yaml, "host: http field must never be emitted")
+
+	// Evidence v2: at least one rule carries L7Ref{Protocol:"dns",...} for each
+	// observed name.
+	absOut, _ := filepath.Abs(outDir)
+	hash := evidence.HashOutputDir(absOut)
+	evPath := filepath.Join(evDir, hash, "production", "api-server.json")
+	raw, err := os.ReadFile(evPath)
+	require.NoError(t, err, "evidence file must exist at %s", evPath)
+
+	var pev evidence.PolicyEvidence
+	require.NoError(t, json.Unmarshal(raw, &pev))
+	seenAPI, seenWWW := false, false
+	for _, r := range pev.Rules {
+		if r.L7 == nil || r.L7.Protocol != "dns" {
+			continue
+		}
+		switch r.L7.DNSMatchName {
+		case "api.example.com":
+			seenAPI = true
+		case "www.example.org":
+			seenWWW = true
+		}
+	}
+	assert.True(t, seenAPI, "evidence must carry L7Ref{Protocol:dns, DNSMatchName:api.example.com}")
+	assert.True(t, seenWWW, "evidence must carry L7Ref{Protocol:dns, DNSMatchName:www.example.org}")
+}
+
+// TestReplay_L7DNSDisabled_FallbackByteStable locks DNS-04: running the same
+// DNS-bearing fixture WITHOUT --l7 must produce a v1.1-shape CIDR-based
+// egress (no toFQDNs, no companion, no dns: rules) byte-identical to running
+// with --l7=false.
+func TestReplay_L7DNSDisabled_FallbackByteStable(t *testing.T) {
+	initLoggerForTesting(t)
+
+	runOnce := func(args ...string) string {
+		t.Helper()
+		outDir := t.TempDir()
+		evDir := t.TempDir()
+		cmd := newReplayCmd()
+		cmd.SetOut(new(bytes.Buffer))
+		cmd.SetErr(new(bytes.Buffer))
+		cmd.SilenceUsage = true
+		base := []string{
+			"../../testdata/flows/l7_dns.jsonl",
+			"--output-dir", outDir,
+			"--evidence-dir", evDir,
+			"--namespace", "production",
+			"--flush-interval", "100ms",
+		}
+		cmd.SetArgs(append(base, args...))
+		require.NoError(t, cmd.Execute())
+		return outDir
+	}
+
+	noFlag := runOnce()
+	withFalse := runOnce("--l7=false")
+
+	files := walkRelFiles(t, noFlag)
+	assert.Equal(t, files, walkRelFiles(t, withFalse), "file sets must match")
+	for _, rel := range files {
+		a, err := os.ReadFile(filepath.Join(noFlag, rel))
+		require.NoError(t, err)
+		b, err := os.ReadFile(filepath.Join(withFalse, rel))
+		require.NoError(t, err)
+		assert.True(t, bytes.Equal(a, b), "%s must be byte-identical with --l7=false vs no flag (DNS-04)", rel)
+
+		yaml := string(a)
+		// DNS-04 fallback must be CIDR-based v1.1 shape — no L7 artifacts.
+		assert.NotContains(t, yaml, "toFQDNs", "%s must not contain toFQDNs without --l7 (DNS-04)", rel)
+		assert.NotContains(t, yaml, "k8s-app: kube-dns", "%s must not contain kube-dns companion without --l7 (DNS-04)", rel)
+		assert.NotContains(t, yaml, "matchName", "%s must not contain dns matchName without --l7 (DNS-04)", rel)
+		assert.NotContains(t, yaml, "matchPattern", "matchPattern must never appear (DNS-03)")
+		// CIDR fallback path is preserved.
+		assert.Contains(t, yaml, "toCIDR", "%s must contain CIDR-based egress (DNS-04 fallback)", rel)
+		assert.Contains(t, yaml, "8.8.8.8/32", "%s must contain destination CIDR /32 (DNS-04 fallback)", rel)
+	}
+}
+
 func TestReplayDryRunWritesNothing(t *testing.T) {
 	outDir := t.TempDir()
 	evDir := t.TempDir()
