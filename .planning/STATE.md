@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: L7 Policies (HTTP + DNS)
-status: completed
-stopped_at: Completed 07-04-PLAN.md
-last_updated: "2026-04-25T07:42:19.264Z"
-last_activity: 2026-04-25 -- Phase 7 complete: --l7/--no-l7-preflight plumbed, byte-stability invariant test passing (231 tests)
+status: in_progress
+stopped_at: Completed 08-01-PLAN.md
+last_updated: "2026-04-25T08:01:14.511Z"
+last_activity: "2026-04-25 -- Plan 08-01 complete: extractHTTPRules + normalizeHTTPMethod helpers (HTTP-02/03/05), 262 tests pass"
 progress:
   total_phases: 3
   completed_phases: 1
-  total_plans: 4
-  completed_plans: 4
+  total_plans: 8
+  completed_plans: 5
 ---
 
 # Project State
@@ -24,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-04-25)
 
 ## Current Position
 
-Phase: 7 (complete) → next: Phase 8 (HTTP L7 codegen)
-Plan: 07-04 ✅ complete
-Status: Phase 7 complete (4/4 plans). v1.2 milestone 1/3 phases done.
-Last activity: 2026-04-25 -- Phase 7 complete: --l7/--no-l7-preflight plumbed, byte-stability invariant test passing (231 tests)
+Phase: 8 (in progress, 1/4 plans) → next: Plan 08-02 (BuildPolicy --l7 integration)
+Plan: 08-01 ✅ complete
+Status: Phase 8 in progress (1/4 plans). v1.2 milestone 1/3 phases done; phase 8 underway.
+Last activity: 2026-04-25 -- Plan 08-01 complete: extractHTTPRules + normalizeHTTPMethod helpers (HTTP-02/03/05), 262 tests pass
 
 Progress: v1.0 ✅ · v1.1 ✅ · v1.2 🚧 phases 7 ✅ · 8-9 pending (1/3 complete)
 
@@ -59,6 +59,7 @@ Progress: v1.0 ✅ · v1.1 ✅ · v1.2 🚧 phases 7 ✅ · 8-9 pending (1/3 com
 | Phase 07 P03 | 10min | 1 tasks | 2 files |
 | Phase 07 P02 | 3min | 2 tasks | 8 files |
 | Phase 07 P04 | 12min | 2 tasks | 7 files |
+| Phase 08 P01 | 12min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -85,10 +86,11 @@ Recent decisions affecting v1.2 work (research-confirmed 2026-04-25):
 - [Phase 07]: Evidence schema v1->v2 bumped with optional L7Ref; reader/writer reject non-v2 with wipe instruction naming $XDG_CACHE_HOME/cpg/evidence/ (no v1 back-compat)
 - [Phase 07-04]: L7 client construction injected via package-level `l7ClientFactory` swappable var. Tests substitute `kubernetes/fake` clientsets without DI plumbing through every call site or touching the `cobra.Command` surface.
 - [Phase 07-04]: Byte-stability test compares CNP YAML byte-for-byte but evidence sidecars by tree shape only — session UUID + timestamps differ legitimately run-to-run regardless of `--l7`. Invariant applies to codegen, not session-stamped state.
+- [Phase 08]: Plan 08-01: HTTP L7 extraction primitives kept package-private; net/url.Parse handles bare-paths and full-URLs uniformly; empty path emits ^/$; HTTP-05 enforced via dedicated lint test
 
 ### Pending Todos
 
-- Run `/gsd:plan-phase 8` to decompose Phase 8 (HTTP L7 Generation) into executable plans.
+- Run `/gsd:execute-phase 8` to continue Phase 8 with Plan 08-02 (BuildPolicy --l7 integration).
 
 ### Blockers/Concerns
 
@@ -99,6 +101,6 @@ None open. Research-flagged items (deferred to phase planning):
 
 ## Session Continuity
 
-Last session: 2026-04-25T07:42:19.258Z
-Stopped at: Completed 07-04-PLAN.md
-Resume: Run `/gsd:plan-phase 8` to start Phase 8 (HTTP L7 codegen) planning.
+Last session: 2026-04-25T08:01:14.506Z
+Stopped at: Completed 08-01-PLAN.md
+Resume: Run `/gsd:execute-phase 8` to continue Phase 8 with Plan 08-02.

@@ -20,10 +20,10 @@ Each requirement maps to exactly one phase. Traceability table at bottom.
 ### HTTP L7 Generation
 
 - [ ] **HTTP-01**: When `--l7` is set and `Flow.L7.Http` records are present for a (src, dst, port) tuple, cpg generates a `toPorts.rules.http` block alongside the L4 port rule.
-- [ ] **HTTP-02**: HTTP method is normalized to uppercase (`GET`, `POST`, `PUT`, `DELETE`, …) before emission, regardless of how Hubble reports the method casing.
-- [ ] **HTTP-03**: HTTP path is emitted as a Cilium-compatible RE2 regex: `regexp.QuoteMeta` applied to the literal path, anchored with `^…$`. No regex inference, no path templating, no auto-collapse — one rule per observed (method, path) pair.
+- [x] **HTTP-02**: HTTP method is normalized to uppercase (`GET`, `POST`, `PUT`, `DELETE`, …) before emission, regardless of how Hubble reports the method casing.
+- [x] **HTTP-03**: HTTP path is emitted as a Cilium-compatible RE2 regex: `regexp.QuoteMeta` applied to the literal path, anchored with `^…$`. No regex inference, no path templating, no auto-collapse — one rule per observed (method, path) pair.
 - [ ] **HTTP-04**: Multiple distinct (method, path) observations for the same (src, dst, port) tuple merge into a single `toPorts.rules.http` list — not into multiple PortRule blocks.
-- [ ] **HTTP-05**: HTTP `Headers`, `Host`, and `HostExact` rules are NOT generated. Header generation is explicitly out of scope (see Out of Scope, anti-feature: secret leakage into committed YAML).
+- [x] **HTTP-05**: HTTP `Headers`, `Host`, and `HostExact` rules are NOT generated. Header generation is explicitly out of scope (see Out of Scope, anti-feature: secret leakage into committed YAML).
 
 ### DNS L7 Generation
 
