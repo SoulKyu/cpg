@@ -27,18 +27,60 @@ type Peer struct {
 	Entity string
 }
 
+// L7Discriminator carries the optional L7 attributes that distinguish two
+// rules sharing the same (direction, peer, port, protocol) tuple. When nil
+// on a RuleKey, the key stringifies to the v1.1 4-segment form. Phase 8/9
+// populate this; Phase 7 leaves it nil at all callsites.
+//
+// Protocol is "http" or "dns". HTTPMethod / HTTPPath apply when Protocol ==
+// "http"; DNSMatchName applies when Protocol == "dns". All sub-fields are
+// omitempty in the string encoding.
+type L7Discriminator struct {
+	Protocol     string
+	HTTPMethod   string
+	HTTPPath     string
+	DNSMatchName string
+}
+
 // RuleKey uniquely identifies a rule within a policy in a stable, sortable form.
 type RuleKey struct {
 	Direction string // "ingress" | "egress"
 	Peer      Peer
 	Port      string
 	Protocol  string
+	// L7 is an optional discriminator. nil → backward-compatible v1.1 key;
+	// non-nil → the encoded form appends an ":l7=…" segment so two rules
+	// differing only by HTTP method/path do not dedup into the same evidence
+	// bucket (EVID2-02).
+	L7 *L7Discriminator
 }
 
 // String renders a deterministic string representation suitable for use as a
-// map key and stable across runs.
+// map key and stable across runs. When L7 is nil, the encoding matches v1.1
+// byte-for-byte.
 func (k RuleKey) String() string {
-	return fmt.Sprintf("%s:%s:%s:%s", k.Direction, encodePeer(k.Peer), k.Protocol, k.Port)
+	base := fmt.Sprintf("%s:%s:%s:%s", k.Direction, encodePeer(k.Peer), k.Protocol, k.Port)
+	if k.L7 == nil {
+		return base
+	}
+	return base + ":l7=" + encodeL7(k.L7)
+}
+
+func encodeL7(d *L7Discriminator) string {
+	var parts []string
+	if d.Protocol != "" {
+		parts = append(parts, "proto="+d.Protocol)
+	}
+	if d.HTTPMethod != "" {
+		parts = append(parts, "method="+d.HTTPMethod)
+	}
+	if d.HTTPPath != "" {
+		parts = append(parts, "path="+d.HTTPPath)
+	}
+	if d.DNSMatchName != "" {
+		parts = append(parts, "dns="+d.DNSMatchName)
+	}
+	return strings.Join(parts, ",")
 }
 
 func encodePeer(p Peer) string {

@@ -150,3 +150,173 @@ func TestMergePortRules_PreservesRules(t *testing.T) {
 		assert.Equal(t, "8080", merged[0].Ports[2].Port)
 	})
 }
+
+// TestMergePortRules_L4OnlyByteIdentical asserts the L4-only merge path
+// produces output identical to the v1.1 implementation: a single PortRule
+// with merged Ports list, Rules == nil, in first-observation order.
+func TestMergePortRules_L4OnlyByteIdentical(t *testing.T) {
+	existing := api.PortRules{
+		{Ports: []api.PortProtocol{
+			{Port: "80", Protocol: api.ProtoTCP},
+			{Port: "443", Protocol: api.ProtoTCP},
+		}},
+	}
+	incoming := api.PortRules{
+		{Ports: []api.PortProtocol{
+			{Port: "443", Protocol: api.ProtoTCP}, // duplicate
+			{Port: "8080", Protocol: api.ProtoTCP},
+		}},
+	}
+	merged := mergePortRules(existing, incoming)
+	require.Len(t, merged, 1)
+	assert.Nil(t, merged[0].Rules)
+	require.Len(t, merged[0].Ports, 3)
+	assert.Equal(t, "80", merged[0].Ports[0].Port)
+	assert.Equal(t, "443", merged[0].Ports[1].Port)
+	assert.Equal(t, "8080", merged[0].Ports[2].Port)
+}
+
+// TestNormalizeRule_SortsL7Lists asserts normalizeRule deterministically
+// sorts Rules.HTTP by (Method, Path) and Rules.DNS by MatchName, leaves
+// nil/empty Rules untouched, and preserves the nil-vs-empty distinction
+// (Pitfall 12).
+func TestNormalizeRule_SortsL7Lists(t *testing.T) {
+	t.Run("HTTP sorted by (Method, Path)", func(t *testing.T) {
+		rule := &api.Rule{
+			Egress: []api.EgressRule{
+				{
+					ToPorts: api.PortRules{
+						{
+							Ports: []api.PortProtocol{{Port: "80", Protocol: api.ProtoTCP}},
+							Rules: &api.L7Rules{HTTP: []api.PortRuleHTTP{
+								{Method: "POST", Path: "/b"},
+								{Method: "GET", Path: "/a"},
+								{Method: "GET", Path: "/z"},
+							}},
+						},
+					},
+				},
+			},
+		}
+		normalizeRule(rule)
+		got := rule.Egress[0].ToPorts[0].Rules.HTTP
+		require.Len(t, got, 3)
+		assert.Equal(t, "GET", got[0].Method)
+		assert.Equal(t, "/a", got[0].Path)
+		assert.Equal(t, "GET", got[1].Method)
+		assert.Equal(t, "/z", got[1].Path)
+		assert.Equal(t, "POST", got[2].Method)
+		assert.Equal(t, "/b", got[2].Path)
+	})
+
+	t.Run("DNS sorted by MatchName", func(t *testing.T) {
+		rule := &api.Rule{
+			Egress: []api.EgressRule{
+				{
+					ToPorts: api.PortRules{
+						{
+							Ports: []api.PortProtocol{{Port: "53", Protocol: api.ProtoUDP}},
+							Rules: &api.L7Rules{DNS: []api.PortRuleDNS{
+								{MatchName: "b.example.com"},
+								{MatchName: "a.example.com"},
+							}},
+						},
+					},
+				},
+			},
+		}
+		normalizeRule(rule)
+		got := rule.Egress[0].ToPorts[0].Rules.DNS
+		require.Len(t, got, 2)
+		assert.Equal(t, "a.example.com", got[0].MatchName)
+		assert.Equal(t, "b.example.com", got[1].MatchName)
+	})
+
+	t.Run("nil Rules is a no-op", func(t *testing.T) {
+		rule := &api.Rule{
+			Egress: []api.EgressRule{
+				{ToPorts: api.PortRules{{Ports: []api.PortProtocol{{Port: "80", Protocol: api.ProtoTCP}}}}},
+			},
+		}
+		normalizeRule(rule)
+		assert.Nil(t, rule.Egress[0].ToPorts[0].Rules)
+	})
+
+	t.Run("empty L7 lists stay empty (not nil)", func(t *testing.T) {
+		empty := &api.L7Rules{HTTP: []api.PortRuleHTTP{}, DNS: []api.PortRuleDNS{}}
+		rule := &api.Rule{
+			Egress: []api.EgressRule{
+				{ToPorts: api.PortRules{{
+					Ports: []api.PortProtocol{{Port: "80", Protocol: api.ProtoTCP}},
+					Rules: empty,
+				}}},
+			},
+		}
+		normalizeRule(rule)
+		got := rule.Egress[0].ToPorts[0].Rules
+		require.NotNil(t, got)
+		assert.NotNil(t, got.HTTP, "empty (non-nil) HTTP list must stay non-nil")
+		assert.NotNil(t, got.DNS, "empty (non-nil) DNS list must stay non-nil")
+		assert.Len(t, got.HTTP, 0)
+		assert.Len(t, got.DNS, 0)
+	})
+
+	t.Run("single-element list is untouched (no spurious sort)", func(t *testing.T) {
+		rule := &api.Rule{
+			Egress: []api.EgressRule{
+				{ToPorts: api.PortRules{{
+					Ports: []api.PortProtocol{{Port: "80", Protocol: api.ProtoTCP}},
+					Rules: &api.L7Rules{HTTP: []api.PortRuleHTTP{{Method: "GET", Path: "/only"}}},
+				}}},
+			},
+		}
+		normalizeRule(rule)
+		got := rule.Egress[0].ToPorts[0].Rules.HTTP
+		require.Len(t, got, 1)
+		assert.Equal(t, "/only", got[0].Path)
+	})
+}
+
+// TestRuleKey_L7Discriminator asserts:
+//   - nil L7 stringifies to the v1.1 4-segment form (byte-identical).
+//   - populated L7 appends an ":l7=…" segment containing the L7 fields.
+//   - two keys differing only by HTTPPath produce different strings.
+func TestRuleKey_L7Discriminator(t *testing.T) {
+	base := RuleKey{
+		Direction: "egress",
+		Peer:      Peer{Type: PeerEndpoint, Labels: map[string]string{"app": "x"}},
+		Port:      "80",
+		Protocol:  "TCP",
+	}
+
+	t.Run("nil L7 → v1.1 byte-identical encoding", func(t *testing.T) {
+		assert.Equal(t, "egress:ep:app=x:TCP:80", base.String())
+	})
+
+	t.Run("HTTP discriminator appended", func(t *testing.T) {
+		k := base
+		k.L7 = &L7Discriminator{Protocol: "http", HTTPMethod: "GET", HTTPPath: "/api"}
+		s := k.String()
+		assert.Contains(t, s, "egress:ep:app=x:TCP:80")
+		assert.Contains(t, s, "l7=")
+		assert.Contains(t, s, "proto=http")
+		assert.Contains(t, s, "method=GET")
+		assert.Contains(t, s, "path=/api")
+	})
+
+	t.Run("two keys differing only by HTTPPath are distinct", func(t *testing.T) {
+		k1 := base
+		k1.L7 = &L7Discriminator{Protocol: "http", HTTPMethod: "GET", HTTPPath: "/a"}
+		k2 := base
+		k2.L7 = &L7Discriminator{Protocol: "http", HTTPMethod: "GET", HTTPPath: "/b"}
+		assert.NotEqual(t, k1.String(), k2.String())
+	})
+
+	t.Run("DNS discriminator appended", func(t *testing.T) {
+		k := base
+		k.L7 = &L7Discriminator{Protocol: "dns", DNSMatchName: "api.example.com"}
+		s := k.String()
+		assert.Contains(t, s, "proto=dns")
+		assert.Contains(t, s, "dns=api.example.com")
+	})
+}

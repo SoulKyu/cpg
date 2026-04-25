@@ -51,12 +51,14 @@ func normalizeRule(r *api.Rule) {
 	for i := range r.Ingress {
 		for j := range r.Ingress[i].ToPorts {
 			sortPorts(r.Ingress[i].ToPorts[j].Ports)
+			sortL7Rules(r.Ingress[i].ToPorts[j].Rules)
 		}
 	}
 	// Sort ports within each egress rule
 	for i := range r.Egress {
 		for j := range r.Egress[i].ToPorts {
 			sortPorts(r.Egress[i].ToPorts[j].Ports)
+			sortL7Rules(r.Egress[i].ToPorts[j].Rules)
 		}
 	}
 
@@ -69,6 +71,30 @@ func normalizeRule(r *api.Rule) {
 	sort.Slice(r.Egress, func(i, j int) bool {
 		return egressRuleKey(r.Egress[i]) < egressRuleKey(r.Egress[j])
 	})
+}
+
+// sortL7Rules deterministically sorts L7 sub-lists on a PortRule so YAML
+// output stays byte-stable across runs (EVID2-04). HTTP entries sort by
+// (Method, Path) lexicographic; DNS entries sort by MatchName lexicographic
+// (MatchPattern is not auto-generated in v1.2 — DNS-03). Empty/nil Rules is
+// a no-op; the nil-vs-empty-list distinction is preserved.
+func sortL7Rules(rules *api.L7Rules) {
+	if rules == nil {
+		return
+	}
+	if len(rules.HTTP) > 1 {
+		sort.SliceStable(rules.HTTP, func(i, j int) bool {
+			if rules.HTTP[i].Method != rules.HTTP[j].Method {
+				return rules.HTTP[i].Method < rules.HTTP[j].Method
+			}
+			return rules.HTTP[i].Path < rules.HTTP[j].Path
+		})
+	}
+	if len(rules.DNS) > 1 {
+		sort.SliceStable(rules.DNS, func(i, j int) bool {
+			return rules.DNS[i].MatchName < rules.DNS[j].MatchName
+		})
+	}
 }
 
 // sortPorts sorts port/protocol pairs for deterministic comparison.
