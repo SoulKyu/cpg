@@ -34,7 +34,11 @@ func (r *Reader) Read(namespace, workload string) (PolicyEvidence, error) {
 		return PolicyEvidence{}, fmt.Errorf("parsing evidence %s: %w", path, err)
 	}
 	if pe.SchemaVersion != SchemaVersion {
-		return PolicyEvidence{}, fmt.Errorf("unsupported schema_version %d in %s (this cpg understands %d)", pe.SchemaVersion, path, SchemaVersion)
+		return PolicyEvidence{}, fmt.Errorf(
+			"unsupported schema_version %d in %s (this cpg understands %d). "+
+				"v1.2 evidence schema is incompatible with previous versions. "+
+				"Wipe the evidence cache and re-run cpg: rm -rf $XDG_CACHE_HOME/cpg/evidence/",
+			pe.SchemaVersion, path, SchemaVersion)
 	}
 	return pe, nil
 }

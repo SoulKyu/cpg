@@ -16,7 +16,7 @@ import (
 
 func sampleEvidence() evidence.PolicyEvidence {
 	return evidence.PolicyEvidence{
-		SchemaVersion: 1,
+		SchemaVersion: 2,
 		Policy:        evidence.PolicyRef{Name: "cpg-api", Namespace: "prod", Workload: "api"},
 		Sessions: []evidence.SessionInfo{{
 			ID:        "s1",

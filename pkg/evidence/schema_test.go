@@ -12,7 +12,7 @@ import (
 
 func TestSchemaRoundtrip(t *testing.T) {
 	original := PolicyEvidence{
-		SchemaVersion: 1,
+		SchemaVersion: 2,
 		Policy: PolicyRef{
 			Name:      "cpg-api-server",
 			Namespace: "production",
@@ -62,7 +62,7 @@ func TestSchemaRoundtrip(t *testing.T) {
 
 func TestSchemaEmptySkeleton(t *testing.T) {
 	skel := NewSkeleton(PolicyRef{Name: "cpg-x", Namespace: "ns", Workload: "x"})
-	assert.Equal(t, 1, skel.SchemaVersion)
+	assert.Equal(t, 2, skel.SchemaVersion)
 	assert.Equal(t, "cpg-x", skel.Policy.Name)
 	assert.Empty(t, skel.Sessions)
 	assert.Empty(t, skel.Rules)

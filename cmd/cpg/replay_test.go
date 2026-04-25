@@ -46,7 +46,7 @@ func TestReplayCommandProducesPoliciesAndEvidence(t *testing.T) {
 
 	var pev evidence.PolicyEvidence
 	require.NoError(t, json.Unmarshal(data, &pev))
-	assert.Equal(t, 1, pev.SchemaVersion)
+	assert.Equal(t, 2, pev.SchemaVersion)
 	assert.NotEmpty(t, pev.Rules)
 	assert.Len(t, pev.Sessions, 1)
 	assert.Equal(t, "replay", pev.Sessions[0].Source.Type)

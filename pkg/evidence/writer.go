@@ -37,7 +37,11 @@ func (w *Writer) Write(ref PolicyRef, session SessionInfo, newRules []RuleEviden
 			return fmt.Errorf("parsing existing evidence %s: %w", path, err)
 		}
 		if existing.SchemaVersion != SchemaVersion {
-			return fmt.Errorf("refusing to merge: existing evidence %s has schema_version %d (this cpg understands %d)", path, existing.SchemaVersion, SchemaVersion)
+			return fmt.Errorf(
+				"refusing to merge: existing evidence %s has schema_version %d (this cpg understands %d). "+
+					"v1.2 evidence schema is incompatible with previous versions. "+
+					"Wipe the evidence cache and re-run cpg: rm -rf $XDG_CACHE_HOME/cpg/evidence/",
+				path, existing.SchemaVersion, SchemaVersion)
 		}
 	case errors.Is(err, fs.ErrNotExist):
 		existing = NewSkeleton(ref)
