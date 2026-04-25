@@ -52,3 +52,69 @@ func TestFilterSince(t *testing.T) {
 	f.Since = 1 * time.Minute
 	assert.False(t, f.match(rule))
 }
+
+func httpRule() evidence.RuleEvidence {
+	return evidence.RuleEvidence{
+		Direction: "egress",
+		L7: &evidence.L7Ref{
+			Protocol:   "http",
+			HTTPMethod: "GET",
+			HTTPPath:   "^/foo$",
+		},
+	}
+}
+
+func dnsRule() evidence.RuleEvidence {
+	return evidence.RuleEvidence{
+		Direction: "egress",
+		L7: &evidence.L7Ref{
+			Protocol:     "dns",
+			DNSMatchName: "api.example.com",
+		},
+	}
+}
+
+func TestFilterHTTPMethod(t *testing.T) {
+	r := httpRule()
+	assert.True(t, explainFilter{HTTPMethod: "GET"}.match(r))
+	// L4-only rule with any L7 filter set → drop.
+	assert.False(t, explainFilter{HTTPMethod: "GET"}.match(evidence.RuleEvidence{Direction: "egress"}))
+	// Non-matching method.
+	assert.False(t, explainFilter{HTTPMethod: "POST"}.match(r))
+	// DNS rule with HTTP method filter → drop (Protocol mismatch).
+	assert.False(t, explainFilter{HTTPMethod: "GET"}.match(dnsRule()))
+}
+
+func TestFilterHTTPPath(t *testing.T) {
+	r := httpRule()
+	assert.True(t, explainFilter{HTTPPath: "^/foo$"}.match(r))
+	// Literal exact: substring/unanchored does not match.
+	assert.False(t, explainFilter{HTTPPath: "/foo"}.match(r))
+	// L4-only → drop.
+	assert.False(t, explainFilter{HTTPPath: "^/foo$"}.match(evidence.RuleEvidence{}))
+}
+
+func TestFilterDNSPattern(t *testing.T) {
+	r := dnsRule()
+	assert.True(t, explainFilter{DNSPattern: "api.example.com"}.match(r))
+	// Wildcard literal exact match (v1.2 doesn't generate them, but filter is exact).
+	wild := evidence.RuleEvidence{L7: &evidence.L7Ref{Protocol: "dns", DNSMatchName: "*.example.com"}}
+	assert.True(t, explainFilter{DNSPattern: "*.example.com"}.match(wild))
+	// HTTP rule with DNS filter → drop.
+	assert.False(t, explainFilter{DNSPattern: "api.example.com"}.match(httpRule()))
+}
+
+func TestFilterAndCombination(t *testing.T) {
+	r := httpRule()
+	assert.True(t, explainFilter{HTTPMethod: "GET", HTTPPath: "^/foo$"}.match(r))
+	// AND requires both — wrong path → false.
+	assert.False(t, explainFilter{HTTPMethod: "GET", HTTPPath: "^/bar$"}.match(r))
+	// HTTP method + DNS pattern on HTTP rule → false (DNS branch fails).
+	assert.False(t, explainFilter{HTTPMethod: "GET", DNSPattern: "x.com"}.match(r))
+}
+
+func TestFilterL4OnlyNoL7Filters(t *testing.T) {
+	// No L7 filters set → existing v1.1 behavior preserved (L4-only rule matches).
+	r := evidence.RuleEvidence{Direction: "egress", Port: "80"}
+	assert.True(t, explainFilter{}.match(r))
+}
