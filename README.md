@@ -75,6 +75,9 @@ cpg --debug generate --all-namespaces
 
 # TLS
 cpg generate --server relay.example.com:443 --tls -n production
+
+# Opt-in L7: HTTP method/path + DNS matchName. See "L7 Prerequisites".
+cpg generate -n production --l7
 ```
 
 That's it. Leave it running. Go generate some traffic (or wait for someone else to). Ctrl+C when you're done -- cpg flushes remaining flows and prints a session summary before exiting.
@@ -92,6 +95,9 @@ hubble observe --output jsonpb --follow > drops.jsonl
 
 # Replay through cpg — reuse the file as many times as you want
 cpg replay drops.jsonl -n production
+
+# Opt-in L7: HTTP method/path + DNS matchName. See "L7 Prerequisites".
+cpg replay drops.jsonl --l7 -n production
 ```
 
 `cpg replay` accepts `-` to read from stdin and transparently decompresses `.gz` files.
@@ -151,6 +157,56 @@ spec:
 
 External traffic (world identity) gets CIDR-based rules (`fromCIDR` / `toCIDR`) with /32 addresses instead of endpoint selectors, because you can't exactly match a label on the internet.
 
+### With `--l7` (opt-in HTTP + DNS)
+
+When `--l7` is set and Hubble is producing L7 flow records (see [L7 Prerequisites](#l7-prerequisites)), cpg attaches HTTP method/path and DNS `toFQDNs` to the relevant rules. Same fixture as above plus an observed `GET /api/v1/users` and a DNS query for `api.example.com`:
+
+```yaml
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: cpg-api-server
+  namespace: production
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: api-server
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: frontend
+      toPorts:
+        - ports:
+            - {port: "8080", protocol: TCP}
+          rules:
+            http:
+              - {method: GET, path: ^/api/v1/users$}
+  egress:
+    - toFQDNs:
+        - matchName: api.example.com
+      toPorts:
+        - ports:
+            - {port: "53", protocol: UDP}
+            - {port: "53", protocol: TCP}
+          rules:
+            dns:
+              - matchName: api.example.com
+    # Companion kube-dns rule auto-injected for every CNP with toFQDNs (DNS-02).
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - {port: "53", protocol: UDP}
+            - {port: "53", protocol: TCP}
+          rules:
+            dns:
+              - matchName: api.example.com
+```
+
+HTTP paths are emitted as anchored, `regexp.QuoteMeta`'d RE2 regexes (`^/api/v1/users$`). Methods are uppercase-normalized. Header / Host rules are never generated (anti-feature, see Limitations).
+
 ## Offline replay
 
 `cpg replay <file>` feeds a Hubble jsonpb capture through the same pipeline as the live stream. It is the right tool when you want:
@@ -177,18 +233,142 @@ Flags shared with `generate` (`--output-dir`, `--cluster-dedup`, `--flush-interv
 
 ## L7 Prerequisites <a id="l7-prerequisites"></a>
 
-> **Note:** This section is a placeholder reserved by Phase 8. The full
-> two-step workflow (deploy L4 → enable L7 visibility → re-run with
-> `--l7`), starter visibility CNP, and capture-window guidance ship in
-> Phase 9 (v1.2 DNS L7 Generation + Docs).
->
-> For now: if `cpg generate --l7` (or `cpg replay --l7`) emits the warning
-> `--l7 set but no L7 records observed`, the target workloads are not
-> producing L7 flow records via Hubble. This requires either an existing
-> L7 CiliumNetworkPolicy on those workloads or the (legacy)
-> `policy.cilium.io/proxy-visibility` annotation. See the [Cilium L7
-> visibility docs](https://docs.cilium.io/en/stable/observability/visibility/)
-> until Phase 9 lands.
+`cpg --l7` translates what Hubble shows it. Hubble only emits `Flow.L7`
+records (HTTP method/path, DNS query) when traffic is proxied — by Envoy
+for HTTP, by the DNS proxy for DNS. cpg cannot turn that on for you.
+If you see the warning
+
+```
+--l7 set but no L7 records observed
+```
+
+this section is the fix.
+
+### Two-step workflow
+
+Refining L4 policies with L7 rules is a two-step dance, and the order
+matters:
+
+1. **Deploy L4 first.** Run `cpg generate -n <namespace>` (no `--l7`).
+   Review the generated CiliumNetworkPolicies, commit, apply. You are
+   now moving toward default-deny with port/peer-level enforcement.
+
+2. **Enable L7 visibility** on the workloads you want refined. Three
+   options below — pick whichever fits your operational model.
+
+3. **Re-run cpg with `--l7`.** With visibility enabled, Hubble starts
+   emitting `Flow.L7` records and cpg attaches `rules.http` for HTTP
+   and `toFQDNs` + the kube-dns companion for DNS to the relevant
+   egress rules.
+
+   ```bash
+   cpg generate --l7 -n <namespace>
+   # or, on a captured stream
+   cpg replay drops.jsonl --l7 -n <namespace>
+   ```
+
+### Three ways to enable L7 visibility
+
+1. **Recommended for ad-hoc bootstrap — proxy-visibility annotation.**
+   The legacy but still widely supported (Cilium ≤ 1.19) workload-level
+   annotation that triggers Envoy / DNS proxy redirection without
+   enforcing rules:
+
+   ```bash
+   kubectl annotate pod -n <ns> -l app.kubernetes.io/name=<workload> \
+     policy.cilium.io/proxy-visibility='<Egress/53/UDP/DNS>,<Ingress/8080/TCP/HTTP>'
+   ```
+
+   Easy to apply, easy to remove. Marked deprecated upstream — track its
+   deprecation if you build long-term tooling on it.
+
+2. **Recommended for permanent enforcement — bootstrap L7 CNP.** Ship
+   a starter CiliumNetworkPolicy with a permissive L7 rule. The mere
+   *presence* of an L7 rule on a workload triggers Cilium to proxy that
+   workload's traffic — match-all `{}` in the HTTP rule and `"*"` in
+   the DNS matchPattern lights up visibility without enforcing
+   anything. See the snippet below.
+
+3. **Cluster-wide prerequisite — `enable-l7-proxy: true`.** In the
+   `kube-system/cilium-config` ConfigMap. Default `true` on most
+   installs, but required for any of the above to work. cpg's
+   `--l7` pre-flight check (VIS-04) flags it explicitly when missing
+   or set to false.
+
+### Starter L7-visibility CNP
+
+Copy-pasteable, valid Cilium YAML. Replace the two placeholders
+(namespace + workload label) before applying:
+
+```yaml
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: cpg-l7-visibility-bootstrap
+  namespace: production    # replace with your namespace
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: my-app    # replace with your workload's label
+  egress:
+    # match-all HTTP rule triggers Envoy without enforcing a path/method.
+    - toEndpoints:
+        - {}
+      toPorts:
+        - ports:
+            - {port: "80", protocol: TCP}
+          rules:
+            http:
+              - {}
+    # match-all DNS rule triggers DNS proxy visibility for kube-dns.
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - {port: "53", protocol: UDP}
+            - {port: "53", protocol: TCP}
+          rules:
+            dns:
+              - matchPattern: "*"
+```
+
+Apply, observe traffic, then run `cpg --l7`. Once cpg's generated
+policy covers everything you need, this bootstrap CNP can be deleted —
+its only job was the visibility side-effect of Envoy / DNS proxy
+injection.
+
+### Capture-window guidance
+
+Run cpg long enough to capture one full traffic cycle for the
+workloads in question. A single observation produces a single rule
+with `flow_count=1`, which `cpg explain` surfaces as low-confidence
+evidence. For periodic batch jobs, capture across at least one period.
+
+### Known v1.2 limitations
+
+- **No HTTP header / Host rules.** Header-based rules are intentionally
+  not generated to avoid leaking `Authorization` / `Cookie` / etc. into
+  committed YAML. If you genuinely need them, write them by hand.
+  (HTTP-05 anti-feature.)
+- **DNS literal `matchName` only.** v1.2 emits `matchName: api.example.com`
+  for each observed query. Wildcard inference (`*.example.com` from
+  `api.example.com`+`www.example.com`) is deferred to v1.3
+  (`--l7-fqdn-wildcard-depth`, DNS-FUT-01).
+- **DNS REFUSED denials are missed.** Cilium's DNS proxy surfaces
+  REFUSED queries as `Verdict_FORWARDED`, not `DROPPED`. v1.2 only
+  reads DROPPED. v1.3 adds `--include-l7-forwarded` (L7-FUT-01).
+- **Companion kube-dns selector hardcoded.** Every CNP with `toFQDNs`
+  carries a companion egress rule allowing UDP+TCP/53 to
+  `k8s-app=kube-dns` in `kube-system` (DNS-02). Cilium needs DNS
+  resolution to learn IPs for FQDN matching; without the companion,
+  ToFQDNs is unusable. Selector autodetection across CNI
+  distributions is deferred to v1.3 (DNS-FUT-02).
+- **No path / FQDN auto-collapse.** One rule per observed (method,
+  path) and one matchName per observed query. Path templating
+  (`/api/v1/users/[0-9]+`) deferred to v1.3 (`--l7-collapse-paths`,
+  HTTP-FUT-01).
 
 ## Dry-run
 
@@ -262,7 +442,26 @@ cpg explain production/api-server
 cpg explain production/api-server --peer app=frontend
 cpg explain production/api-server --ingress --port 8080
 cpg explain ./policies/production/api-server.yaml --since 1h --json
+
+# L7 filters (literal exact match, AND-combined). Require evidence captured with --l7.
+cpg explain production/api-server --http-method GET
+cpg explain production/api-server --http-method GET --http-path '^/api/v1/users$'
+cpg explain production/api-server --dns-pattern api.example.com
 ```
+
+`--http-path` matches the literal regex stored in evidence — that is, the
+anchored, `regexp.QuoteMeta`'d form produced by the builder
+(`^/api/v1/users$`), not the raw observed path. `--dns-pattern` matches the
+literal `matchName` stored in evidence (trailing dot stripped); v1.2 emits
+no wildcards, so passing `*.example.com` will simply not match anything.
+When any L7 filter is set, L4-only rules (no L7Ref in evidence) are
+excluded from the result.
+
+When the evidence carries L7 attribution, `cpg explain` renders it
+inline. Text format prints a single indented line per rule
+(`L7: HTTP GET /api/v1/users` or `L7: DNS api.example.com`); JSON and
+YAML formats include an `l7` sub-object on each rule with the relevant
+fields (`protocol`, `http_method`, `http_path`, `dns_matchname`).
 
 Example output:
 
@@ -386,7 +585,14 @@ The test suite covers label selection, policy building, merging, output writing,
 
 Honest ones:
 
-- **L4 only.** cpg doesn't look at L7 flow data (HTTP paths, DNS names). It generates port-level policies. L7 support is on the roadmap but not here yet.
+- **L4 by default; L7 opt-in via `--l7`.** Without the flag, cpg generates port-level policies (v1.1 byte-stable). With `--l7`, cpg attaches HTTP `method` + anchored regex `path` and DNS `toFQDNs` (literal `matchName`) to the matching rules. Several L7 features are intentionally deferred to v1.3:
+  - No HTTP `Headers` / `Host` / `HostExact` rules (anti-feature: secret leakage into committed YAML).
+  - No HTTP path templating / auto-collapse — one rule per observed `(method, path)` pair (`--l7-collapse-paths`, HTTP-FUT-01).
+  - No DNS `matchPattern` glob inference — only literal `matchName` (`--l7-fqdn-wildcard-depth`, DNS-FUT-01).
+  - No FQDN inference from L4-to-IP correlation (DNS-FUT-03).
+  - REFUSED DNS denials surface as `Verdict_FORWARDED` and are missed (`--include-l7-forwarded`, L7-FUT-01).
+
+  See [L7 Prerequisites](#l7-prerequisites) for the two-step workflow and the starter visibility CNP.
 - **No auto-apply.** cpg writes YAML files. Applying them is your job, presumably through whatever GitOps tooling you already have. This is intentional -- auto-applying network policies in production is how you get paged at 3am.
 - **Namespace-scoped only.** It generates CiliumNetworkPolicy, not CiliumClusterwideNetworkPolicy. Cluster-wide policies are typically hand-crafted by platform teams who know what they're doing (allegedly).
 - **Named ports aren't resolved.** You get port numbers, not service port names. Port 8080 is port 8080. Less ambiguity, more grep-ability.
