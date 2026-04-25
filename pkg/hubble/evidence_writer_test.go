@@ -75,3 +75,64 @@ func TestEvidenceWriterPersistsAttribution(t *testing.T) {
 	require.Len(t, pev.Rules[0].Samples, 1)
 	assert.Equal(t, "default", pev.Rules[0].Samples[0].Src.Namespace)
 }
+
+// TestEvidenceWriter_ConvertDNSL7 asserts that an attribution carrying a
+// L7Discriminator{Protocol:"dns", DNSMatchName:...} translates into a
+// RuleEvidence whose L7 ref carries the DNS protocol and matchName, with HTTP
+// fields left empty (omitempty in JSON).
+func TestEvidenceWriter_ConvertDNSL7(t *testing.T) {
+	ew := newEvidenceWriter(t.TempDir(), "hash0", evidence.MergeCaps{MaxSamples: 5, MaxSessions: 5},
+		evidence.SessionInfo{ID: "s1", StartedAt: time.Now()}, zap.NewNop())
+
+	a := policy.RuleAttribution{
+		Key: policy.RuleKey{
+			Direction: "egress",
+			Peer:      policy.Peer{Type: policy.PeerEndpoint, Labels: map[string]string{"app": "client"}},
+			Port:      "53", Protocol: "UDP",
+			L7: &policy.L7Discriminator{Protocol: "dns", DNSMatchName: "api.example.com"},
+		},
+		FlowCount: 1,
+	}
+
+	re := ew.convert(a)
+	require.NotNil(t, re.L7, "DNS attribution must populate L7Ref")
+	assert.Equal(t, "dns", re.L7.Protocol)
+	assert.Equal(t, "api.example.com", re.L7.DNSMatchName)
+	assert.Empty(t, re.L7.HTTPMethod)
+	assert.Empty(t, re.L7.HTTPPath)
+
+	// Round-trip JSON: dns_matchname survives, http_method/http_path absent.
+	raw, err := json.Marshal(re)
+	require.NoError(t, err)
+	s := string(raw)
+	assert.Contains(t, s, `"protocol":"dns"`)
+	assert.Contains(t, s, `"dns_matchname":"api.example.com"`)
+	assert.NotContains(t, s, `"http_method"`)
+	assert.NotContains(t, s, `"http_path"`)
+
+	var back evidence.RuleEvidence
+	require.NoError(t, json.Unmarshal(raw, &back))
+	require.NotNil(t, back.L7)
+	assert.Equal(t, "dns", back.L7.Protocol)
+	assert.Equal(t, "api.example.com", back.L7.DNSMatchName)
+}
+
+// TestEvidenceWriter_ConvertUnknownL7Protocol asserts defensive behavior: an
+// unrecognized Key.L7.Protocol leaves re.L7 nil rather than emitting a partial
+// L7Ref. Protects against mis-typed protocol strings making it onto disk.
+func TestEvidenceWriter_ConvertUnknownL7Protocol(t *testing.T) {
+	ew := newEvidenceWriter(t.TempDir(), "hash0", evidence.MergeCaps{MaxSamples: 5, MaxSessions: 5},
+		evidence.SessionInfo{ID: "s1", StartedAt: time.Now()}, zap.NewNop())
+
+	a := policy.RuleAttribution{
+		Key: policy.RuleKey{
+			Direction: "egress",
+			Peer:      policy.Peer{Type: policy.PeerEndpoint, Labels: map[string]string{"app": "client"}},
+			Port:      "53", Protocol: "UDP",
+			L7: &policy.L7Discriminator{Protocol: "kafka"}, // not http or dns
+		},
+	}
+
+	re := ew.convert(a)
+	assert.Nil(t, re.L7, "unknown L7 protocol → re.L7 stays nil")
+}

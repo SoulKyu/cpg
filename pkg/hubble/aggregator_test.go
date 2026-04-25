@@ -282,6 +282,92 @@ func TestMonitorLostEvents_FinalSummary(t *testing.T) {
 	assert.True(t, totalLogged, "should log total lost events in final summary")
 }
 
+// TestAggregator_L7DNSCount_Increments asserts that observing a flow carrying
+// Flow.L7.Dns increments the diagnostic L7DNSCount counter, regardless of
+// whether L7Enabled is set (the counter powers the VIS-01 empty-records gate
+// and must remain accurate even when codegen is disabled). HTTP and DNS
+// counters move independently when the flow carries both records.
+func TestAggregator_L7DNSCount_Increments(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+
+	dnsOnly := testdata.EgressUDPFlow(
+		[]string{"k8s:app=client"},
+		[]string{"k8s:k8s-app=kube-dns"},
+		"production", 53,
+	)
+	dnsOnly.L7 = &flowpb.Layer7{
+		Record: &flowpb.Layer7_Dns{Dns: &flowpb.DNS{Query: "api.example.com."}},
+	}
+
+	httpAndDNS := testdata.IngressTCPFlow(
+		[]string{"k8s:app=client"},
+		[]string{"k8s:app=server"},
+		"production", 8080,
+	)
+	httpAndDNS.L7 = &flowpb.Layer7{
+		Record: &flowpb.Layer7_Http{Http: &flowpb.HTTP{Method: "GET", Url: "/"}},
+	}
+	// Manually swap to a flow carrying BOTH http and dns to assert independence.
+	bothFlow := &flowpb.Flow{
+		TrafficDirection: flowpb.TrafficDirection_INGRESS,
+		Source:           &flowpb.Endpoint{Labels: []string{"k8s:app=a"}, Namespace: "production"},
+		Destination:      &flowpb.Endpoint{Labels: []string{"k8s:app=b"}, Namespace: "production"},
+		L4: &flowpb.Layer4{
+			Protocol: &flowpb.Layer4_TCP{TCP: &flowpb.TCP{DestinationPort: 80}},
+		},
+	}
+	// Two L7 sub-records on a single Layer7 wrapper would require oneof — we
+	// can't put both Http and Dns on the same flow because Layer7.Record is a
+	// oneof. Use two consecutive flows: one HTTP, one DNS, and assert both
+	// counters move by exactly one each.
+	httpFlow := *bothFlow
+	httpFlow.L7 = &flowpb.Layer7{Record: &flowpb.Layer7_Http{Http: &flowpb.HTTP{Method: "GET", Url: "/"}}}
+	dnsFlow := *bothFlow
+	dnsFlow.L7 = &flowpb.Layer7{Record: &flowpb.Layer7_Dns{Dns: &flowpb.DNS{Query: "x.example.com."}}}
+
+	in <- dnsOnly
+	in <- &httpFlow
+	in <- &dnsFlow
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out))
+	_ = drainEvents(out)
+
+	assert.Equal(t, uint64(2), agg.L7DNSCount(), "two DNS-bearing flows → L7DNSCount==2")
+	assert.Equal(t, uint64(1), agg.L7HTTPCount(), "one HTTP-bearing flow → L7HTTPCount==1")
+}
+
+// TestAggregator_L7DNSCount_IndependentOfL7Enabled mirrors the HTTP counter
+// contract: the diagnostic counter increments regardless of SetL7Enabled.
+func TestAggregator_L7DNSCount_IndependentOfL7Enabled(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+	agg.SetL7Enabled(false) // explicit: counter must still move
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+
+	f := testdata.EgressUDPFlow(
+		[]string{"k8s:app=client"},
+		[]string{"k8s:k8s-app=kube-dns"},
+		"production", 53,
+	)
+	f.L7 = &flowpb.Layer7{Record: &flowpb.Layer7_Dns{Dns: &flowpb.DNS{Query: "api.example.com."}}}
+	in <- f
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out))
+	_ = drainEvents(out)
+
+	assert.Equal(t, uint64(1), agg.L7DNSCount(), "counter is diagnostic, not gated by L7Enabled")
+}
+
 func TestAggregator_TracksNilEndpoint(t *testing.T) {
 	core, logs := observer.New(zapcore.DebugLevel)
 	logger := zap.New(core)

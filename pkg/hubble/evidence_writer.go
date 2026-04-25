@@ -88,9 +88,8 @@ func (ew *evidenceWriter) convert(a policy.RuleAttribution) evidence.RuleEvidenc
 		ContributingSessions: []string{ew.session.ID},
 	}
 	// Populate the L7 attribution ref when the rule key carries an L7
-	// discriminator. HTTP is wired in Phase 8; DNS shipping in Phase 9 will
-	// take the dns branch below — leave a clear TODO so the next plan picks
-	// it up without a search.
+	// discriminator. HTTP wired in Phase 8; DNS wired in Phase 9. Unknown
+	// protocols leave re.L7 nil (defensive — keeps malformed Keys off disk).
 	if a.Key.L7 != nil {
 		switch a.Key.L7.Protocol {
 		case "http":
@@ -100,7 +99,10 @@ func (ew *evidenceWriter) convert(a policy.RuleAttribution) evidence.RuleEvidenc
 				HTTPPath:   a.Key.L7.HTTPPath,
 			}
 		case "dns":
-			// TODO(phase-9): emit L7Ref{Protocol:"dns", DNSMatchName: a.Key.L7.DNSMatchName}.
+			re.L7 = &evidence.L7Ref{
+				Protocol:     "dns",
+				DNSMatchName: a.Key.L7.DNSMatchName,
+			}
 		}
 	}
 	for _, f := range a.Samples {

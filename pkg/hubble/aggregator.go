@@ -89,7 +89,8 @@ func (a *Aggregator) L7HTTPCount() uint64 {
 	return a.l7HTTPCount
 }
 
-// L7DNSCount mirrors L7HTTPCount for DNS records. Always 0 in Phase 8.
+// L7DNSCount mirrors L7HTTPCount for DNS records. Diagnostic counter;
+// populated regardless of L7Enabled (Phase 9 wires the increment).
 func (a *Aggregator) L7DNSCount() uint64 {
 	return a.l7DNSCount
 }
@@ -137,11 +138,17 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan *flowpb.Flow, out chan<-
 				a.flush(buckets, out)
 				return nil
 			}
-			// Count L7 HTTP records on every observed flow, regardless of
-			// whether the flow makes it into a bucket. The counter powers
-			// VIS-01's empty-records detection, which is purely diagnostic.
+			// Count L7 HTTP and DNS records on every observed flow, regardless
+			// of whether the flow makes it into a bucket and regardless of
+			// l7Enabled. Both counters power VIS-01's empty-records gate in
+			// pipeline.Finalize (which sums them) — they are purely
+			// diagnostic and must remain accurate even when L7 codegen is
+			// disabled.
 			if f.GetL7().GetHttp() != nil {
 				a.l7HTTPCount++
+			}
+			if f.GetL7().GetDns() != nil {
+				a.l7DNSCount++
 			}
 			key, skip := a.keyFromFlow(f)
 			if skip {
