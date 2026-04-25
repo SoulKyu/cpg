@@ -34,7 +34,7 @@ Each requirement maps to exactly one phase. Traceability table at bottom.
 
 ### Evidence Schema (Internal Contract)
 
-- [ ] **EVID2-01**: The evidence JSON schema bumps from `schema_version: 1` to `schema_version: 2`. The v2 schema adds an optional `l7` field per `RuleEvidence` (sub-fields: `protocol` ∈ {http, dns}, `http_method`, `http_path`, `dns_matchname`). The existing reader behavior is preserved: any non-`2` value is rejected with a clear error directing the user to wipe `$XDG_CACHE_HOME/cpg/evidence/` (no v1 back-compat layer — v1.1 shipped 2026-04-24, no caches in production).
+- [x] **EVID2-01**: The evidence JSON schema bumps from `schema_version: 1` to `schema_version: 2`. The v2 schema adds an optional `l7` field per `RuleEvidence` (sub-fields: `protocol` ∈ {http, dns}, `http_method`, `http_path`, `dns_matchname`). The existing reader behavior is preserved: any non-`2` value is rejected with a clear error directing the user to wipe `$XDG_CACHE_HOME/cpg/evidence/` (no v1 back-compat layer — v1.1 shipped 2026-04-24, no caches in production).
 - [ ] **EVID2-02**: `RuleKey` extends with an optional L7 discriminator so that two rules differing only by HTTP method or path are not deduplicated into the same evidence bucket.
 - [ ] **EVID2-03**: `mergePortRules` (`pkg/policy/merge.go`) preserves the `Rules` field of `PortRule` across merge operations. Today it silently drops it (latent bug; harmless before L7 codegen, silent data loss after).
 - [ ] **EVID2-04**: `normalizeRule` extends to deterministically sort L7 lists (HTTP method+path lexicographic, DNS matchName lexicographic) so YAML output stays byte-stable across runs and dedup file-comparison stays correct.

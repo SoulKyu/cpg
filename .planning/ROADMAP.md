@@ -57,8 +57,8 @@ Scope locked to L7 HTTP + DNS generation only. `cpg apply`, policy consolidation
   4. Running `cpg generate --l7` against a cluster with `enable-l7-proxy=false` (or missing `cilium-envoy` DaemonSet) emits a named, actionable warning and proceeds; on `kube-system` RBAC denial, it warns-and-proceeds without abort (VIS-04, VIS-05); `--no-l7-preflight` skips both checks entirely for offline / air-gapped use (VIS-06).
   5. The `--l7` flag is parsed on `cpg generate` and `cpg replay`, threaded through `PipelineConfig`, but flipping it ON does not yet alter generated YAML versus v1.1 — L7 codegen lights up in Phase 8 (L7CLI-01).
 **Plans**: 4 plans
-- [ ] 07-01-PLAN.md — merge.Rules preserve + normalizeRule L7 sort + RuleKey L7 discriminator (EVID2-02/03/04)
-- [ ] 07-02-PLAN.md — evidence schema v1→v2 with optional L7Ref + reader rejection naming $XDG_CACHE_HOME/cpg/evidence/ (EVID2-01)
+- [x] 07-01-PLAN.md — merge.Rules preserve + normalizeRule L7 sort + RuleKey L7 discriminator (EVID2-02/03/04)
+- [x] 07-02-PLAN.md — evidence schema v1→v2 with optional L7Ref + reader rejection naming $XDG_CACHE_HOME/cpg/evidence/ (EVID2-01)
 - [x] 07-03-PLAN.md — pkg/k8s/preflight.go cilium-config + cilium-envoy checks with warn-and-proceed (VIS-04, VIS-05)
 - [ ] 07-04-PLAN.md — --l7 / --no-l7-preflight flag plumbing + PipelineConfig.L7Enabled + byte-stability integration test (L7CLI-01, VIS-06)
 
@@ -75,7 +75,7 @@ Scope locked to L7 HTTP + DNS generation only. `cpg apply`, policy consolidation
 **Plans**: 4 plans
 - [ ] 07-01-PLAN.md — merge.Rules preserve + normalizeRule L7 sort + RuleKey L7 discriminator (EVID2-02/03/04)
 - [ ] 07-02-PLAN.md — evidence schema v1→v2 with optional L7Ref + reader rejection naming $XDG_CACHE_HOME/cpg/evidence/ (EVID2-01)
-- [ ] 07-03-PLAN.md — pkg/k8s/preflight.go cilium-config + cilium-envoy checks with warn-and-proceed (VIS-04, VIS-05)
+- [x] 07-03-PLAN.md — pkg/k8s/preflight.go cilium-config + cilium-envoy checks with warn-and-proceed (VIS-04, VIS-05)
 - [ ] 07-04-PLAN.md — --l7 / --no-l7-preflight flag plumbing + PipelineConfig.L7Enabled + byte-stability integration test (L7CLI-01, VIS-06)
 
 ### Phase 9: DNS L7 Generation + explain L7 + Docs

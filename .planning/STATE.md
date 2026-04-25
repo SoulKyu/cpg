@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: L7 Policies (HTTP + DNS)
 status: completed
-stopped_at: Completed 07-03-PLAN.md (RunL7Preflight)
-last_updated: "2026-04-25T07:28:21.007Z"
+stopped_at: Completed 07-02-PLAN.md
+last_updated: "2026-04-25T07:34:57.970Z"
 last_activity: 2026-04-25 -- Roadmap for v1.2 L7 Policies created (phases 7, 8, 9)
 progress:
   total_phases: 3
   completed_phases: 0
   total_plans: 4
-  completed_plans: 1
+  completed_plans: 3
 ---
 
 # Project State
@@ -57,6 +57,7 @@ Progress: v1.0 ✅ · v1.1 ✅ · v1.2 🚧 phases 7-9 defined (0/3 complete)
 
 *Updated after each plan completion*
 | Phase 07 P03 | 10min | 1 tasks | 2 files |
+| Phase 07 P02 | 3min | 2 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -80,6 +81,7 @@ Recent decisions affecting v1.2 work (research-confirmed 2026-04-25):
 - Capture L7 jsonpb fixtures from a real cluster session for replay tests (per STACK research).
 - v1.2 docs/superpowers AI-analysis spec dropped before implementation (recoverable via git history at commit 7e1e455).
 - [Phase 07]: L7 preflight uses caller-side single-call contract (godoc) instead of sync.Once — cleaner, easier to test.
+- [Phase 07]: Evidence schema v1->v2 bumped with optional L7Ref; reader/writer reject non-v2 with wipe instruction naming $XDG_CACHE_HOME/cpg/evidence/ (no v1 back-compat)
 
 ### Pending Todos
 
@@ -94,6 +96,6 @@ None open. Research-flagged items (deferred to phase planning):
 
 ## Session Continuity
 
-Last session: 2026-04-25T07:28:21.001Z
-Stopped at: Completed 07-03-PLAN.md (RunL7Preflight)
+Last session: 2026-04-25T07:34:57.964Z
+Stopped at: Completed 07-02-PLAN.md
 Resume: Run `/gsd:plan-phase 7` to start Phase 7 planning.
