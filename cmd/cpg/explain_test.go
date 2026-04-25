@@ -68,6 +68,101 @@ func TestRenderYAML(t *testing.T) {
 	assert.Contains(t, buf.String(), "matched_rules:")
 }
 
+func httpRuleEvidence() evidence.RuleEvidence {
+	return evidence.RuleEvidence{
+		Key: "egress:ep:app=api:TCP:80:http:GET:^/api/v1/users$", Direction: "egress",
+		Peer: evidence.PeerRef{Type: "endpoint", Labels: map[string]string{"app": "api"}},
+		Port: "80", Protocol: "TCP",
+		L7: &evidence.L7Ref{
+			Protocol:   "http",
+			HTTPMethod: "GET",
+			HTTPPath:   "^/api/v1/users$",
+		},
+		FlowCount: 2,
+		FirstSeen: time.Date(2026, 4, 24, 14, 0, 0, 0, time.UTC),
+		LastSeen:  time.Date(2026, 4, 24, 14, 5, 0, 0, time.UTC),
+	}
+}
+
+func dnsRuleEvidence() evidence.RuleEvidence {
+	return evidence.RuleEvidence{
+		Key: "egress:fqdn:api.example.com:UDP:53:dns:api.example.com", Direction: "egress",
+		Peer: evidence.PeerRef{Type: "entity", Entity: "world"},
+		Port: "53", Protocol: "UDP",
+		L7: &evidence.L7Ref{
+			Protocol:     "dns",
+			DNSMatchName: "api.example.com",
+		},
+		FlowCount: 1,
+		FirstSeen: time.Date(2026, 4, 24, 14, 0, 0, 0, time.UTC),
+		LastSeen:  time.Date(2026, 4, 24, 14, 1, 0, 0, time.UTC),
+	}
+}
+
+func TestRenderTextL7HTTP(t *testing.T) {
+	pe := sampleEvidence()
+	r := httpRuleEvidence()
+	buf := new(bytes.Buffer)
+	require.NoError(t, renderText(buf, pe, []evidence.RuleEvidence{r}, 10, false))
+	out := buf.String()
+	assert.Contains(t, out, "L7:")
+	assert.Contains(t, out, "HTTP GET ^/api/v1/users$")
+}
+
+func TestRenderTextL7DNS(t *testing.T) {
+	pe := sampleEvidence()
+	r := dnsRuleEvidence()
+	buf := new(bytes.Buffer)
+	require.NoError(t, renderText(buf, pe, []evidence.RuleEvidence{r}, 10, false))
+	out := buf.String()
+	assert.Contains(t, out, "L7:")
+	assert.Contains(t, out, "DNS api.example.com")
+}
+
+func TestRenderTextL4OnlyNoL7Line(t *testing.T) {
+	// L4-only rule must not produce any "L7:" line — preserves v1.1 layout.
+	pe := sampleEvidence()
+	buf := new(bytes.Buffer)
+	require.NoError(t, renderText(buf, pe, pe.Rules, 10, false))
+	out := buf.String()
+	assert.NotContains(t, out, "L7:")
+}
+
+func TestRenderJSONL7HTTP(t *testing.T) {
+	pe := sampleEvidence()
+	r := httpRuleEvidence()
+	buf := new(bytes.Buffer)
+	require.NoError(t, renderJSON(buf, pe, []evidence.RuleEvidence{r}))
+	var got explainOutput
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &got))
+	require.Len(t, got.MatchedRules, 1)
+	require.NotNil(t, got.MatchedRules[0].L7)
+	assert.Equal(t, "http", got.MatchedRules[0].L7.Protocol)
+	assert.Equal(t, "GET", got.MatchedRules[0].L7.HTTPMethod)
+	assert.Equal(t, "^/api/v1/users$", got.MatchedRules[0].L7.HTTPPath)
+	// omitempty: dns_matchname must NOT be present in HTTP rule's JSON.
+	assert.NotContains(t, buf.String(), "dns_matchname")
+}
+
+func TestRenderJSONL4OnlyOmitsL7(t *testing.T) {
+	pe := sampleEvidence()
+	buf := new(bytes.Buffer)
+	require.NoError(t, renderJSON(buf, pe, pe.Rules))
+	// L4-only rule should omit l7 key entirely (omitempty pointer).
+	assert.NotContains(t, buf.String(), `"l7"`)
+}
+
+func TestRenderYAMLL7DNS(t *testing.T) {
+	pe := sampleEvidence()
+	r := dnsRuleEvidence()
+	buf := new(bytes.Buffer)
+	require.NoError(t, renderYAML(buf, pe, []evidence.RuleEvidence{r}))
+	out := buf.String()
+	assert.Contains(t, out, "l7:")
+	assert.Contains(t, out, "protocol: dns")
+	assert.Contains(t, out, "dns_matchname: api.example.com")
+}
+
 func TestRenderTextEmptyMatchListsAvailable(t *testing.T) {
 	buf := new(bytes.Buffer)
 	err := renderText(buf, sampleEvidence(), nil, 10, false)
