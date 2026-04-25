@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.7.0](https://github.com/SoulKyu/cpg/compare/v1.6.0...v1.7.0) (2026-04-25)
+
+
+### Features
+
+* **08-01:** implement HTTP L7 extraction primitives ([70a3e97](https://github.com/SoulKyu/cpg/commit/70a3e97d374182babb56f9eb31976e8a1aba9044))
+* **08-02:** wire HTTP L7 codegen into BuildPolicy (HTTP-01, HTTP-04) ([d3724cb](https://github.com/SoulKyu/cpg/commit/d3724cbf364a5569615aee6f55d6ec5a2fe1c31b))
+* **08-03:** pipeline L7 codegen + VIS-01 warning + evidence L7Ref ([92eded4](https://github.com/SoulKyu/cpg/commit/92eded418797110bcfe0a06aa6600dc1c7373af4))
+* **cli:** plumb --l7 + --no-l7-preflight (no-op codegen, Phase 8 lights up) ([3d7bee9](https://github.com/SoulKyu/cpg/commit/3d7bee94bd0de236ee2f465552f62e50ac2f72de))
+* **evidence:** bump schema v1 to v2 with optional L7Ref (EVID2-01) ([2389793](https://github.com/SoulKyu/cpg/commit/2389793f1d7b88b319c0769c9ecc35cba51e141e))
+* **explain:** --http-method, --http-path, --dns-pattern filters (L7CLI-02) ([546af15](https://github.com/SoulKyu/cpg/commit/546af15a2700036cbacc0ace95f3445ff63dcec6))
+* **explain:** render L7 attribution in text/JSON/YAML (L7CLI-03) ([595b584](https://github.com/SoulKyu/cpg/commit/595b5846ed72a32c0871447d81bd8cde70101a1e))
+* **hubble:** aggregator DNS counter + evidence DNS branch (DNS-01, VIS-01 gate) ([fef0971](https://github.com/SoulKyu/cpg/commit/fef0971483302421073ea37e6477c553a758296d))
+* **k8s:** L7 preflight checks for cilium-config + cilium-envoy with warn-and-proceed (VIS-04, VIS-05) ([5ab5556](https://github.com/SoulKyu/cpg/commit/5ab5556e472e0f6cdcccfa2a85f1a93101e581b2))
+* **policy:** extractDNSQuery + kube-dns companion injector (DNS-01, DNS-02) ([1013f6f](https://github.com/SoulKyu/cpg/commit/1013f6f268158e7eefb4f14e2f6e1dbad835f1d0))
+* **policy:** wire DNS L7 codegen into BuildPolicy with companion injector (DNS-01, DNS-02, DNS-03) ([a71f908](https://github.com/SoulKyu/cpg/commit/a71f90821b1ae1c6df99f5fbe156960745665ef4))
+
+
+### Bug Fixes
+
+* **policy:** preserve Rules in mergePortRules + sort L7 lists in normalizeRule + L7 discriminator on RuleKey (EVID2-02, EVID2-03, EVID2-04) ([615e527](https://github.com/SoulKyu/cpg/commit/615e527df413a7a74cc2b59ef61631b8e3284796))
+
 ## [1.6.0](https://github.com/SoulKyu/cpg/compare/v1.5.1...v1.6.0) (2026-04-24)
 
 
