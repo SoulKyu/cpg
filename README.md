@@ -348,27 +348,17 @@ evidence. For periodic batch jobs, capture across at least one period.
 
 ### Known v1.2 limitations
 
-- **No HTTP header / Host rules.** Header-based rules are intentionally
-  not generated to avoid leaking `Authorization` / `Cookie` / etc. into
-  committed YAML. If you genuinely need them, write them by hand.
-  (HTTP-05 anti-feature.)
-- **DNS literal `matchName` only.** v1.2 emits `matchName: api.example.com`
-  for each observed query. Wildcard inference (`*.example.com` from
-  `api.example.com`+`www.example.com`) is deferred to v1.3
-  (`--l7-fqdn-wildcard-depth`, DNS-FUT-01).
-- **DNS REFUSED denials are missed.** Cilium's DNS proxy surfaces
-  REFUSED queries as `Verdict_FORWARDED`, not `DROPPED`. v1.2 only
-  reads DROPPED. v1.3 adds `--include-l7-forwarded` (L7-FUT-01).
-- **Companion kube-dns selector hardcoded.** Every CNP with `toFQDNs`
-  carries a companion egress rule allowing UDP+TCP/53 to
-  `k8s-app=kube-dns` in `kube-system` (DNS-02). Cilium needs DNS
-  resolution to learn IPs for FQDN matching; without the companion,
-  ToFQDNs is unusable. Selector autodetection across CNI
-  distributions is deferred to v1.3 (DNS-FUT-02).
-- **No path / FQDN auto-collapse.** One rule per observed (method,
-  path) and one matchName per observed query. Path templating
-  (`/api/v1/users/[0-9]+`) deferred to v1.3 (`--l7-collapse-paths`,
-  HTTP-FUT-01).
+cpg v1.2 ships with a documented set of known limitations and edge cases — most are intentional trade-offs (e.g., no HTTP header rules to avoid secret leakage), a few are deferred to v1.3+. Read them **before deploying generated policies** to production:
+
+→ **[docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md)** — full list with workarounds and tracking IDs.
+
+Highlights worth knowing up front:
+
+- L7 visibility prerequisite — `--l7` requires Cilium Envoy proxy + per-workload visibility trigger; cpg cannot bootstrap it (limitation #1).
+- HTTP path explosion on REST APIs with IDs — one literal rule per observed `(method, path)`; no auto-collapse in v1.2 (limitation #2, `HTTP-FUT-01`).
+- Header-based rules never generated — anti-feature to prevent secret leakage (limitation #3).
+- DNS REFUSED denials are missed — `Verdict_FORWARDED` not yet supported (limitation #4, `L7-FUT-01`).
+- kube-dns companion selector hardcoded `k8s-app=kube-dns` — autodetect across CNI distributions deferred to v1.3 (limitation #6, `DNS-FUT-02`).
 
 ## Dry-run
 
