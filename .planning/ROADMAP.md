@@ -90,7 +90,7 @@ Scope locked to L7 HTTP + DNS generation only. `cpg apply`, policy consolidation
   5. The README documents the two-step workflow (L4 deploy → enable L7 visibility → re-run with `--l7`) and ships a copy-pasteable starter L7-visibility CNP snippet for bootstrapping a workload (VIS-02, VIS-03).
 **Plans**: 4 plans
 - [x] 09-01-PLAN.md — extractDNSQuery + ensureKubeDNSCompanion + builder DNS L7 codegen (DNS-01, DNS-02, DNS-03)
-- [ ] 09-02-PLAN.md — aggregator L7DNSCount + evidence DNS branch + pipeline DNS integration test (DNS-01, DNS-02)
+- [x] 09-02-PLAN.md — aggregator L7DNSCount + evidence DNS branch + pipeline DNS integration test (DNS-01, DNS-02)
 - [ ] 09-03-PLAN.md — cpg explain --http-method/--http-path/--dns-pattern filters + L7 rendering text/JSON/YAML (L7CLI-02, L7CLI-03)
 - [ ] 09-04-PLAN.md — README two-step workflow + starter L7-visibility CNP + l7_dns.jsonl fixture + e2e replay test (VIS-02, VIS-03, DNS-01..DNS-04)
 **UI hint**: no
