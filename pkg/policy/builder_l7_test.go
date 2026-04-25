@@ -336,3 +336,212 @@ func TestBuildPolicy_L7Enabled_NoL7RecordsAcrossAllFlows_ByteIdenticalToL7Disabl
 	off := normalizedYAML(t, pOff.Spec)
 	assert.Equal(t, string(off), string(on))
 }
+
+// withDNS attaches a Flow.L7.Dns record carrying the supplied query.
+func withDNS(f *flowpb.Flow, query string) *flowpb.Flow {
+	f.L7 = &flowpb.Layer7{
+		Record: &flowpb.Layer7_Dns{
+			Dns: &flowpb.DNS{Query: query},
+		},
+	}
+	return f
+}
+
+// mkDNSEgressFlow builds an egress UDP/53 flow from k8s:app=client to a
+// world-identity destination IP, carrying a DNS query record. Mirrors the
+// shape Hubble produces for DNS proxy denials.
+func mkDNSEgressFlow(query string) *flowpb.Flow {
+	f := testdata.WorldEgressTCPFlow(
+		[]string{"k8s:app=client"},
+		"default",
+		"10.96.0.10",
+		53,
+	)
+	// switch protocol to UDP/53 — DNS lookups are predominantly UDP
+	f.L4 = &flowpb.Layer4{
+		Protocol: &flowpb.Layer4_UDP{
+			UDP: &flowpb.UDP{DestinationPort: 53},
+		},
+	}
+	return withDNS(f, query)
+}
+
+// findEgressByFQDN locates the (first) egress rule whose ToFQDNs contains the
+// supplied matchName, returning nil when none match.
+func findEgressByFQDN(rules []api.EgressRule, name string) *api.EgressRule {
+	for i := range rules {
+		for _, sel := range rules[i].ToFQDNs {
+			if sel.MatchName == name {
+				return &rules[i]
+			}
+		}
+	}
+	return nil
+}
+
+// TestBuildPolicy_L7Enabled_DNS_SingleQuery asserts DNS-01 + DNS-02 + DNS-03:
+// one DNS-bearing egress flow produces a dedicated egress rule with toFQDNs
+// + paired toPorts.rules.dns.matchName, and the kube-dns companion lands in
+// the same CNP. No matchPattern is emitted anywhere.
+func TestBuildPolicy_L7Enabled_DNS_SingleQuery(t *testing.T) {
+	f := mkDNSEgressFlow("api.example.com.")
+
+	p, _ := policy.BuildPolicy("default", "client",
+		[]*flowpb.Flow{f}, nil,
+		policy.AttributionOptions{L7Enabled: true})
+	require.NotNil(t, p)
+
+	// Locate the FQDN-bearing rule.
+	fqdnRule := findEgressByFQDN(p.Spec.Egress, "api.example.com")
+	require.NotNil(t, fqdnRule, "expected egress rule with toFQDNs.matchName=api.example.com (trailing dot stripped); got egress=%+v", p.Spec.Egress)
+
+	// ToFQDNs entries must use literal MatchName only (DNS-03).
+	for _, sel := range fqdnRule.ToFQDNs {
+		assert.Empty(t, sel.MatchPattern, "DNS-03: ToFQDNs.MatchPattern must be empty")
+	}
+
+	// Paired toPorts.rules.dns.matchName mirrors the FQDN.
+	require.Len(t, fqdnRule.ToPorts, 1)
+	pr := fqdnRule.ToPorts[0]
+	require.NotNil(t, pr.Rules)
+	require.NotEmpty(t, pr.Rules.DNS)
+	dnsNames := make(map[string]bool)
+	for _, d := range pr.Rules.DNS {
+		assert.Empty(t, d.MatchPattern, "DNS-03: rules.dns.matchPattern must be empty")
+		dnsNames[d.MatchName] = true
+	}
+	assert.True(t, dnsNames["api.example.com"], "rules.dns must include matchName=api.example.com")
+
+	// DNS-02: companion rule present.
+	testdata.AssertHasKubeDNSCompanion(t, p)
+}
+
+// TestBuildPolicy_L7Enabled_DNS_MultipleQueries asserts that two distinct
+// DNS queries on the same source workload merge into a single FQDN-bearing
+// egress rule with both names listed (sorted), and the companion lands once.
+func TestBuildPolicy_L7Enabled_DNS_MultipleQueries(t *testing.T) {
+	f1 := mkDNSEgressFlow("api.example.com.")
+	f2 := mkDNSEgressFlow("www.example.org")
+
+	p, _ := policy.BuildPolicy("default", "client",
+		[]*flowpb.Flow{f1, f2}, nil,
+		policy.AttributionOptions{L7Enabled: true})
+	require.NotNil(t, p)
+
+	// Find the FQDN-bearing rule (either name should locate it).
+	fqdnRule := findEgressByFQDN(p.Spec.Egress, "api.example.com")
+	require.NotNil(t, fqdnRule)
+
+	got := make(map[string]bool)
+	for _, sel := range fqdnRule.ToFQDNs {
+		got[sel.MatchName] = true
+	}
+	assert.True(t, got["api.example.com"])
+	assert.True(t, got["www.example.org"])
+
+	// Companion present exactly once.
+	testdata.AssertHasKubeDNSCompanion(t, p)
+	companions := 0
+	for _, eg := range p.Spec.Egress {
+		for _, ep := range eg.ToEndpoints {
+			if ep.LabelSelector == nil {
+				continue
+			}
+			ml := ep.LabelSelector.MatchLabels
+			if ml["k8s-app"] == "kube-dns" || ml["any:k8s-app"] == "kube-dns" || ml["k8s:k8s-app"] == "kube-dns" {
+				companions++
+			}
+		}
+	}
+	assert.Equal(t, 1, companions, "exactly one kube-dns companion egress rule must be present")
+}
+
+// TestBuildPolicy_L7Disabled_DNSFlow_NoFQDN_NoCompanion locks DNS-04: a
+// DNS-bearing flow under L7Enabled=false must NOT produce toFQDNs and must
+// NOT trigger companion injection. Output is byte-identical to the same
+// flow with no L7 record at all.
+func TestBuildPolicy_L7Disabled_DNSFlow_NoFQDN_NoCompanion(t *testing.T) {
+	withDNS := mkDNSEgressFlow("api.example.com.")
+	withoutDNS := mkDNSEgressFlow("api.example.com.")
+	withoutDNS.L7 = nil
+
+	pWith, _ := policy.BuildPolicy("default", "client",
+		[]*flowpb.Flow{withDNS}, nil,
+		policy.AttributionOptions{L7Enabled: false})
+	pWithout, _ := policy.BuildPolicy("default", "client",
+		[]*flowpb.Flow{withoutDNS}, nil,
+		policy.AttributionOptions{L7Enabled: false})
+
+	// No toFQDNs and no kube-dns companion under L7Enabled=false.
+	for _, eg := range pWith.Spec.Egress {
+		assert.Empty(t, eg.ToFQDNs, "L7Enabled=false must not emit toFQDNs")
+		for _, ep := range eg.ToEndpoints {
+			if ep.LabelSelector == nil {
+				continue
+			}
+			for k, v := range ep.LabelSelector.MatchLabels {
+				if v == "kube-dns" {
+					t.Errorf("L7Enabled=false must not inject kube-dns companion; got label %s=%s", k, v)
+				}
+			}
+		}
+	}
+
+	// Byte-identical output.
+	eq, err := policy.PoliciesEquivalent(pWith, pWithout)
+	require.NoError(t, err)
+	assert.True(t, eq, "L7Enabled=false: DNS-bearing input must be byte-identical to L7-stripped input (DNS-04)")
+}
+
+// TestBuildPolicy_L7Enabled_DNS_EmptyQuery asserts that an empty DNS query
+// drops the entry — no toFQDNs, no companion injection from that flow alone.
+func TestBuildPolicy_L7Enabled_DNS_EmptyQuery(t *testing.T) {
+	f := mkDNSEgressFlow("")
+
+	p, _ := policy.BuildPolicy("default", "client",
+		[]*flowpb.Flow{f}, nil,
+		policy.AttributionOptions{L7Enabled: true})
+	require.NotNil(t, p)
+
+	for _, eg := range p.Spec.Egress {
+		assert.Empty(t, eg.ToFQDNs, "empty query must not produce toFQDNs")
+	}
+	// No FQDN → no companion rule injected.
+	for _, eg := range p.Spec.Egress {
+		for _, ep := range eg.ToEndpoints {
+			if ep.LabelSelector == nil {
+				continue
+			}
+			for _, v := range ep.LabelSelector.MatchLabels {
+				assert.NotEqual(t, "kube-dns", v, "no FQDN observed → no kube-dns companion")
+			}
+		}
+	}
+}
+
+// TestBuildPolicy_L7Enabled_DNS_RuleKeyDiscriminator asserts EVID2-02 for DNS:
+// two distinct DNS queries on the same egress peer/port produce 2 distinct
+// attribution entries with distinct L7Discriminator values.
+func TestBuildPolicy_L7Enabled_DNS_RuleKeyDiscriminator(t *testing.T) {
+	fA := mkDNSEgressFlow("a.example.com")
+	fB := mkDNSEgressFlow("b.example.com")
+
+	_, attrib := policy.BuildPolicy("default", "client",
+		[]*flowpb.Flow{fA, fB}, nil,
+		policy.AttributionOptions{L7Enabled: true, MaxSamples: 1})
+
+	dnsAttribs := 0
+	seen := map[string]bool{}
+	for _, a := range attrib {
+		if a.Key.L7 == nil || a.Key.L7.Protocol != "dns" {
+			continue
+		}
+		dnsAttribs++
+		seen[a.Key.L7.DNSMatchName] = true
+		// String form should embed "dns=<name>" (EVID2-02 + dns discriminator format).
+		assert.Contains(t, a.Key.String(), "dns="+a.Key.L7.DNSMatchName)
+	}
+	assert.Equal(t, 2, dnsAttribs, "two distinct DNS queries must produce 2 DNS attribution entries")
+	assert.True(t, seen["a.example.com"])
+	assert.True(t, seen["b.example.com"])
+}

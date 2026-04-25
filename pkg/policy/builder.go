@@ -129,6 +129,11 @@ func BuildPolicy(namespace, workload string, flows []*flowpb.Flow, tracker FlowT
 	cnp.Spec.Ingress = ingressRules
 	cnp.Spec.Egress = egressRules
 
+	// DNS-02: enforce companion kube-dns rule presence on every CNP that
+	// carries toFQDNs. Idempotent and a no-op when no toFQDNs are present,
+	// so this call is safe regardless of L7Enabled.
+	ensureKubeDNSCompanion(cnp)
+
 	var attrib []RuleAttribution
 	attrib = append(attrib, ingressAttrib...)
 	attrib = append(attrib, egressAttrib...)
@@ -209,6 +214,11 @@ type peerRules struct {
 	// httpSeen dedups within a bucket so two flows reporting GET /a on the
 	// same (port, proto) collapse into a single PortRuleHTTP entry.
 	httpSeen map[string]map[string]struct{}
+	// dnsNames collects DNS matchName literals observed on egress flows on
+	// this peer bucket when L7Enabled. Order is preserved via dnsOrder for
+	// deterministic emission; dnsNames doubles as the dedup set.
+	dnsNames map[string]struct{}
+	dnsOrder []string
 }
 
 func newPeerRules() *peerRules {
@@ -217,7 +227,22 @@ func newPeerRules() *peerRules {
 		attrib:    make(map[string]*RuleAttribution),
 		httpRules: make(map[string][]api.PortRuleHTTP),
 		httpSeen:  make(map[string]map[string]struct{}),
+		dnsNames:  make(map[string]struct{}),
 	}
+}
+
+// addDNSName records a DNS matchName observation for this peer bucket.
+// First-observation order is preserved via dnsOrder; subsequent duplicates
+// collapse into a single entry.
+func (pr *peerRules) addDNSName(name string) {
+	if name == "" {
+		return
+	}
+	if _, dup := pr.dnsNames[name]; dup {
+		return
+	}
+	pr.dnsNames[name] = struct{}{}
+	pr.dnsOrder = append(pr.dnsOrder, name)
 }
 
 // addHTTPRules appends rules to the bucket's httpRules slice for the given
@@ -427,20 +452,39 @@ func recordL7(pr *peerRules, f *flowpb.Flow, fp *flowProto, direction string, pe
 	if !opts.L7Enabled {
 		return false
 	}
-	if f.GetL7().GetHttp() == nil {
-		return false
+
+	// HTTP path: any L7 record whose Http sub-record is non-nil produces
+	// PortRuleHTTP entries on the matching L4 port (Phase 8).
+	if f.GetL7().GetHttp() != nil {
+		rules := extractHTTPRules(f)
+		if len(rules) == 0 {
+			return false
+		}
+		portKey := strconv.FormatUint(uint64(fp.port), 10) + "/" + string(fp.proto)
+		pr.addHTTPRules(portKey, rules)
+		for _, r := range rules {
+			l7 := &L7Discriminator{Protocol: "http", HTTPMethod: r.Method, HTTPPath: r.Path}
+			pr.recordAttribution(ruleKeyForL7(direction, peer, fp, l7), f, opts.MaxSamples)
+		}
+		return true
 	}
-	rules := extractHTTPRules(f)
-	if len(rules) == 0 {
-		return false
-	}
-	portKey := strconv.FormatUint(uint64(fp.port), 10) + "/" + string(fp.proto)
-	pr.addHTTPRules(portKey, rules)
-	for _, r := range rules {
-		l7 := &L7Discriminator{Protocol: "http", HTTPMethod: r.Method, HTTPPath: r.Path}
+
+	// DNS path (Phase 9): only meaningful on egress — DNS proxy denials
+	// always surface as egress drops. The peer bucket records the matchName
+	// literal; buildEgressRules below emits a dedicated FQDN egress rule
+	// per bucket whose dnsOrder is non-empty.
+	if direction == "egress" && f.GetL7().GetDns() != nil {
+		name, ok := extractDNSQuery(f)
+		if !ok {
+			return false
+		}
+		pr.addDNSName(name)
+		l7 := &L7Discriminator{Protocol: "dns", DNSMatchName: name}
 		pr.recordAttribution(ruleKeyForL7(direction, peer, fp, l7), f, opts.MaxSamples)
+		return true
 	}
-	return true
+
+	return false
 }
 
 func buildIngressRules(flows []*flowpb.Flow, policyNamespace string, tracker FlowTracker, opts AttributionOptions) ([]api.IngressRule, []RuleAttribution) {
@@ -500,7 +544,66 @@ func buildEgressRules(flows []*flowpb.Flow, policyNamespace string, tracker Flow
 			attrib = append(attrib, *a)
 		}
 	}
+
+	// DNS-01: emit dedicated FQDN egress rules. ToFQDNs is mutually
+	// exclusive with ToEndpoints/ToCIDR/ToEntities in the same EgressRule
+	// per Cilium API, so each bucket's collected DNS names produce a
+	// SEPARATE EgressRule whose only To* field is ToFQDNs. Iteration
+	// follows the same deterministic order as the L4 emission above so
+	// repeated runs produce byte-stable YAML.
+	rules = append(rules, fqdnEgressRulesFrom(b)...)
+
 	return rules, attrib
+}
+
+// fqdnEgressRulesFrom collects per-bucket DNS observations and emits one
+// dedicated FQDN egress rule per non-empty bucket. Names are sorted to keep
+// YAML output byte-stable. DNS-03 invariant: only matchName literals are
+// emitted — never matchPattern.
+func fqdnEgressRulesFrom(b *peerBuckets) []api.EgressRule {
+	emit := func(pr *peerRules) *api.EgressRule {
+		if len(pr.dnsOrder) == 0 {
+			return nil
+		}
+		names := make([]string, len(pr.dnsOrder))
+		copy(names, pr.dnsOrder)
+		sort.Strings(names)
+
+		fqdns := make(api.FQDNSelectorSlice, len(names))
+		dnsRules := make([]api.PortRuleDNS, len(names))
+		for i, n := range names {
+			fqdns[i] = api.FQDNSelector{MatchName: n}
+			dnsRules[i] = api.PortRuleDNS{MatchName: n}
+		}
+		return &api.EgressRule{
+			ToFQDNs: fqdns,
+			ToPorts: api.PortRules{{
+				Ports: []api.PortProtocol{
+					{Port: "53", Protocol: api.ProtoUDP},
+					{Port: "53", Protocol: api.ProtoTCP},
+				},
+				Rules: &api.L7Rules{DNS: dnsRules},
+			}},
+		}
+	}
+
+	var out []api.EgressRule
+	for _, entity := range b.entityOrder {
+		if r := emit(b.entities[entity]); r != nil {
+			out = append(out, *r)
+		}
+	}
+	for _, key := range b.cidrOrder {
+		if r := emit(b.cidrs[key].peerRules); r != nil {
+			out = append(out, *r)
+		}
+	}
+	for _, key := range b.peerOrder {
+		if r := emit(b.peers[key].peerRules); r != nil {
+			out = append(out, *r)
+		}
+	}
+	return out
 }
 
 func ingressRulesFrom(common api.IngressCommonRule, ports []api.PortProtocol, icmps []api.ICMPField, httpByPort map[string][]api.PortRuleHTTP) []api.IngressRule {
