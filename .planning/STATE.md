@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: L7 Policies (HTTP + DNS)
 status: completed
-stopped_at: Completed 09-02-PLAN.md
-last_updated: "2026-04-25T11:42:34.546Z"
-last_activity: "2026-04-25 -- Plan 09-01 complete: extractDNSQuery + ensureKubeDNSCompanion + BuildPolicy DNS branch wired; DNS-01/02/03 closed; 299 tests pass across 9 packages."
+stopped_at: Completed 09-03-PLAN.md
+last_updated: "2026-04-25T11:48:25.081Z"
+last_activity: "2026-04-25 -- Plan 09-02 complete: aggregator DNS counter + evidence_writer DNS branch + end-to-end pipeline integration test; 304 tests pass across 9 packages."
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 12
-  completed_plans: 10
+  completed_plans: 11
 ---
 
 # Project State
@@ -24,12 +24,12 @@ See: .planning/PROJECT.md (updated 2026-04-25)
 
 ## Current Position
 
-Phase: 9 (DNS L7 generation + docs) 🚧 in progress (2/4 plans)
-Plan: 09-02 ✅ complete → next: 09-03
-Status: Phase 9 progressing. v1.2 milestone 2/3 phases done; phase 9 plans 1-2 complete (policy-layer DNS codegen + hubble integration).
-Last activity: 2026-04-25 -- Plan 09-02 complete: aggregator DNS counter + evidence_writer DNS branch + end-to-end pipeline integration test; 304 tests pass across 9 packages.
+Phase: 9 (DNS L7 generation + docs) 🚧 in progress (3/4 plans)
+Plan: 09-03 ✅ complete → next: 09-04
+Status: Phase 9 progressing. v1.2 milestone 2/3 phases done; phase 9 plans 1-3 complete (policy-layer DNS codegen, hubble integration, explain L7 filters + rendering).
+Last activity: 2026-04-25 -- Plan 09-03 complete: cpg explain --http-method/--http-path/--dns-pattern filters + L7 attribution rendering in text/JSON/YAML; L7CLI-02 + L7CLI-03 closed; 317 tests pass across 9 packages.
 
-Progress: v1.0 ✅ · v1.1 ✅ · v1.2 🚧 phases 7 ✅ · 8 ✅ · 9 🚧 (2/4)
+Progress: v1.0 ✅ · v1.1 ✅ · v1.2 🚧 phases 7 ✅ · 8 ✅ · 9 🚧 (3/4)
 
 ## Performance Metrics
 
@@ -65,6 +65,7 @@ Progress: v1.0 ✅ · v1.1 ✅ · v1.2 🚧 phases 7 ✅ · 8 ✅ · 9 🚧 (2/4
 | Phase 08 P04 | 12m | 2 tasks | 3 files |
 | Phase 09 P01 | 25m | 2 tasks | 7 files |
 | Phase 09 P02 | 5m | 2 tasks | 6 files |
+| Phase 09 P03 | 3m | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -101,6 +102,7 @@ Recent decisions affecting v1.2 work (research-confirmed 2026-04-25):
 - [Phase 09]: DNS-01/02/03: extractDNSQuery + ensureKubeDNSCompanion enforce literal matchName + idempotent kube-dns companion injection at BuildPolicy post-process; ToFQDNs in dedicated EgressRule per Cilium API mutual exclusivity
 - [Phase 09]: Aggregator DNS counter increments before keyFromFlow skip check (mirrors HTTP) — diagnostic counter must reflect every DNS observation regardless of bucket eligibility or L7Enabled gate.
 - [Phase 09]: evidenceWriter.convert leaves re.L7 nil for unrecognized L7.Protocol values — defensive, keeps malformed Keys off disk.
+- [Phase 09]: Plan 09-03: cpg explain L7 filters (--http-method/--http-path/--dns-pattern) literal exact match, AND-combined; any L7 filter set drops L4-only rules. Long-only flag form. JSON/YAML pass-through via existing schema v2 L7Ref tags.
 
 ### Pending Todos
 
@@ -115,6 +117,6 @@ None open. Research-flagged items (deferred to phase planning):
 
 ## Session Continuity
 
-Last session: 2026-04-25T11:42:34.538Z
-Stopped at: Completed 09-02-PLAN.md
+Last session: 2026-04-25T11:48:25.075Z
+Stopped at: Completed 09-03-PLAN.md
 Resume: Run `/gsd:plan-phase 9` to start Phase 9 (DNS L7 generation + docs).

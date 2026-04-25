@@ -42,8 +42,8 @@ Each requirement maps to exactly one phase. Traceability table at bottom.
 ### CLI Surface
 
 - [x] **L7CLI-01**: `cpg generate` and `cpg replay` accept `--l7` (default OFF). When unset, behavior is byte-identical to v1.1 for the same input.
-- [ ] **L7CLI-02**: `cpg explain` accepts three new exact-match filter flags: `--http-method`, `--http-path`, `--dns-pattern`. Regex / glob filters are deferred.
-- [ ] **L7CLI-03**: `cpg explain` renders L7 attribution per rule when present in the evidence: HTTP method + path, or DNS matchName. JSON / YAML formats include the L7 sub-object; text format prints a single indented line per L7 entry.
+- [x] **L7CLI-02**: `cpg explain` accepts three new exact-match filter flags: `--http-method`, `--http-path`, `--dns-pattern`. Regex / glob filters are deferred.
+- [x] **L7CLI-03**: `cpg explain` renders L7 attribution per rule when present in the evidence: HTTP method + path, or DNS matchName. JSON / YAML formats include the L7 sub-object; text format prints a single indented line per L7 entry.
 
 ## Future Requirements (deferred)
 
