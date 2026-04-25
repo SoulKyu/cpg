@@ -1,10 +1,19 @@
 package main
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
 )
 
 func TestGenerateFlags_Validate(t *testing.T) {
@@ -126,4 +135,120 @@ func TestParseGenerateFlags_Overrides(t *testing.T) {
 	err := f.validate()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "mutually exclusive")
+}
+
+// TestParseGenerateFlags_L7 covers the L7CLI-01 + VIS-06 flag parsing surface
+// on `cpg generate`: --l7 and --no-l7-preflight default to false, set to true
+// independently, and both can be combined.
+func TestParseGenerateFlags_L7(t *testing.T) {
+	t.Run("defaults are false", func(t *testing.T) {
+		cmd := newGenerateCmd()
+		f := parseGenerateFlags(cmd)
+		assert.False(t, f.l7)
+		assert.False(t, f.noL7Preflight)
+	})
+
+	t.Run("--l7 alone", func(t *testing.T) {
+		cmd := newGenerateCmd()
+		require.NoError(t, cmd.Flags().Set("l7", "true"))
+		f := parseGenerateFlags(cmd)
+		assert.True(t, f.l7)
+		assert.False(t, f.noL7Preflight)
+	})
+
+	t.Run("--no-l7-preflight alone", func(t *testing.T) {
+		cmd := newGenerateCmd()
+		require.NoError(t, cmd.Flags().Set("no-l7-preflight", "true"))
+		f := parseGenerateFlags(cmd)
+		assert.False(t, f.l7)
+		assert.True(t, f.noL7Preflight)
+	})
+
+	t.Run("--l7 + --no-l7-preflight", func(t *testing.T) {
+		cmd := newGenerateCmd()
+		require.NoError(t, cmd.Flags().Set("l7", "true"))
+		require.NoError(t, cmd.Flags().Set("no-l7-preflight", "true"))
+		f := parseGenerateFlags(cmd)
+		assert.True(t, f.l7)
+		assert.True(t, f.noL7Preflight)
+	})
+}
+
+// observedLoggerForTest builds a zap logger that captures entries at WarnLevel+
+// so tests can assert on RunL7Preflight's emitted warnings.
+func observedLoggerForTest() (*zap.Logger, *observer.ObservedLogs) {
+	core, logs := observer.New(zapcore.WarnLevel)
+	return zap.New(core), logs
+}
+
+// withFakeL7ClientFactory swaps the package-level l7ClientFactory for the
+// duration of a test. The substitute returns the supplied fake clientset
+// regardless of the *rest.Config it is handed.
+func withFakeL7ClientFactory(t *testing.T, client kubernetes.Interface) {
+	t.Helper()
+	prev := l7ClientFactory
+	l7ClientFactory = func(*rest.Config) (kubernetes.Interface, error) {
+		return client, nil
+	}
+	t.Cleanup(func() { l7ClientFactory = prev })
+}
+
+// TestMaybeRunL7Preflight_Gating asserts the gate matrix:
+//   - --l7 unset                     → preflight NOT invoked
+//   - --l7 set, --no-l7-preflight    → preflight NOT invoked (VIS-06 wins)
+//   - --l7 set, no skip flag         → preflight INVOKED (VIS-04 warning visible)
+func TestMaybeRunL7Preflight_Gating(t *testing.T) {
+	// Misconfigured cilium-config: enable-l7-proxy is "false" → triggers VIS-04 warning.
+	misconfigured := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "cilium-config", Namespace: "kube-system"},
+		Data:       map[string]string{"enable-l7-proxy": "false"},
+	}
+
+	cases := []struct {
+		name           string
+		l7Enabled      bool
+		noPreflight    bool
+		wantWarnSubstr string // empty → expect no warnings at all
+	}{
+		{name: "l7=false noPreflight=false → skipped", l7Enabled: false, noPreflight: false, wantWarnSubstr: ""},
+		{name: "l7=false noPreflight=true  → skipped", l7Enabled: false, noPreflight: true, wantWarnSubstr: ""},
+		{name: "l7=true  noPreflight=true  → skipped (VIS-06 wins)", l7Enabled: true, noPreflight: true, wantWarnSubstr: ""},
+		{name: "l7=true  noPreflight=false → invoked (VIS-04 warning)", l7Enabled: true, noPreflight: false, wantWarnSubstr: "enable-l7-proxy"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := fake.NewSimpleClientset(misconfigured)
+			withFakeL7ClientFactory(t, client)
+
+			lg, logs := observedLoggerForTest()
+			// kubeConfig is never nil-loaded in this path because the factory
+			// short-circuits — but the gate still calls LoadKubeConfig when
+			// kubeConfig is nil. Pass an empty *rest.Config to avoid that.
+			maybeRunL7Preflight(context.Background(), &rest.Config{}, tc.l7Enabled, tc.noPreflight, lg)
+
+			if tc.wantWarnSubstr == "" {
+				assert.Equal(t, 0, logs.Len(), "no warnings expected")
+				return
+			}
+			require.Greater(t, logs.Len(), 0, "expected at least one warning")
+			joined := ""
+			for _, e := range logs.All() {
+				joined += e.Message + "\n"
+			}
+			assert.Contains(t, joined, tc.wantWarnSubstr)
+		})
+	}
+}
+
+// TestReplayCmd_RejectsNoL7PreflightFlag asserts that --no-l7-preflight is
+// generate-only. Cobra surfaces unknown flags via SetArgs+Execute.
+func TestReplayCmd_RejectsNoL7PreflightFlag(t *testing.T) {
+	cmd := newReplayCmd()
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	cmd.SetArgs([]string{"--no-l7-preflight", "../../testdata/flows/small.jsonl"})
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no-l7-preflight")
 }

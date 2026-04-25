@@ -370,3 +370,14 @@ func TestClusterDedup_SkipsMatchingPolicy(t *testing.T) {
 	_, err = os.Stat(serverPolicy)
 	assert.True(t, os.IsNotExist(err), "policy should not be written when it matches cluster state")
 }
+
+// TestPipelineConfig_L7EnabledFieldExists is a compile-time + zero-value
+// guardrail confirming PipelineConfig carries the L7Enabled bool field
+// introduced in plan 07-04. The field is a no-op consumer in Phase 7;
+// Phase 8 (HTTP) and Phase 9 (DNS) will wire actual codegen behavior.
+func TestPipelineConfig_L7EnabledFieldExists(t *testing.T) {
+	cfg := PipelineConfig{L7Enabled: true}
+	assert.True(t, cfg.L7Enabled)
+	zero := PipelineConfig{}
+	assert.False(t, zero.L7Enabled, "zero value must default to false")
+}
