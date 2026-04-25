@@ -120,4 +120,10 @@ type RuleAttribution struct {
 // returned slice is nil.
 type AttributionOptions struct {
 	MaxSamples int
+	// L7Enabled gates the HTTP L7 codegen branch in BuildPolicy. When true,
+	// flows carrying Flow.L7.Http records produce toPorts.rules.http entries
+	// on the matching L4 PortRule. When false (default), L7 records on flows
+	// are ignored entirely — output is byte-identical to v1.1 for any input
+	// (HTTP-01 / HTTP-04 gating, byte-stability invariant).
+	L7Enabled bool
 }
