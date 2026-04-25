@@ -1,499 +1,332 @@
-# Architecture Patterns
+# Architecture Research — v1.2 L7 Policies (HTTP + DNS)
 
-**Domain:** L7 policy generation and cluster apply for existing Cilium Policy Generator
-**Researched:** 2026-03-09
+**Domain:** Extend existing CPG (Cilium Policy Generator) to emit L7 HTTP and DNS rules
+**Researched:** 2026-04-25
+**Confidence:** HIGH (codebase analysis) / MEDIUM (Cilium API surface — verified in archived research)
+**Scope discipline:** L7-only. `cpg apply` deferred to v1.3 (excluded here).
 
-## Recommended Architecture
+## Guiding Principle: Extend, Don't Restructure
 
-### Design Principle: Extend, Don't Restructure
+The v1.1 codebase is well-factored: the streaming pipeline (`hubble.client → aggregator → BuildPolicy → Writer/EvidenceWriter`) is layer-agnostic. L7 enrichment lives where flow→rule conversion happens (`pkg/policy/builder.go`). Pipeline, aggregation, output, and dedup remain structurally unchanged — they only learn to carry/compare richer `PortRule` payloads.
 
-The existing architecture is well-factored. L7 support and `cpg apply` integrate as extensions to existing components, not rewrites. The key insight: L7 rules attach to existing `PortRule.Rules` (the `L7Rules` field), so L7 data enriches the same ingress/egress rules the builder already produces.
+The previous archived research (2026-03-09) bundled L7 + apply. Re-evaluating for L7-only: the build order shrinks from 13 steps to 9, FQDN-related work splits cleanly from HTTP, and the `Apply` phase disappears. No architectural decision from the archive is invalidated.
 
-### Component Map (existing + new)
+---
+
+## System Overview (Where L7 Plugs In)
 
 ```
-                    Hubble gRPC Stream
-                          |
-                          v
-              +--------------------------+
-              |  pkg/hubble/client       |  (existing, modify: request L7 flows)
-              |  StreamDroppedFlows      |
-              +------------+-------------+
-                           |
-                           v
-              +--------------------------+
-              |  pkg/hubble/aggregator   |  (existing, no changes needed)
-              |  AggKey bucketing        |
-              +------------+-------------+
-                           |
-                           v
-              +--------------------------+
-              |  pkg/policy/builder      |  (existing, MODIFY: add L7 rule building)
-              |  BuildPolicy             |
-              |  + buildL7HTTP()         |  <- NEW logic in existing file
-              |  + buildL7DNS()          |  <- NEW logic in existing file
-              +------------+-------------+
-                           |
-                           v
-              +--------------------------+
-              |  pkg/policy/dedup        |  (existing, MODIFY: normalize L7Rules)
-              |  PoliciesEquivalent      |
-              +------------+-------------+
-                           |
-                           v
-              +--------------------------+
-              |  pkg/policy/merge        |  (existing, MODIFY: merge L7Rules)
-              |  MergePolicy             |
-              +------------+-------------+
-                           |
-                           v
-              +--------------------------+
-              |  pkg/output/writer       |  (existing, no changes needed)
-              +--------------------------+
-
-
-              +--------------------------+
-              |  cmd/cpg/apply.go        |  <- NEW command file
-              |  newApplyCmd()           |
-              +------------+-------------+
-                           |
-                           v
-              +--------------------------+
-              |  pkg/k8s/apply.go        |  <- NEW file in existing package
-              |  ApplyPolicies()         |
-              |  DryRunPolicies()        |
-              +--------------------------+
+                       Hubble gRPC / jsonpb replay
+                                    │
+                                    ▼
+                ┌───────────────────────────────────┐
+                │ pkg/hubble/client (UNCHANGED)     │
+                │ StreamDroppedFlows                │
+                │   → flow filter already requests  │
+                │     full Flow proto, L7 already   │
+                │     present when emitted          │
+                └─────────────┬─────────────────────┘
+                              │ *flowpb.Flow
+                              ▼
+                ┌───────────────────────────────────┐
+                │ pkg/hubble/aggregator (UNCHANGED) │
+                │ AggKey{Namespace, Workload}       │
+                │   → L7 flows hit the same bucket  │
+                │     as their L4 counterparts      │
+                └─────────────┬─────────────────────┘
+                              │ flush → []*Flow
+                              ▼
+                ┌───────────────────────────────────┐
+                │ pkg/policy/BuildPolicy  (MODIFY)  │
+                │  ├── extractProto (UNCHANGED)     │
+                │  ├── extractL7 (NEW, l7.go)       │
+                │  ├── peerRules (EXTENDED)         │
+                │  │     +httpByPort                │
+                │  │     +dnsByPort                 │
+                │  └── fqdnEgress (NEW path)        │
+                │      isolated EgressRule(s)       │
+                └─────────────┬─────────────────────┘
+                              │ PolicyEvent
+                              ▼
+                  ┌───────────┴───────────┐
+                  ▼                       ▼
+        ┌──────────────────┐   ┌────────────────────┐
+        │ output.Writer    │   │ evidence.Writer    │
+        │ (modify dedup    │   │ (schema bump v1→v2 │
+        │  comparator;     │   │  additive L7 fields)│
+        │  YAML marshal    │   └────────────────────┘
+        │  works as-is)    │
+        └──────────────────┘
+                  │
+                  ▼
+        ┌──────────────────┐
+        │ pkg/policy/dedup │  PoliciesEquivalent
+        │   normalizeRule  │  (MODIFY: sort L7 lists)
+        ├──────────────────┤
+        │ pkg/policy/merge │  mergePortRules
+        │   (MODIFY: merge │  (extend to merge Rules)
+        │   L7 + match     │
+        │   FQDN egress)   │
+        ├──────────────────┤
+        │ pkg/k8s/cluster  │  cluster dedup uses
+        │   (UNCHANGED —   │  PoliciesEquivalent →
+        │   gets L7 dedup  │  inherits fix
+        │   for free)      │
+        └──────────────────┘
 ```
 
-### Component Boundaries
+Legend: UNCHANGED, MODIFY (in-place edits), NEW (new file/path).
 
-| Component | Responsibility | Status | Communicates With |
-|-----------|---------------|--------|-------------------|
-| `pkg/hubble/client` | gRPC stream with L7 flow types | MODIFY | aggregator (via flow channel) |
-| `pkg/hubble/aggregator` | Bucket flows by namespace+workload | NO CHANGE | builder (via flush) |
-| `pkg/hubble/pipeline` | Orchestrate stream-to-disk | NO CHANGE | all stages |
-| `pkg/policy/builder` | Convert flows to CNP with L4+L7 rules | MODIFY | labels pkg |
-| `pkg/policy/dedup` | Normalize and compare policies | MODIFY | builder output |
-| `pkg/policy/merge` | Merge rules into existing policies | MODIFY | writer |
-| `pkg/output/writer` | Write YAML to disk | NO CHANGE | merge, dedup |
-| `pkg/k8s/apply` | Apply/dry-run policies to cluster | NEW | Cilium clientset |
-| `cmd/cpg/apply.go` | CLI command for apply | NEW | k8s/apply, output/reader |
+---
 
-## Integration Details
+## Q1. Where L7 Rule Extraction Lives
 
-### 1. L7 HTTP Flow Detection and Rule Building
+**Decision:** New file `pkg/policy/l7.go` — same package, dedicated translation unit.
 
-**Where:** `pkg/policy/builder.go` -- modify `buildIngressRules()` and `buildEgressRules()`
+**Rationale:**
+- `BuildPolicy` signature stays untouched (still `(namespace, workload, flows, tracker, opts) → (*CNP, []RuleAttribution)`).
+- `builder.go` is already 494 lines; HTTP path extraction, header selection, DNS query normalization, and FQDN egress assembly add ~200 lines. A separate file improves readability without crossing a package boundary (avoids exporting internals like `flowProto`, `peerRules`).
+- Same package = unexported helpers stay private; `peerRules` can grow new fields without making them public.
 
-**How it works:** Hubble flows with `f.L7 != nil && f.L7.Type == L7FlowType_HTTP` carry HTTP metadata. The builder must detect these flows and attach `L7Rules` to the corresponding `PortRule`.
+**File contents (`pkg/policy/l7.go`):**
+- `extractHTTP(f *flowpb.Flow) *api.PortRuleHTTP` — pure function (nil if no HTTP).
+- `extractDNSQuery(f *flowpb.Flow) string` — request-only, trimmed.
+- `httpRuleKey(r api.PortRuleHTTP) string` — dedup key (`method|path|headers-hash`).
+- `extractPathFromURL(raw string) string` — URL → regex-escaped path.
+- `buildFQDNEgressRules(flows []*flowpb.Flow, policyNS string, opts) ([]api.EgressRule, []RuleAttribution)` — separate codepath because `ToFQDNs` is mutually exclusive with `ToEndpoints`/`ToCIDR` in a single rule.
 
-**Flow data mapping (Hubble -> Cilium policy API):**
+**Touched in `builder.go`:**
+- `peerRules` struct gains two maps (see Q2).
+- `groupFlows` calls `extractHTTP` / `extractDNSQuery` after `extractProto` succeeds and stores results on the bucket.
+- `ingressRulesFrom` / `egressRulesFrom` learn to attach `*api.L7Rules` to `PortRule` when the bucket carries L7 data for that port.
+- `buildEgressRules` post-processes DNS-only flows to produce `buildFQDNEgressRules` output appended to the regular egress slice.
 
-| Hubble `flow.L7.Http` field | Cilium `api.PortRuleHTTP` field | Notes |
-|---|---|---|
-| `Method` (string) | `Method` (string) | Direct mapping, e.g. "GET" |
-| `Url` (string) | `Path` (string) | Extract path from URL, regex-escape |
-| `Headers` (`[]*HTTPHeader`) | `HeaderMatches` (`[]HeaderMatch`) | Selective: only common auth/routing headers |
+---
 
-**Key design decision:** The `PortRule` struct already has a `Rules *L7Rules` field. Currently cpg creates `PortRule{Ports: []PortProtocol{...}}` with `Rules` left nil. For L7 flows, populate `Rules`:
+## Q2. Aggregation Key — Stays the Same
+
+**Decision:** Do NOT extend `AggKey`. L7 lives one level deeper, inside the bucket.
+
+**Why:** The aggregator's job is "which CNP does this flow belong to?" — answered by `(namespace, workload)`. L7 is a property of a *rule* inside that CNP, not of the policy itself. Adding `port` or `protocol` to `AggKey` would shatter buckets and produce one CNP per port — the opposite of what we want.
+
+**Where L7 keying lives instead:** inside `peerRules` (per-bucket), keyed by port+proto.
 
 ```go
-portRule := api.PortRule{
-    Ports: []api.PortProtocol{{Port: port, Protocol: proto}},
-    Rules: &api.L7Rules{
-        HTTP: []api.PortRuleHTTP{
-            {Method: http.Method, Path: extractPath(http.Url)},
-        },
-    },
+// peerRules (extended). All new fields zero-valued for non-L7 flows → backward compat.
+type peerRules struct {
+    ports       []api.PortProtocol
+    icmpFields  []api.ICMPField
+    seen        map[string]struct{}              // port/proto dedup (existing)
+    attrib      map[string]*RuleAttribution      // existing
+
+    // NEW — L7 enrichment, indexed by port/proto string ("80/TCP", "53/UDP")
+    httpRules   map[string][]api.PortRuleHTTP    // port/proto → HTTP rules
+    httpSeen    map[string]map[string]struct{}   // port/proto → method+path dedup
+    dnsRules    map[string][]api.PortRuleDNS     // port/proto → DNS visibility rules
+    dnsSeen     map[string]map[string]struct{}   // port/proto → matchPattern dedup
 }
 ```
 
-**Integration point in existing code:** The `peerPorts` struct (used inside `buildIngressRules` and `buildEgressRules`) currently tracks `ports []api.PortProtocol` and dedup via `seen map[string]struct{}`. This needs extension:
+When `addFlow` runs, it now also receives optional `*api.PortRuleHTTP` / DNS query. If present and the port/proto matches, it appends to `httpRules[key]` (dedup via `httpSeen[key]`).
 
-- Change `peerPorts` to track `portRules map[string]*portAccumulator` keyed by `port/proto`
-- Each accumulator collects L7 HTTP rules for that port
-- Dedup key for L7 becomes `port/proto/method/path`
+**FQDN egress rules** are separate: they are not enrichments of an existing port-rule, they are *new EgressRule* entries (`ToFQDNs` is incompatible with `ToEndpoints`/`ToCIDR`). They live in a parallel slice on `peerBuckets` (or as a return value from `buildFQDNEgressRules`) and are appended after the loop in `buildEgressRules`.
 
-**Refactoring approach:** Extract a `portAccumulator` type that accumulates both L4-only and L7-enriched port rules per peer. This keeps `buildIngressRules`/`buildEgressRules` clean while adding L7 support.
+---
 
-### 2. L7 DNS Flow Detection and FQDN Rule Building
+## Q3. Deduplication of L7 Rules
 
-**Where:** `pkg/policy/builder.go` -- modify `buildEgressRules()` only (DNS visibility is egress-only in Cilium)
+| Layer | File | Status | Required change |
+|-------|------|--------|-----------------|
+| File dedup (writer) | `pkg/output/writer.go` | Works as-is | YAML byte comparison still correct. Marshaling is deterministic when builder produces sorted L7 lists. |
+| Cross-flush / merge dedup | `pkg/policy/merge.go` `mergePortRules` | **BROKEN today** | Currently flattens `PortRules` into `result[0].Ports` and **drops `Rules` field entirely**. Must merge `Rules.HTTP` and `Rules.DNS` per port/proto match. |
+| Semantic equivalence | `pkg/policy/dedup.go` `PoliciesEquivalent` / `normalizeRule` | Partially works | Compares via YAML marshal of full Spec, so L7 IS captured — but order is non-deterministic. Must sort `Rules.HTTP` (by method+path) and `Rules.DNS` (by matchPattern) inside each `PortRule`. |
+| Cluster dedup | `pkg/k8s/cluster_dedup.go` | Works once `PoliciesEquivalent` is fixed | Uses `PoliciesEquivalent` directly → inherits the fix. |
 
-**How it works:** DNS flows have `f.L7 != nil && f.L7.Type == L7FlowType_DNS`. The DNS query name maps to `ToFQDNs` on the egress rule.
+**Critical detail in `mergePortRules`:** today's implementation collapses everything into `result[0].Ports` with no `Rules` field. This means when an L7-bearing policy is merged with an existing one, **L7 rules are silently lost**. This MUST be the first dedup change shipped — without it, every L7 policy that goes through file-merge or cluster-dedup loses its L7 layer.
 
-**Flow data mapping:**
+**Refactor target for `mergePortRules`:**
+- Group by `port/proto` key (already the dedup key).
+- For each group, merge `Rules.HTTP` (dedup by `method+path+sorted-headers`) and `Rules.DNS` (dedup by `matchPattern`/`matchName`).
+- Mixing HTTP and DNS rules on the same port/proto is structurally illegal in Cilium (`L7Rules` is a oneof-style union); merge must refuse and log (anti-pattern enforcement).
 
-| Hubble `flow.L7.Dns` field | Cilium policy API | Notes |
-|---|---|---|
-| `Query` (string) | `EgressRule.ToFQDNs` with `FQDNSelector{MatchName: query}` | Strip trailing dot |
-| `Query` (string) | `PortRule.Rules.DNS` with `PortRuleDNS{MatchPattern: query}` | L7 DNS visibility rule on port 53 |
+**Refactor target for `normalizeRule`:**
+- After `sortPorts`, also `sortL7HTTP(pr.Rules)` and `sortL7DNS(pr.Rules)` per `PortRule`.
+- Update `ingressRuleKey`/`egressRuleKey` only if FQDN selectors are introduced (see Q5).
 
-**Critical constraint from Cilium:** `ToFQDNs` cannot coexist with `ToEndpoints`, `ToCIDR`, or other `To*` fields in the same `EgressRule`. This means DNS-based egress rules must be separate `EgressRule` entries, not merged with existing peer-based rules.
+---
 
-**Design:** Create a separate code path in `buildEgressRules()` for DNS flows:
+## Q4. Evidence Schema — Bump to v2 (Backward-Incompatible by Design)
 
+**Current state (`pkg/evidence/schema.go`):**
+- `SchemaVersion = 1` and the reader **rejects unknown versions** (per archived decision).
+- `RuleEvidence.Key` derives from `RuleKey{Direction, Peer, Port, Protocol}` → no L7 field.
+- Two L7 rules on the same `(direction, peer, port, proto)` would collide on the same key, overwriting each other's flow counts and samples.
+
+**Decision:** **Bump `SchemaVersion` to 2.**
+
+**Why a bump (not additive):**
+1. The reader in v1.1 explicitly refuses unknown versions — this means *any* old reader will refuse a new file regardless of additivity. A bump is required by the existing forward-compat contract.
+2. `RuleKey.String()` must change to incorporate L7 selectors, otherwise rule attribution collides. This is a behavior change in evidence semantics, not just a structure addition.
+3. JSON files written by v1.1 remain readable by v1.2 (we keep a `v1` decode path) but newly written files use v2.
+
+**Schema v2 additions:**
 ```go
-// DNS flows produce two things:
-// 1. An EgressRule with ToFQDNs (the actual FQDN allow rule)
-// 2. An EgressRule allowing DNS traffic to kube-dns on port 53/UDP
-//    with L7 DNS rules for the specific query
-```
+type RuleEvidence struct {
+    Key                  string       `json:"key"`
+    Direction            string       `json:"direction"`
+    Peer                 PeerRef      `json:"peer"`
+    Port                 string       `json:"port"`
+    Protocol             string       `json:"protocol"`
 
-**Important:** The FQDN egress rule also needs a corresponding DNS allow rule (port 53/UDP to kube-dns) with L7 DNS rules. Without this, Cilium cannot resolve the FQDN to learn IP-to-FQDN mappings. The builder should auto-generate both.
+    // NEW (omitempty → unset means L4-only rule)
+    L7                   *L7Ref       `json:"l7,omitempty"`
 
-### 3. Hubble Client Modifications
-
-**Where:** `pkg/hubble/client.go` -- modify `StreamDroppedFlows()`
-
-**What changes:** The current Hubble observe request filters for dropped flows. For L7 visibility:
-
-- L7 flows appear as `DROPPED` or `REDIRECTED` verdict depending on Cilium config
-- The flow filter may need to include `flowpb.Verdict_REDIRECTED` or adjust type filters
-- L7 data is already present in the `Flow` protobuf; no gRPC API changes needed
-- Consider adding a `--l7` flag to explicitly opt-in to L7 flow processing (L7 visibility requires Cilium pod annotations or CiliumNetworkPolicy with L7 rules already in place)
-
-**No aggregator changes:** The aggregator buckets by `AggKey{Namespace, Workload}` extracted from flow endpoints. L7 flows carry the same endpoint information, so they naturally bucket with their L4 counterparts. This is correct behavior: a single workload's policy should contain both L4 and L7 rules.
-
-### 4. Dedup and Merge Extensions
-
-**Where:** `pkg/policy/dedup.go` and `pkg/policy/merge.go`
-
-**Dedup (`PoliciesEquivalent`):**
-- Currently normalizes and compares `Ingress`/`Egress` rules via `reflect.DeepEqual`
-- L7Rules are nested inside `PortRule.Rules`, so `reflect.DeepEqual` already captures them
-- However, `normalizeRule()` must sort L7 rules within `PortRule.Rules.HTTP` and `PortRule.Rules.DNS` for deterministic comparison
-- Add sorting of `L7Rules.HTTP` entries by method+path and `L7Rules.DNS` entries by matchPattern
-- Also normalize `ToFQDNs` entries (sort by matchName/matchPattern)
-
-**Merge (`MergePolicy`):**
-- Currently matches peers by endpoints, then merges `ToPorts` via `mergePortRules()`
-- `mergePortRules()` deduplicates by `port/protocol` string key but ignores `Rules`
-- Must extend to merge `L7Rules` when port+protocol match: append new HTTP rules (dedup by method+path), append new DNS rules (dedup by matchPattern)
-- For FQDN rules: match egress rules by `ToFQDNs` equality, merge associated port rules
-- Add `matchFQDNs()` alongside existing `matchEndpoints()` for FQDN-based rule matching
-
-### 5. `cpg apply` Command
-
-**Where:** `cmd/cpg/apply.go` (new) + `pkg/k8s/apply.go` (new)
-
-**Design:**
-
-```
-cpg apply [--dir ./policies] [--namespace production] [--force] [--kubeconfig path]
-```
-
-- Default behavior: **dry-run** -- read YAML files from output dir, diff against cluster state, show what would change
-- `--force`: actually apply (create or update) policies to the cluster
-- Uses the existing `pkg/k8s` package's kubeconfig loading and Cilium clientset
-
-**`pkg/k8s/apply.go` responsibilities:**
-1. Walk the output directory, read all YAML files, unmarshal to `CiliumNetworkPolicy`
-2. For each policy, check if it exists in cluster (by namespace+name)
-3. If exists: compare specs (reuse `PoliciesEquivalent`), update if different
-4. If not exists: create
-5. Return a summary of actions (created, updated, unchanged, errors)
-
-**Dry-run implementation:** Use Kubernetes server-side dry-run (`metav1.CreateOptions{DryRun: []string{"All"}}`) rather than client-side simulation. This validates against admission webhooks and CRD validation. Fall back to client-side diff display if server-side dry-run is not available.
-
-**Apply implementation:** Use the Cilium clientset's `CiliumNetworkPolicies(namespace).Create()` and `.Update()` methods. These already exist in the `ciliumclient` package that `cluster_dedup.go` imports.
-
-**Safety features:**
-- Require `managed-by: cpg` label on all policies (already set by builder)
-- Refuse to update policies without `managed-by: cpg` label (prevent overwriting manually-created policies)
-- Show diff before apply with `--force`
-- Count and report: created/updated/skipped/errors
-
-### Data Flow Changes
-
-**Current flow (L4 only):**
-
-```
-gRPC stream -> Flow{L4: TCP/UDP} -> Aggregator -> BuildPolicy(L4 ports) -> Write YAML
-```
-
-**New flow (L4 + L7):**
-
-```
-gRPC stream -> Flow{L4 + L7: HTTP/DNS} -> Aggregator -> BuildPolicy(L4 ports + L7 rules) -> Write YAML
-                                                                                                  |
-                                                                                                  v
-                                                                              cpg apply -> Read YAML -> Apply to cluster
-```
-
-The pipeline stays unchanged. L7 data flows through the same channel, same aggregator, same builder. The builder produces richer `PortRule` entries with `Rules` populated when L7 data is present.
-
-## Patterns to Follow
-
-### Pattern 1: L7 Rule Extraction Functions
-
-**What:** Separate functions to extract L7 rules from flows, parallel to existing `extractPort()`
-
-**When:** Processing flows with L7 data in the builder
-
-**Example:**
-
-```go
-// extractHTTPRule extracts an L7 HTTP rule from a flow's Layer7 data.
-// Returns nil if the flow has no HTTP L7 information.
-func extractHTTPRule(f *flowpb.Flow) *api.PortRuleHTTP {
-    if f.L7 == nil || f.L7.Http == nil {
-        return nil
-    }
-    h := f.L7.Http
-    rule := &api.PortRuleHTTP{}
-    if h.Method != "" {
-        rule.Method = h.Method
-    }
-    if h.Url != "" {
-        rule.Path = extractPathFromURL(h.Url)
-    }
-    return rule
+    FlowCount            int64        `json:"flow_count"`
+    FirstSeen            time.Time    `json:"first_seen"`
+    LastSeen             time.Time    `json:"last_seen"`
+    ContributingSessions []string     `json:"contributing_sessions"`
+    Samples              []FlowSample `json:"samples"`
 }
 
-// extractDNSQuery extracts the DNS query name from a flow's Layer7 data.
-// Returns empty string if the flow has no DNS information or is a response.
-func extractDNSQuery(f *flowpb.Flow) string {
-    if f.L7 == nil || f.L7.Dns == nil {
-        return ""
-    }
-    // Only process DNS requests, not responses
-    if f.L7.Type != flowpb.L7FlowType_REQUEST {
-        return ""
-    }
-    return strings.TrimSuffix(f.L7.Dns.Query, ".")
+type L7Ref struct {
+    Type        string `json:"type"`                  // "http" | "dns"
+    HTTPMethod  string `json:"http_method,omitempty"`
+    HTTPPath    string `json:"http_path,omitempty"`
+    DNSPattern  string `json:"dns_pattern,omitempty"` // matchPattern OR matchName
 }
 ```
 
-### Pattern 2: Port Rule Accumulator
+`FlowSample` may also gain optional `L7Type` / `L7Summary` for `cpg explain` rendering — additive within the v2 schema, no further bump.
 
-**What:** Replace bare `[]PortProtocol` tracking with a structure that accumulates both L4 and L7 rules per port
+**Reader strategy:** keep a v1-decode fallback for ~one minor cycle (read-only), so users with existing `~/.cache/cpg/evidence` v1 files don't lose history. New writes are v2. Deletion of v1 path can land in v1.3.
 
-**When:** Building ingress/egress rules in the builder
+---
 
-**Example:**
+## Q5. Two-Step Workflow vs Single Run
 
-```go
-// portAccumulator groups L7 rules under a single port+protocol combination.
-type portAccumulator struct {
-    port      string
-    protocol  api.L4Proto
-    httpRules []api.PortRuleHTTP
-    httpSeen  map[string]struct{} // dedup by method+path
-}
+**Decision: same run produces L4 + L7 when records contain both layers. No mode flag.**
 
-// toPortRule produces the final PortRule with optional L7Rules attached.
-func (pa *portAccumulator) toPortRule() api.PortRule {
-    pr := api.PortRule{
-        Ports: []api.PortProtocol{{Port: pa.port, Protocol: pa.protocol}},
-    }
-    if len(pa.httpRules) > 0 {
-        pr.Rules = &api.L7Rules{HTTP: pa.httpRules}
-    }
-    return pr
-}
-```
+**Reasoning:**
+- A Hubble flow either has `f.L7 != nil` or it doesn't. The builder branches on the field; this is data-driven, not mode-driven.
+- The "two-step workflow" described in `PROJECT.md` is operational, not architectural: the *user* deploys L4 first because L7 visibility requires Cilium proxy redirect (which itself requires a CNP with L7 rules in place). That's a deployment ordering, not a code path. Once L7 visibility is enabled in the cluster, dropped/redirected flows naturally arrive with `L7` populated and the same `cpg generate` run handles both.
+- Inverse case: if a user runs with no L7 visibility, no flows carry `L7`, output is L4-only — same code path, no failure.
+- An optional `--l7=off` flag (suppresses extraction even when present) is a future affordance, not a v1.2 requirement. Recommend deferring.
 
-### Pattern 3: Separate FQDN Egress Rules
+**Natural boundary inside the builder:**
+- L4 rule production = always.
+- L7 rule attachment = conditional on `extractHTTP` / `extractDNSQuery` returning non-nil.
+- FQDN egress rule = conditional on at least one DNS request flow with non-empty query (egress only).
 
-**What:** DNS flows produce isolated `EgressRule` entries with `ToFQDNs` since these cannot be combined with other `To*` fields
+**Implication for `cpg replay`:** unchanged. Replay over a jsonpb capture that contains L7 fields will produce L7 policies; over an L4-only capture, it produces L4 policies. Same binary, same flags.
 
-**When:** Building egress rules from DNS L7 flows
+---
 
-**Example:**
+## Q6. Suggested Build Order (L7-Only Scope)
 
-```go
-// buildFQDNEgressRules produces EgressRules for DNS-observed FQDNs.
-// Each FQDN gets its own rule because ToFQDNs cannot coexist with
-// ToEndpoints or ToCIDR in the same EgressRule.
-func buildFQDNEgressRules(dnsFlows []*flowpb.Flow) []api.EgressRule {
-    fqdns := make(map[string]struct{})
-    for _, f := range dnsFlows {
-        query := extractDNSQuery(f)
-        if query == "" {
-            continue
-        }
-        fqdns[query] = struct{}{}
-    }
+The order minimizes broken intermediate states by fixing the silent-data-loss bug (merge) early and shipping HTTP before DNS (DNS adds the FQDN-egress-rule complication).
 
-    var rules []api.EgressRule
-    for fqdn := range fqdns {
-        rules = append(rules, api.EgressRule{
-            EgressCommonRule: api.EgressCommonRule{
-                ToFQDNs: api.FQDNSelectorSlice{
-                    {MatchName: fqdn},
-                },
-            },
-            ToPorts: api.PortRules{{
-                Ports: []api.PortProtocol{{Port: "443", Protocol: api.ProtoTCP}},
-            }},
-        })
-    }
-    return rules
-}
-```
+| # | Step | Package | Purpose | Verifiable by |
+|---|------|---------|---------|---------------|
+| 1 | Fix `mergePortRules` to preserve `Rules` | `pkg/policy/merge.go` | Stop silently dropping L7 fields in cross-flush merge. Required *before* L7 generation, otherwise generation tests pass but writer/cluster dedup break. | New unit tests with hand-built L7 PortRules merging cleanly. No L7 builder code yet — only proves the merge layer is L7-safe. |
+| 2 | Extend `normalizeRule` to sort L7 lists | `pkg/policy/dedup.go` | Make `PoliciesEquivalent` deterministic for L7. | Round-trip equivalence tests with shuffled L7 rule order. |
+| 3 | Bump evidence schema to v2 + L7Ref | `pkg/evidence/schema.go` | Reserve the on-disk shape before writers populate it. Keep v1 read path. | Schema test: read v1 fixture OK, write v2, refuse v3. |
+| 4 | Add `pkg/policy/l7.go` (HTTP only) + extend `peerRules` | `pkg/policy/{l7.go,builder.go}` | Pure-extraction layer. Wire HTTP into `groupFlows` and rule emission. | Unit tests with synthetic flows carrying `f.L7.Http`. |
+| 5 | Wire L7 attribution into `RuleAttribution` | `pkg/policy/{attribution.go,builder.go}` | Extend `RuleKey` with optional `L7` discriminator so attribution doesn't collide. | Builder attribution tests with two HTTP rules on same port. |
+| 6 | Evidence writer: emit `RuleEvidence.L7` | `pkg/evidence/` (writer files) | Persist the new field for HTTP rules. | End-to-end: generate → read evidence → see L7 entries. |
+| 7 | Add DNS extraction + FQDN egress builder | `pkg/policy/l7.go` (DNS section), `builder.go` (egress post-processing) | Add DNS visibility rule on port 53 *and* paired FQDN egress rule. | Builder tests with DNS request flows producing two egress rules per FQDN. |
+| 8 | Extend `mergePortRules` + matching for FQDN egress rules | `pkg/policy/merge.go` | `ToFQDNs` rules need their own matcher (`matchFQDNs`) and L7 DNS list merge on port-53 rule. | Merge tests with FQDN egress rules. |
+| 9 | `cpg explain` — render L7 in text/json/yaml output | `cmd/cpg/explain_render.go` | Show HTTP method/path or DNS pattern in evidence rendering. | Snapshot tests on evidence with L7 records. |
 
-### Pattern 4: Apply with Safety Guards
+**Steps 1-3 are infrastructure prep, no behavior change.** Anyone pulling the branch at step 3 still produces v1.1-compatible L4 output. Steps 4-7 ship the actual L7 generation. Steps 8-9 are the FQDN/UX layer.
 
-**What:** Policy application checks `managed-by` label before mutations
+**Hubble client modification:** *not in this list*. The current filter already streams full `Flow` records including the `L7` field — verified via flow proto. No changes needed unless the verdict filter excludes `REDIRECTED` (it does today; depending on cluster L7-policy config, L7 visibility flows may arrive as `REDIRECTED` rather than `DROPPED`). Validate during step 4 testing; add filter expansion only if needed and document the trade-off.
 
-**When:** `cpg apply` creates/updates cluster policies
+---
 
-```go
-func applyPolicy(ctx context.Context, client ciliumclient.Interface,
-    policy *ciliumv2.CiliumNetworkPolicy, force bool) (action string, err error) {
+## Q7. Renderer Impact (YAML Marshaling)
 
-    existing, err := client.CiliumV2().CiliumNetworkPolicies(policy.Namespace).
-        Get(ctx, policy.Name, metav1.GetOptions{})
-    if err != nil {
-        if apierrors.IsNotFound(err) {
-            if !force {
-                return "would-create", nil
-            }
-            _, err = client.CiliumV2().CiliumNetworkPolicies(policy.Namespace).
-                Create(ctx, policy, metav1.CreateOptions{})
-            return "created", err
-        }
-        return "", err
-    }
+**Verdict: works as-is, no renderer changes.**
 
-    // Safety: refuse to overwrite non-cpg policies
-    if existing.Labels["app.kubernetes.io/managed-by"] != "cpg" {
-        return "skipped-not-managed", nil
-    }
+`pkg/output/writer.go` uses `sigs.k8s.io/yaml` to marshal `*ciliumv2.CiliumNetworkPolicy`. That library marshals via JSON tags first, then converts to YAML — so anything Cilium's `api` types annotate with `json:` tags renders correctly. The `PortRule.Rules *L7Rules` field, plus nested `[]api.PortRuleHTTP` and `[]api.PortRuleDNS`, all carry `json:` tags in upstream Cilium and round-trip through `sigs.k8s.io/yaml` cleanly (verified in archived STACK research).
 
-    if PoliciesEquivalent(existing, policy) {
-        return "unchanged", nil
-    }
+**`api.FQDNSelector` and `api.EgressRule.ToFQDNs`** likewise marshal cleanly.
 
-    if !force {
-        return "would-update", nil
-    }
-    policy.ResourceVersion = existing.ResourceVersion
-    _, err = client.CiliumV2().CiliumNetworkPolicies(policy.Namespace).
-        Update(ctx, policy, metav1.UpdateOptions{})
-    return "updated", err
-}
-```
+**Risk to watch (NOT a blocker):** `annotateRules` in `pkg/output/annotate.go` adds human-readable comments next to rules — it works on raw YAML byte ranges, not the typed object. New L7 rule kinds need annotator awareness if we want them annotated; otherwise they render with no comment (acceptable for v1.2). Track as a polish item, not a blocker.
 
-## Anti-Patterns to Avoid
+**`stripComments` in writer.go** is YAML-line-based and handles arbitrary new fields without code change.
 
-### Anti-Pattern 1: Mixing L4-only and L7 PortRules for Same Port
+---
 
-**What:** Creating separate `PortRule` entries for the same port (one L4-only, one with L7 rules)
+## Q8. `cpg explain` Integration
 
-**Why bad:** Cilium treats each `PortRule` independently. Two rules for port 80 -- one allowing all traffic and one restricting to GET /api -- means the L4-only rule allows everything, making the L7 rule useless.
+**Decision: minimal change — add `--http-method`, `--http-path`, `--dns-pattern` filters; out-of-scope for substring/regex matching of paths.**
 
-**Instead:** When L7 data exists for a port, always attach L7 rules to the same `PortRule`. If some flows for a port have L7 data and others don't, only generate L7 rules (the restrictive case) or fall back to L4-only (the permissive case). Choose L4-only as default since L7 visibility may not be enabled for all pods.
+**Rationale:**
+- The skeleton (`explainFilter`, `match`, evidence reader) is direction/port/peer/CIDR/since aware. Adding three optional string fields is ~30 lines: parse flag → if set, exclude rules whose `r.L7` doesn't match.
+- Path matching: exact-match only in v1.2 (the path stored in evidence is already the regex-escaped pattern; substring matching against an escaped pattern is confusing). Document "exact-match" in flag help. Defer regex/glob to v1.3.
+- DNS pattern: exact match against `RuleEvidence.L7.DNSPattern`.
+- The renderer (`explain_render.go`) gains a new line per rule when `r.L7 != nil`: e.g. `  HTTP GET /api/health` or `  DNS *.example.com`. Same in JSON/YAML — `L7Ref` is just a nested object.
 
-### Anti-Pattern 2: Generating FQDN Rules Without DNS Allow Rules
+**Out of scope for v1.2:**
+- Regex/glob matching on path (would need careful escaping and clear UX).
+- Filter combinators (`--http-method GET OR POST`) — single-value flags suffice; users compose via shell loops.
 
-**What:** Creating `ToFQDNs` rules without corresponding DNS port 53 allow rules
+---
 
-**Why bad:** Cilium requires DNS traffic to be allowed so it can intercept DNS responses to learn IP-to-FQDN mappings. Without DNS allow rules, FQDN-based policies silently fail.
+## Component-Change Ledger
 
-**Instead:** Always pair FQDN rules with a DNS allow rule (port 53/UDP to `kube-dns` endpoint).
+| Package / File | Status | Why |
+|----------------|--------|-----|
+| `pkg/hubble/client.go` | UNCHANGED | Streams full `Flow` proto already. |
+| `pkg/hubble/aggregator.go` | UNCHANGED | `AggKey` semantics unchanged. |
+| `pkg/hubble/pipeline.go` | UNCHANGED | Layer-agnostic fan-out. |
+| `pkg/flowsource/` | UNCHANGED | Replay path is shape-agnostic. |
+| `pkg/policy/builder.go` | MODIFY | Extend `peerRules`; wire L7 extraction into `groupFlows`; attach `L7Rules` in `*RulesFrom` helpers. |
+| `pkg/policy/l7.go` | NEW | All L7 extraction + FQDN egress assembly. |
+| `pkg/policy/attribution.go` | MODIFY | `RuleKey` gains optional L7 discriminator so attribution doesn't collide. |
+| `pkg/policy/merge.go` | MODIFY | Preserve `Rules` in `mergePortRules` (currently dropped — silent bug under L7); add `matchFQDNs` for FQDN egress matching. |
+| `pkg/policy/dedup.go` | MODIFY | Sort L7 lists in `normalizeRule`; extend `egressRuleKey` if FQDN selectors are added. |
+| `pkg/output/writer.go` | UNCHANGED | YAML marshaling carries L7 fields automatically. |
+| `pkg/output/annotate.go` | OPTIONAL POLISH | Annotate L7 rules with comments (non-blocking). |
+| `pkg/evidence/schema.go` | MODIFY | Bump `SchemaVersion = 2`; add `L7Ref`. |
+| `pkg/evidence/writer.go` (or equivalent) | MODIFY | Populate `RuleEvidence.L7`. |
+| `pkg/evidence/reader.go` | MODIFY | Accept v1 (read-only legacy) and v2; reject v3+. |
+| `pkg/k8s/cluster_dedup.go` | UNCHANGED | Inherits L7 dedup correctness via `PoliciesEquivalent`. |
+| `pkg/diff/` | UNCHANGED | Operates on YAML bytes — captures L7 changes for free. |
+| `cmd/cpg/generate.go` | UNCHANGED | No new flags required for v1.2. |
+| `cmd/cpg/replay.go` | UNCHANGED | Same. |
+| `cmd/cpg/explain.go` | MODIFY | Three new filter flags + render path for `RuleEvidence.L7`. |
+| `cmd/cpg/explain_filter.go` | MODIFY | Filter struct gains 3 fields and `match` clauses. |
+| `cmd/cpg/explain_render.go` | MODIFY | Add an L7 line to per-rule output. |
 
-### Anti-Pattern 3: Applying Without Ownership Checks
+**Surface area:** 9 packages touched, 2 new files (`pkg/policy/l7.go`, plus tests), 1 schema bump. No package added; no public API broken (`BuildPolicy` signature preserved).
 
-**What:** Blindly updating any CiliumNetworkPolicy found in the cluster
+---
 
-**Why bad:** Overwrites manually-crafted or operator-managed policies, causing outages.
+## Anti-Patterns to Avoid (carried from archived research, still apply)
 
-**Instead:** Only touch policies with `app.kubernetes.io/managed-by: cpg` label. Skip anything without it.
+1. **Two `PortRule` entries for the same port (L4 + L7)** — Cilium evaluates each independently; the L4-only entry would whitelist everything, defeating the L7 restriction. Always attach L7 to the same `PortRule` as the L4 port.
+2. **FQDN rule without DNS-allow companion** — `ToFQDNs` silently fails without port-53 allow with `Rules.DNS`. The FQDN builder MUST emit both rules atomically.
+3. **Mixing HTTP and DNS in one `L7Rules`** — Cilium rejects. Keep HTTP rules on the workload's HTTP port (e.g. 80/TCP) and DNS rules on port 53/UDP.
+4. **Path explosion** — `/users/123`, `/users/124`, … blow up Envoy memory. Out of scope for v1.2 (note path normalization as v1.3 candidate); document in v1.2 release notes as a known limitation.
 
-### Anti-Pattern 4: Client-Side Dry-Run Only
+---
 
-**What:** Implementing dry-run as pure diff display without server validation
+## Risk Hotspots to Flag for Roadmap
 
-**Why bad:** Misses CRD validation errors, admission webhook rejections, RBAC denials. User applies with `--force` and gets unexpected failures.
+- **`mergePortRules` silent data loss (HIGH).** This is a latent bug today (no L7 input in v1.1, so harmless) that becomes a correctness break the moment L7 builder ships. Step 1 in build order — non-negotiable.
+- **Evidence schema v1→v2 migration (MEDIUM).** Existing users have v1 cache files. The reader must keep v1 decode for at least one minor cycle. Test fixture for v1 read-only path required.
+- **REDIRECTED verdict (MEDIUM, validation only).** L7-visible flows may arrive as `REDIRECTED` rather than `DROPPED` depending on cluster config. Verify against a live cluster during step 4. Filter expansion is a one-line change if needed; document the trade-off (REDIRECTED includes successful proxy traffic — needs verdict-aware handling so we don't generate policies *from allowed flows*).
+- **Hubble L7 visibility prerequisite (LOW, doc).** Users without L7 visibility get L4-only output. Document in release notes; no code change.
 
-**Instead:** Use server-side dry-run (`DryRun: []string{"All"}` in create/update options) to validate the policy would be accepted, then display the diff.
-
-### Anti-Pattern 5: Path Literal Explosion
-
-**What:** Generating separate HTTP rules for `/api/users/1`, `/api/users/2`, `/api/users/3`...
-
-**Why bad:** Produces policies with hundreds of path entries. Cilium compiles these to envoy config, bloating proxy memory.
-
-**Instead:** Consider path generalization -- replace numeric path segments with regex patterns like `[0-9]+`. Implement as an optional `--generalize-paths` flag.
-
-## Suggested Build Order
-
-The build order follows dependency chains and enables incremental testing:
-
-### Phase 1: L7 HTTP Rules (builder core)
-
-1. **Add `extractHTTPRule()` and `extractPathFromURL()`** in `builder.go`
-   - Pure functions, easily unit tested
-   - No changes to existing code yet
-
-2. **Refactor `peerPorts` to support L7 rules**
-   - Extend the internal structs in `buildIngressRules`/`buildEgressRules`
-   - Change from `ports []api.PortProtocol` to `portRules map[string]*portAccumulator`
-   - Existing L4-only behavior must remain identical (regression tests)
-
-3. **Wire L7 HTTP detection into flow processing loop**
-   - Check `f.L7 != nil && f.L7.Http != nil` in the flow iteration
-   - Attach `L7Rules` to matching `PortRule`
-
-4. **Extend dedup normalization** for L7 rules
-   - Sort HTTP rules in `normalizeRule()` by method+path
-
-5. **Extend merge** for L7-enriched port rules
-   - `mergePortRules()` must handle `Rules` field merging
-
-### Phase 2: L7 DNS / FQDN Rules
-
-6. **Add `extractDNSQuery()`** in `builder.go`
-
-7. **Add `buildFQDNEgressRules()`** as separate builder function
-   - Produces isolated `EgressRule` with `ToFQDNs`
-   - Auto-generates companion DNS allow rule for kube-dns
-
-8. **Wire into `BuildPolicy()`** -- separate DNS flows from L4 flows in the egress path
-
-9. **Extend dedup/merge** for FQDN rules
-   - Normalize `ToFQDNs` sorting
-   - Add `matchFQDNs()` for merge matching
-   - Merge FQDN selectors
-
-### Phase 3: `cpg apply` Command
-
-10. **Add `pkg/k8s/apply.go`** -- core apply/dry-run logic
-    - Read YAML files from directory
-    - Compare with cluster state via `PoliciesEquivalent`
-    - Create/Update with safety guards and ownership checks
-
-11. **Add `cmd/cpg/apply.go`** -- cobra command wiring
-    - Flags: `--dir`, `--namespace`, `--force`
-    - Default dry-run behavior
-    - Wire to `main.go`
-
-12. **Register apply command** in `cmd/cpg/main.go`
-
-### Phase 4: Hubble Client Verification
-
-13. **Verify/modify `StreamDroppedFlows()`** filter
-    - Ensure L7 flows are not filtered out by verdict filter
-    - May need to add `flowpb.Verdict_REDIRECTED` or adjust flow type filters
-    - This is last because it requires a live cluster to validate
-
-## Scalability Considerations
-
-| Concern | At 100 policies | At 1K policies | At 10K policies |
-|---------|-----------------|----------------|-----------------|
-| Apply speed | Sequential fine | Batch with concurrency (10 workers) | Batch + rate limiting |
-| YAML reading | `os.ReadDir` fine | Still fine | Consider streaming |
-| L7 rule cardinality | Low | HTTP paths can explode | Need path generalization (regex patterns) |
-| FQDN count | Low | Moderate | May hit Cilium DNS proxy limits |
-
-**L7 rule explosion risk:** HTTP paths like `/api/users/123` and `/api/users/456` should not produce separate rules. Consider path generalization (replace numeric segments with regex `[0-9]+`). This is a post-MVP enhancement, not blocking for initial implementation. Flag for validation during development.
+---
 
 ## Sources
 
-- [Cilium policy API - pkg.go.dev](https://pkg.go.dev/github.com/cilium/cilium/pkg/policy/api) - HIGH confidence (official Go docs, v1.19.1)
-- [Hubble Flow protobuf - Cilium docs](https://docs.cilium.io/en/stable/_api/v1/flow/README/) - HIGH confidence (official protocol docs)
-- [Cilium L7 HTTP policy example](https://github.com/cilium/cilium/blob/main/examples/policies/l7/http/http.yaml) - HIGH confidence (official examples)
-- [Cilium L7 visibility docs](https://docs.cilium.io/en/stable/observability/visibility/) - HIGH confidence (official docs)
-- Existing codebase analysis (`pkg/policy/builder.go`, `pkg/policy/merge.go`, `pkg/policy/dedup.go`, `pkg/hubble/pipeline.go`, `pkg/k8s/cluster_dedup.go`) - HIGH confidence (direct code reading)
+- Existing codebase (`pkg/policy/builder.go`, `pkg/policy/merge.go`, `pkg/policy/dedup.go`, `pkg/policy/attribution.go`, `pkg/hubble/aggregator.go`, `pkg/output/writer.go`, `pkg/evidence/schema.go`, `cmd/cpg/explain*.go`) — direct read, HIGH confidence.
+- `.planning/research/archive-2026-04-25/ARCHITECTURE.md` — prior L7+apply design, retained where applicable.
+- `.planning/research/archive-2026-04-25/SUMMARY.md` — pitfalls and stack confirmations carried forward.
+
+---
+*Architecture research for: CPG v1.2 L7 policies (HTTP + DNS) — apply deferred*
+*Researched: 2026-04-25*
