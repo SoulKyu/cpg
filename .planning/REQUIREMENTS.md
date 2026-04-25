@@ -15,7 +15,7 @@ Each requirement maps to exactly one phase. Traceability table at bottom.
 - [ ] **VIS-03**: A starter L7-visibility-trigger CNP snippet ships in the README so users can bootstrap visibility for a workload they want to observe.
 - [x] **VIS-04**: Pre-flight check (`cpg generate --l7` only) reads ConfigMap `kube-system/cilium-config`, verifies `enable-l7-proxy: "true"`. If false or missing, emit a warning naming the offending field with a remediation hint (set in ConfigMap and roll the cilium-agent DaemonSet). On RBAC denied: warn-and-proceed.
 - [x] **VIS-05**: Pre-flight check (`cpg generate --l7` only) verifies presence of cilium-envoy: DaemonSet `kube-system/cilium-envoy` (Cilium ≥ 1.16) OR detection by the `enable-envoy-config` flag in cilium-config (Cilium 1.14–1.15 embeds envoy in cilium-agent — check passes silently). On RBAC denied: warn-and-proceed.
-- [ ] **VIS-06**: A `--no-l7-preflight` flag skips VIS-04 and VIS-05 cluster checks, for restricted-RBAC CI, kubeconfig without `kube-system` access, or air-gapped use. VIS-01 (passive empty-records warning) still fires.
+- [x] **VIS-06**: A `--no-l7-preflight` flag skips VIS-04 and VIS-05 cluster checks, for restricted-RBAC CI, kubeconfig without `kube-system` access, or air-gapped use. VIS-01 (passive empty-records warning) still fires.
 
 ### HTTP L7 Generation
 
@@ -41,7 +41,7 @@ Each requirement maps to exactly one phase. Traceability table at bottom.
 
 ### CLI Surface
 
-- [ ] **L7CLI-01**: `cpg generate` and `cpg replay` accept `--l7` (default OFF). When unset, behavior is byte-identical to v1.1 for the same input.
+- [x] **L7CLI-01**: `cpg generate` and `cpg replay` accept `--l7` (default OFF). When unset, behavior is byte-identical to v1.1 for the same input.
 - [ ] **L7CLI-02**: `cpg explain` accepts three new exact-match filter flags: `--http-method`, `--http-path`, `--dns-pattern`. Regex / glob filters are deferred.
 - [ ] **L7CLI-03**: `cpg explain` renders L7 attribution per rule when present in the evidence: HTTP method + path, or DNS matchName. JSON / YAML formats include the L7 sub-object; text format prints a single indented line per L7 entry.
 
@@ -84,7 +84,7 @@ Filled by the roadmapper after phase definition.
 | VIS-03 | Phase 9 | Planned |
 | VIS-04 | Phase 7 | Planned |
 | VIS-05 | Phase 7 | Planned |
-| VIS-06 | Phase 7 | Planned |
+| VIS-06 | Phase 7 | Complete |
 | HTTP-01 | Phase 8 | Planned |
 | HTTP-02 | Phase 8 | Planned |
 | HTTP-03 | Phase 8 | Planned |
@@ -98,7 +98,7 @@ Filled by the roadmapper after phase definition.
 | EVID2-02 | Phase 7 | Planned |
 | EVID2-03 | Phase 7 | Planned |
 | EVID2-04 | Phase 7 | Planned |
-| L7CLI-01 | Phase 7 | Planned |
+| L7CLI-01 | Phase 7 | Complete |
 | L7CLI-02 | Phase 9 | Planned |
 | L7CLI-03 | Phase 9 | Planned |
 

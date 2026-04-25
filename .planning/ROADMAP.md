@@ -60,7 +60,7 @@ Scope locked to L7 HTTP + DNS generation only. `cpg apply`, policy consolidation
 - [x] 07-01-PLAN.md — merge.Rules preserve + normalizeRule L7 sort + RuleKey L7 discriminator (EVID2-02/03/04)
 - [x] 07-02-PLAN.md — evidence schema v1→v2 with optional L7Ref + reader rejection naming $XDG_CACHE_HOME/cpg/evidence/ (EVID2-01)
 - [x] 07-03-PLAN.md — pkg/k8s/preflight.go cilium-config + cilium-envoy checks with warn-and-proceed (VIS-04, VIS-05)
-- [ ] 07-04-PLAN.md — --l7 / --no-l7-preflight flag plumbing + PipelineConfig.L7Enabled + byte-stability integration test (L7CLI-01, VIS-06)
+- [x] 07-04-PLAN.md — --l7 / --no-l7-preflight flag plumbing + PipelineConfig.L7Enabled + byte-stability integration test (L7CLI-01, VIS-06)
 
 ### Phase 8: HTTP L7 Generation
 **Goal**: Users running `cpg generate --l7` (or `cpg replay --l7`) against a cluster with L7 visibility see correct, byte-stable HTTP rules emitted alongside L4 port rules in generated CNP YAML, with passive empty-L7 detection when visibility is missing.
@@ -73,8 +73,8 @@ Scope locked to L7 HTTP + DNS generation only. `cpg apply`, policy consolidation
   4. Generated YAML never contains `headerMatches`, `host`, or `hostExact` fields — even when Hubble flows carry HTTP headers — verified by a writer-side lint test (HTTP-05).
   5. When `--l7` is set but zero `Flow.L7` records arrive in the observation window, cpg emits a single, actionable warning naming the affected workloads with a link to the README L7 prerequisite section, and the warning fires only via the L7 ingestion path (VIS-01).
 **Plans**: 4 plans
-- [ ] 07-01-PLAN.md — merge.Rules preserve + normalizeRule L7 sort + RuleKey L7 discriminator (EVID2-02/03/04)
-- [ ] 07-02-PLAN.md — evidence schema v1→v2 with optional L7Ref + reader rejection naming $XDG_CACHE_HOME/cpg/evidence/ (EVID2-01)
+- [x] 07-01-PLAN.md — merge.Rules preserve + normalizeRule L7 sort + RuleKey L7 discriminator (EVID2-02/03/04)
+- [x] 07-02-PLAN.md — evidence schema v1→v2 with optional L7Ref + reader rejection naming $XDG_CACHE_HOME/cpg/evidence/ (EVID2-01)
 - [x] 07-03-PLAN.md — pkg/k8s/preflight.go cilium-config + cilium-envoy checks with warn-and-proceed (VIS-04, VIS-05)
 - [ ] 07-04-PLAN.md — --l7 / --no-l7-preflight flag plumbing + PipelineConfig.L7Enabled + byte-stability integration test (L7CLI-01, VIS-06)
 
@@ -91,7 +91,7 @@ Scope locked to L7 HTTP + DNS generation only. `cpg apply`, policy consolidation
 **Plans**: 4 plans
 - [ ] 07-01-PLAN.md — merge.Rules preserve + normalizeRule L7 sort + RuleKey L7 discriminator (EVID2-02/03/04)
 - [ ] 07-02-PLAN.md — evidence schema v1→v2 with optional L7Ref + reader rejection naming $XDG_CACHE_HOME/cpg/evidence/ (EVID2-01)
-- [ ] 07-03-PLAN.md — pkg/k8s/preflight.go cilium-config + cilium-envoy checks with warn-and-proceed (VIS-04, VIS-05)
+- [x] 07-03-PLAN.md — pkg/k8s/preflight.go cilium-config + cilium-envoy checks with warn-and-proceed (VIS-04, VIS-05)
 - [ ] 07-04-PLAN.md — --l7 / --no-l7-preflight flag plumbing + PipelineConfig.L7Enabled + byte-stability integration test (L7CLI-01, VIS-06)
 **UI hint**: no
 

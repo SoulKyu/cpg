@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: L7 Policies (HTTP + DNS)
 status: completed
-stopped_at: Completed 07-02-PLAN.md
-last_updated: "2026-04-25T07:34:57.970Z"
-last_activity: 2026-04-25 -- Roadmap for v1.2 L7 Policies created (phases 7, 8, 9)
+stopped_at: Completed 07-04-PLAN.md
+last_updated: "2026-04-25T07:42:19.264Z"
+last_activity: 2026-04-25 -- Phase 7 complete: --l7/--no-l7-preflight plumbed, byte-stability invariant test passing (231 tests)
 progress:
   total_phases: 3
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 4
-  completed_plans: 3
+  completed_plans: 4
 ---
 
 # Project State
@@ -24,12 +24,12 @@ See: .planning/PROJECT.md (updated 2026-04-25)
 
 ## Current Position
 
-Phase: 7 (next, planning required)
-Plan: —
-Status: Roadmap complete for v1.2; awaiting `/gsd:plan-phase 7`
-Last activity: 2026-04-25 -- Roadmap for v1.2 L7 Policies created (phases 7, 8, 9)
+Phase: 7 (complete) → next: Phase 8 (HTTP L7 codegen)
+Plan: 07-04 ✅ complete
+Status: Phase 7 complete (4/4 plans). v1.2 milestone 1/3 phases done.
+Last activity: 2026-04-25 -- Phase 7 complete: --l7/--no-l7-preflight plumbed, byte-stability invariant test passing (231 tests)
 
-Progress: v1.0 ✅ · v1.1 ✅ · v1.2 🚧 phases 7-9 defined (0/3 complete)
+Progress: v1.0 ✅ · v1.1 ✅ · v1.2 🚧 phases 7 ✅ · 8-9 pending (1/3 complete)
 
 ## Performance Metrics
 
@@ -58,6 +58,7 @@ Progress: v1.0 ✅ · v1.1 ✅ · v1.2 🚧 phases 7-9 defined (0/3 complete)
 *Updated after each plan completion*
 | Phase 07 P03 | 10min | 1 tasks | 2 files |
 | Phase 07 P02 | 3min | 2 tasks | 8 files |
+| Phase 07 P04 | 12min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -82,10 +83,12 @@ Recent decisions affecting v1.2 work (research-confirmed 2026-04-25):
 - v1.2 docs/superpowers AI-analysis spec dropped before implementation (recoverable via git history at commit 7e1e455).
 - [Phase 07]: L7 preflight uses caller-side single-call contract (godoc) instead of sync.Once — cleaner, easier to test.
 - [Phase 07]: Evidence schema v1->v2 bumped with optional L7Ref; reader/writer reject non-v2 with wipe instruction naming $XDG_CACHE_HOME/cpg/evidence/ (no v1 back-compat)
+- [Phase 07-04]: L7 client construction injected via package-level `l7ClientFactory` swappable var. Tests substitute `kubernetes/fake` clientsets without DI plumbing through every call site or touching the `cobra.Command` surface.
+- [Phase 07-04]: Byte-stability test compares CNP YAML byte-for-byte but evidence sidecars by tree shape only — session UUID + timestamps differ legitimately run-to-run regardless of `--l7`. Invariant applies to codegen, not session-stamped state.
 
 ### Pending Todos
 
-- Run `/gsd:plan-phase 7` to decompose Phase 7 (L7 Infrastructure Prep) into executable plans.
+- Run `/gsd:plan-phase 8` to decompose Phase 8 (HTTP L7 Generation) into executable plans.
 
 ### Blockers/Concerns
 
@@ -96,6 +99,6 @@ None open. Research-flagged items (deferred to phase planning):
 
 ## Session Continuity
 
-Last session: 2026-04-25T07:34:57.964Z
-Stopped at: Completed 07-02-PLAN.md
-Resume: Run `/gsd:plan-phase 7` to start Phase 7 planning.
+Last session: 2026-04-25T07:42:19.258Z
+Stopped at: Completed 07-04-PLAN.md
+Resume: Run `/gsd:plan-phase 8` to start Phase 8 (HTTP L7 codegen) planning.
