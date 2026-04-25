@@ -117,6 +117,84 @@ func TestExtractHTTPRules(t *testing.T) {
 	}
 }
 
+// dnsFlow constructs a synthetic *flowpb.Flow whose L7 record carries a DNS
+// query record. Used by extractDNSQuery tests.
+func dnsFlow(query string) *flowpb.Flow {
+	return &flowpb.Flow{
+		L7: &flowpb.Layer7{
+			Record: &flowpb.Layer7_Dns{
+				Dns: &flowpb.DNS{
+					Query: query,
+				},
+			},
+		},
+	}
+}
+
+func TestExtractDNSQuery(t *testing.T) {
+	tests := []struct {
+		name     string
+		flow     *flowpb.Flow
+		wantName string
+		wantOk   bool
+	}{
+		{
+			name:   "nil flow",
+			flow:   nil,
+			wantOk: false,
+		},
+		{
+			name:   "flow with nil L7",
+			flow:   &flowpb.Flow{},
+			wantOk: false,
+		},
+		{
+			name:   "flow with L7 but nil Dns (HTTP-only L7)",
+			flow:   &flowpb.Flow{L7: &flowpb.Layer7{}},
+			wantOk: false,
+		},
+		{
+			name:     "trailing dot stripped",
+			flow:     dnsFlow("api.example.com."),
+			wantName: "api.example.com",
+			wantOk:   true,
+		},
+		{
+			name:     "no trailing dot",
+			flow:     dnsFlow("api.example.com"),
+			wantName: "api.example.com",
+			wantOk:   true,
+		},
+		{
+			name:   "empty query",
+			flow:   dnsFlow(""),
+			wantOk: false,
+		},
+		{
+			name:   "whitespace-only query with trailing dot",
+			flow:   dnsFlow("  ."),
+			wantOk: false,
+		},
+		{
+			name:     "leading/trailing whitespace trimmed",
+			flow:     dnsFlow("  api.example.com.  "),
+			wantName: "api.example.com",
+			wantOk:   true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotName, gotOk := extractDNSQuery(tc.flow)
+			if gotOk != tc.wantOk {
+				t.Fatalf("ok: got=%v want=%v (name=%q)", gotOk, tc.wantOk, gotName)
+			}
+			if gotName != tc.wantName {
+				t.Errorf("name: got=%q want=%q", gotName, tc.wantName)
+			}
+		})
+	}
+}
+
 func TestNormalizeHTTPMethod(t *testing.T) {
 	tests := []struct {
 		in, want string

@@ -47,6 +47,36 @@ func extractHTTPRules(f *flowpb.Flow) []api.PortRuleHTTP {
 	}}
 }
 
+// extractDNSQuery returns the DNS matchName literal derived from the L7 DNS
+// record on the supplied flow. The wire-format query carries a canonical
+// trailing dot ("api.example.com."); this helper strips that suffix and any
+// surrounding whitespace so callers can drop the result directly into a Cilium
+// FQDNSelector.MatchName (Cilium re-adds the trailing dot internally).
+//
+// Nil-safety: a nil flow, missing L7 wrapper, missing DNS record, or
+// empty/whitespace-only query yields ("", false). Callers drop the entry
+// without erroring (DNS-01: empty/malformed query → no DNS rule).
+//
+// DNS-03 invariant: only matchName literals are extracted — no glob/wildcard
+// inference happens here. The companion injector (companion_dns.go) likewise
+// emits only matchName.
+func extractDNSQuery(f *flowpb.Flow) (string, bool) {
+	if f == nil {
+		return "", false
+	}
+	dns := f.GetL7().GetDns()
+	if dns == nil {
+		return "", false
+	}
+	q := strings.TrimSpace(dns.GetQuery())
+	q = strings.TrimSuffix(q, ".")
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return "", false
+	}
+	return q, true
+}
+
 // normalizeHTTPMethod uppercases and trims surrounding whitespace from the
 // supplied HTTP method. Empty input (after trim) yields the empty string;
 // callers drop the corresponding L7 entry rather than emit a method-less
