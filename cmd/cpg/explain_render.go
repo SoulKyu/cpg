@@ -63,6 +63,15 @@ func writeRule(w io.Writer, c colorizer, r evidence.RuleEvidence, limit int) {
 	fmt.Fprintf(w, "  First seen:  %s\n", r.FirstSeen.Format("2006-01-02 15:04:05"))
 	fmt.Fprintf(w, "  Last seen:   %s\n", r.LastSeen.Format("2006-01-02 15:04:05"))
 
+	if r.L7 != nil {
+		switch r.L7.Protocol {
+		case "http":
+			fmt.Fprintf(w, "  L7:          HTTP %s %s\n", r.L7.HTTPMethod, r.L7.HTTPPath)
+		case "dns":
+			fmt.Fprintf(w, "  L7:          DNS %s\n", r.L7.DNSMatchName)
+		}
+	}
+
 	samples := r.Samples
 	if limit > 0 && len(samples) > limit {
 		samples = samples[len(samples)-limit:]
