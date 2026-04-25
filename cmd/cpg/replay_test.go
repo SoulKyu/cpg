@@ -180,6 +180,171 @@ func TestReplayCommandProducesPoliciesAndEvidence(t *testing.T) {
 	assert.Equal(t, "replay", pev.Sessions[0].Source.Type)
 }
 
+// TestReplay_L7HTTPGeneration is the e2e test for HTTP-01..HTTP-05: running
+// `cpg replay --l7` against an L7-bearing fixture must emit a CNP YAML with
+// the expected http: block, anchored regex paths, normalized methods, and no
+// headerMatches/host/hostExact fields. Evidence files must carry L7Ref for at
+// least one rule.
+func TestReplay_L7HTTPGeneration(t *testing.T) {
+	initLoggerForTesting(t)
+
+	outDir := t.TempDir()
+	evDir := t.TempDir()
+
+	cmd := newReplayCmd()
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SilenceUsage = true
+	cmd.SetArgs([]string{
+		"../../testdata/flows/l7_http.jsonl",
+		"--output-dir", outDir,
+		"--evidence-dir", evDir,
+		"--flush-interval", "100ms",
+		"--l7",
+	})
+
+	require.NoError(t, cmd.Execute())
+
+	yamlPath := filepath.Join(outDir, "production", "api-server.yaml")
+	data, err := os.ReadFile(yamlPath)
+	require.NoError(t, err, "policy YAML must exist at %s", yamlPath)
+	yaml := string(data)
+
+	// HTTP-01 / HTTP-04: single port rule carries an http: rules sub-block.
+	assert.Contains(t, yaml, "rules:", "rules block expected")
+	assert.Contains(t, yaml, "http:", "http sub-block expected")
+
+	// HTTP-02 method casing: lowercase `get` in fixture must be normalized.
+	assert.Contains(t, yaml, "method: GET", "GET method must be emitted")
+	assert.Contains(t, yaml, "method: POST", "POST method must be emitted")
+	assert.NotRegexp(t, `(?m)method:\s+get\b`, yaml, "lowercase methods must not leak")
+
+	// HTTP-03 path anchoring + regex.QuoteMeta.
+	assert.Contains(t, yaml, `path: ^/api/v1/users$`, "anchored path expected")
+	assert.Contains(t, yaml, `path: ^/healthz$`, "anchored healthz path expected")
+	// Query params are stripped before regex emission.
+	assert.Contains(t, yaml, `path: ^/api/v1/orders$`, "query params must be stripped")
+
+	// HTTP-05 anti-feature: never emit headerMatches/host/hostExact.
+	assert.NotContains(t, yaml, "headerMatches", "headerMatches must never be emitted")
+	assert.NotContains(t, yaml, "hostExact", "hostExact must never be emitted")
+	// `host:` as an http rule field — be tolerant of the word appearing in
+	// other contexts (it shouldn't, but stay specific).
+	assert.NotRegexp(t, `(?m)^\s+host:\s`, yaml, "host: http field must never be emitted")
+
+	// Evidence v2: at least one rule carries L7Ref{Protocol:"http",...}.
+	absOut, _ := filepath.Abs(outDir)
+	hash := evidence.HashOutputDir(absOut)
+	evPath := filepath.Join(evDir, hash, "production", "api-server.json")
+	raw, err := os.ReadFile(evPath)
+	require.NoError(t, err, "evidence file must exist at %s", evPath)
+
+	var pev evidence.PolicyEvidence
+	require.NoError(t, json.Unmarshal(raw, &pev))
+	hasL7 := false
+	for _, r := range pev.Rules {
+		if r.L7 != nil && r.L7.Protocol == "http" && r.L7.HTTPMethod != "" && r.L7.HTTPPath != "" {
+			hasL7 = true
+			break
+		}
+	}
+	assert.True(t, hasL7, "at least one rule evidence must carry L7Ref{Protocol:http,...}")
+}
+
+// TestReplay_L7HTTP_DisabledByteStable asserts that running `cpg replay`
+// against the L7-bearing fixture WITHOUT --l7 produces byte-identical output
+// to running without the flag at all. This is the v1.2 negative invariant:
+// L7 codegen is gated on the --l7 flag.
+func TestReplay_L7HTTP_DisabledByteStable(t *testing.T) {
+	initLoggerForTesting(t)
+
+	runOnce := func(args ...string) string {
+		t.Helper()
+		outDir := t.TempDir()
+		evDir := t.TempDir()
+		cmd := newReplayCmd()
+		cmd.SetOut(new(bytes.Buffer))
+		cmd.SetErr(new(bytes.Buffer))
+		cmd.SilenceUsage = true
+		base := []string{
+			"../../testdata/flows/l7_http.jsonl",
+			"--output-dir", outDir,
+			"--evidence-dir", evDir,
+			"--flush-interval", "100ms",
+		}
+		cmd.SetArgs(append(base, args...))
+		require.NoError(t, cmd.Execute())
+		return outDir
+	}
+
+	noFlag := runOnce()
+	withFalse := runOnce("--l7=false")
+
+	files := walkRelFiles(t, noFlag)
+	assert.Equal(t, files, walkRelFiles(t, withFalse), "file sets must match")
+	for _, rel := range files {
+		a, err := os.ReadFile(filepath.Join(noFlag, rel))
+		require.NoError(t, err)
+		b, err := os.ReadFile(filepath.Join(withFalse, rel))
+		require.NoError(t, err)
+		assert.True(t, bytes.Equal(a, b), "%s must be byte-identical with --l7=false vs no flag", rel)
+		// Defensive: --l7=false must NEVER produce an http: block, even on an
+		// L7-bearing fixture.
+		assert.NotContains(t, string(a), "http:", "--l7 disabled must not emit http block (%s)", rel)
+	}
+}
+
+// TestReplay_L7HTTP_EmptyFixtureFiresWarning asserts VIS-01: when --l7 is set
+// against an L4-only fixture, the pipeline emits exactly one warning
+// referencing #l7-prerequisites and produces no http: block in the output.
+func TestReplay_L7HTTP_EmptyFixtureFiresWarning(t *testing.T) {
+	logs := initObservedLoggerForTesting(t)
+
+	outDir := t.TempDir()
+	evDir := t.TempDir()
+
+	cmd := newReplayCmd()
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SilenceUsage = true
+	cmd.SetArgs([]string{
+		"../../testdata/flows/small.jsonl",
+		"--output-dir", outDir,
+		"--evidence-dir", evDir,
+		"--flush-interval", "100ms",
+		"--l7",
+	})
+	require.NoError(t, cmd.Execute())
+
+	matches := 0
+	for _, e := range logs.All() {
+		if strings.Contains(e.Message, "no L7 records observed") {
+			matches++
+			fields := e.ContextMap()
+			hint, ok := fields["hint"].(string)
+			assert.True(t, ok, "hint field must be a string")
+			assert.Contains(t, hint, "#l7-prerequisites", "hint must reference README anchor")
+			assert.Contains(t, e.Message, "--l7", "warning must reference --l7 flag verbatim")
+			if ws, ok := fields["workloads"].([]interface{}); ok {
+				assert.NotEmpty(t, ws, "workloads must be non-empty")
+			} else if ws, ok := fields["workloads"].([]string); ok {
+				assert.NotEmpty(t, ws, "workloads must be non-empty")
+			}
+			if flows, ok := fields["flows"].(uint64); ok {
+				assert.Greater(t, flows, uint64(0), "flows count must be > 0")
+			}
+		}
+	}
+	assert.Equal(t, 1, matches, "VIS-01 warning must fire exactly once")
+
+	// No http: block must appear in any generated YAML.
+	for _, rel := range walkRelFiles(t, outDir) {
+		data, err := os.ReadFile(filepath.Join(outDir, rel))
+		require.NoError(t, err)
+		assert.NotContains(t, string(data), "http:", "%s must not contain http block", rel)
+	}
+}
+
 func TestReplayDryRunWritesNothing(t *testing.T) {
 	outDir := t.TempDir()
 	evDir := t.TempDir()
