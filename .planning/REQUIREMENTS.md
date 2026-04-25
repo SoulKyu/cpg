@@ -79,28 +79,28 @@ Filled by the roadmapper after phase definition.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| VIS-01 | TBD | Planned |
-| VIS-02 | TBD | Planned |
-| VIS-03 | TBD | Planned |
-| VIS-04 | TBD | Planned |
-| VIS-05 | TBD | Planned |
-| VIS-06 | TBD | Planned |
-| HTTP-01 | TBD | Planned |
-| HTTP-02 | TBD | Planned |
-| HTTP-03 | TBD | Planned |
-| HTTP-04 | TBD | Planned |
-| HTTP-05 | TBD | Planned |
-| DNS-01 | TBD | Planned |
-| DNS-02 | TBD | Planned |
-| DNS-03 | TBD | Planned |
-| DNS-04 | TBD | Planned |
-| EVID2-01 | TBD | Planned |
-| EVID2-02 | TBD | Planned |
-| EVID2-03 | TBD | Planned |
-| EVID2-04 | TBD | Planned |
-| L7CLI-01 | TBD | Planned |
-| L7CLI-02 | TBD | Planned |
-| L7CLI-03 | TBD | Planned |
+| VIS-01 | Phase 8 | Planned |
+| VIS-02 | Phase 9 | Planned |
+| VIS-03 | Phase 9 | Planned |
+| VIS-04 | Phase 7 | Planned |
+| VIS-05 | Phase 7 | Planned |
+| VIS-06 | Phase 7 | Planned |
+| HTTP-01 | Phase 8 | Planned |
+| HTTP-02 | Phase 8 | Planned |
+| HTTP-03 | Phase 8 | Planned |
+| HTTP-04 | Phase 8 | Planned |
+| HTTP-05 | Phase 8 | Planned |
+| DNS-01 | Phase 9 | Planned |
+| DNS-02 | Phase 9 | Planned |
+| DNS-03 | Phase 9 | Planned |
+| DNS-04 | Phase 9 | Planned |
+| EVID2-01 | Phase 7 | Planned |
+| EVID2-02 | Phase 7 | Planned |
+| EVID2-03 | Phase 7 | Planned |
+| EVID2-04 | Phase 7 | Planned |
+| L7CLI-01 | Phase 7 | Planned |
+| L7CLI-02 | Phase 9 | Planned |
+| L7CLI-03 | Phase 9 | Planned |
 
 **Coverage:** 22 v1.2 requirements, all to be mapped by the roadmapper.
 
