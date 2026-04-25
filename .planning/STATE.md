@@ -1,11 +1,11 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.2
-milestone_name: awaiting-scope
-status: between_milestones
-stopped_at: v1.0 + v1.1 archived 2026-04-24; next milestone awaits /gsd:new-milestone
-last_updated: "2026-04-24T16:00:00.000Z"
-last_activity: 2026-04-24 -- Archived v1.0 and v1.1 milestones
+milestone_name: l7-policies
+status: defining_requirements
+stopped_at: v1.2 milestone started 2026-04-25 -- research phase
+last_updated: "2026-04-25T08:00:00.000Z"
+last_activity: 2026-04-25 -- Started v1.2 L7 Policies milestone
 progress:
   total_phases: 0
   completed_phases: 0
@@ -25,11 +25,12 @@ See: .planning/PROJECT.md (updated 2026-03-09)
 
 ## Current Position
 
-Status: Between milestones — v1.0 and v1.1 archived.
-Last activity: 2026-04-24 -- Archived v1.0 and v1.1 milestones
-Next: `/gsd:new-milestone` to scope v1.2.
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements (v1.2 L7 Policies — research underway)
+Last activity: 2026-04-25 -- Started v1.2 L7 Policies milestone
 
-Progress: v1.0 ✅ · v1.1 ✅ · v1.2 📋 (not started)
+Progress: v1.0 ✅ · v1.1 ✅ · v1.2 🚧 (research → requirements → roadmap)
 
 ## Performance Metrics
 
