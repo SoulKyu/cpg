@@ -1,17 +1,16 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.2
-milestone_name: l7-policies
-status: roadmap_complete
-stopped_at: v1.2 roadmap drafted -- phases 7-9 defined, awaiting plan-phase 7
-last_updated: "2026-04-25T09:00:00.000Z"
+milestone_name: L7 Policies (HTTP + DNS)
+status: completed
+stopped_at: Completed 07-03-PLAN.md (RunL7Preflight)
+last_updated: "2026-04-25T07:28:21.007Z"
 last_activity: 2026-04-25 -- Roadmap for v1.2 L7 Policies created (phases 7, 8, 9)
 progress:
   total_phases: 3
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_plans: 4
+  completed_plans: 1
 ---
 
 # Project State
@@ -57,6 +56,7 @@ Progress: v1.0 ✅ · v1.1 ✅ · v1.2 🚧 phases 7-9 defined (0/3 complete)
 - Trend: stable
 
 *Updated after each plan completion*
+| Phase 07 P03 | 10min | 1 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -79,6 +79,7 @@ Recent decisions affecting v1.2 work (research-confirmed 2026-04-25):
 - kube-dns selector hardcoded `k8s-app=kube-dns` with YAML comment in v1.2; runtime autodetection deferred to v1.3 (DNS-FUT-02).
 - Capture L7 jsonpb fixtures from a real cluster session for replay tests (per STACK research).
 - v1.2 docs/superpowers AI-analysis spec dropped before implementation (recoverable via git history at commit 7e1e455).
+- [Phase 07]: L7 preflight uses caller-side single-call contract (godoc) instead of sync.Once — cleaner, easier to test.
 
 ### Pending Todos
 
@@ -93,6 +94,6 @@ None open. Research-flagged items (deferred to phase planning):
 
 ## Session Continuity
 
-Last session: 2026-04-25T09:00:00Z
-Stopped at: Roadmap for v1.2 created — phases 7, 8, 9 defined with 22 requirements mapped, traceability filled.
+Last session: 2026-04-25T07:28:21.001Z
+Stopped at: Completed 07-03-PLAN.md (RunL7Preflight)
 Resume: Run `/gsd:plan-phase 7` to start Phase 7 planning.

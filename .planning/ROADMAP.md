@@ -59,7 +59,7 @@ Scope locked to L7 HTTP + DNS generation only. `cpg apply`, policy consolidation
 **Plans**: 4 plans
 - [ ] 07-01-PLAN.md — merge.Rules preserve + normalizeRule L7 sort + RuleKey L7 discriminator (EVID2-02/03/04)
 - [ ] 07-02-PLAN.md — evidence schema v1→v2 with optional L7Ref + reader rejection naming $XDG_CACHE_HOME/cpg/evidence/ (EVID2-01)
-- [ ] 07-03-PLAN.md — pkg/k8s/preflight.go cilium-config + cilium-envoy checks with warn-and-proceed (VIS-04, VIS-05)
+- [x] 07-03-PLAN.md — pkg/k8s/preflight.go cilium-config + cilium-envoy checks with warn-and-proceed (VIS-04, VIS-05)
 - [ ] 07-04-PLAN.md — --l7 / --no-l7-preflight flag plumbing + PipelineConfig.L7Enabled + byte-stability integration test (L7CLI-01, VIS-06)
 
 ### Phase 8: HTTP L7 Generation
