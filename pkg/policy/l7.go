@@ -6,27 +6,87 @@
 // entries with normalized method casing (HTTP-02) and anchored regex paths
 // produced via regexp.QuoteMeta (HTTP-03).
 //
-// HTTP-05 anti-feature contract: Headers, Host, HostExact, and HeaderMatches
-// are intentionally NEVER populated by extractHTTPRules. See REQUIREMENTS.md
+// HTTP-05 anti-feature contract: Headers, Host, and HeaderMatches are
+// intentionally NEVER populated by extractHTTPRules. See REQUIREMENTS.md
 // HTTP-05 — emitting these would risk leaking Authorization/Cookie tokens
 // into committed policy YAML. A unit test in l7_test.go enforces this
 // invariant.
 package policy
 
 import (
+	"net/url"
+	"regexp"
+	"strings"
+
 	flowpb "github.com/cilium/cilium/api/v1/flow"
 	"github.com/cilium/cilium/pkg/policy/api"
 )
 
 // extractHTTPRules returns the PortRuleHTTP entries derived from the L7 HTTP
-// record on the supplied flow. Returns nil-safe empty slice when the flow
-// carries no HTTP record. (Stub — implemented in Task 2.)
+// record on the supplied flow. It is nil-safe: a flow with no L7, no HTTP
+// record, or an empty method returns nil. The path component is parsed out
+// of the wire URL (stripping scheme/host/query/fragment), then escaped via
+// regexp.QuoteMeta and anchored with ^…$ so the emitted regex matches only
+// the observed literal path.
 func extractHTTPRules(f *flowpb.Flow) []api.PortRuleHTTP {
-	return nil
+	if f == nil {
+		return nil
+	}
+	http := f.GetL7().GetHttp()
+	if http == nil {
+		return nil
+	}
+	method := normalizeHTTPMethod(http.GetMethod())
+	if method == "" {
+		return nil
+	}
+	return []api.PortRuleHTTP{{
+		Method: method,
+		Path:   anchorPath(http.GetUrl()),
+		// HTTP-05: Headers, Host, HeaderMatches deliberately left zero.
+	}}
 }
 
-// normalizeHTTPMethod returns the HTTP method in uppercase with surrounding
-// whitespace trimmed. (Stub — implemented in Task 2.)
+// normalizeHTTPMethod uppercases and trims surrounding whitespace from the
+// supplied HTTP method. Empty input (after trim) yields the empty string;
+// callers drop the corresponding L7 entry rather than emit a method-less
+// rule.
 func normalizeHTTPMethod(s string) string {
-	return s
+	return strings.ToUpper(strings.TrimSpace(s))
+}
+
+// anchorPath extracts the path component from a Hubble HTTP record's Url
+// field, escapes regex metacharacters via regexp.QuoteMeta, and anchors the
+// result with ^…$. Both bare paths ("/api/v1/users") and full URLs
+// ("http://host/api?x=1") are handled. Empty input yields "^/$" so a
+// root-path observation produces a valid regex rather than an empty rule.
+func anchorPath(rawURL string) string {
+	path := pathFromURL(rawURL)
+	if path == "" {
+		path = "/"
+	}
+	return "^" + regexp.QuoteMeta(path) + "$"
+}
+
+// pathFromURL returns the path component of rawURL, stripping any scheme,
+// host, query, and fragment. On parse failure it falls back to a manual
+// strip of '?' and '#' from the original input to preserve a usable path.
+func pathFromURL(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	u, err := url.Parse(rawURL)
+	if err == nil {
+		// url.Parse populates Path even for bare paths; query and fragment
+		// are returned via separate accessors and excluded from Path.
+		return u.Path
+	}
+	// Defensive fallback: manually trim query/fragment.
+	if i := strings.IndexByte(rawURL, '#'); i >= 0 {
+		rawURL = rawURL[:i]
+	}
+	if i := strings.IndexByte(rawURL, '?'); i >= 0 {
+		rawURL = rawURL[:i]
+	}
+	return rawURL
 }
