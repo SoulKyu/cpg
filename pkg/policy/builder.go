@@ -200,10 +200,46 @@ type peerRules struct {
 	seen       map[string]struct{}
 	// attribution: one entry per rule key produced from this bucket
 	attrib map[string]*RuleAttribution
+	// httpRules collects per-(port, proto) HTTP L7 entries when
+	// AttributionOptions.L7Enabled is true. Key is "<port>/<proto>" matching
+	// the seen-key form so a port's L7 rules align to its L4 PortProtocol.
+	// When empty (the v1.1 codepath), ingress/egress emission is byte-stable
+	// with v1.1 — Rules are NOT attached to any PortRule.
+	httpRules map[string][]api.PortRuleHTTP
+	// httpSeen dedups within a bucket so two flows reporting GET /a on the
+	// same (port, proto) collapse into a single PortRuleHTTP entry.
+	httpSeen map[string]map[string]struct{}
 }
 
 func newPeerRules() *peerRules {
-	return &peerRules{seen: make(map[string]struct{}), attrib: make(map[string]*RuleAttribution)}
+	return &peerRules{
+		seen:      make(map[string]struct{}),
+		attrib:    make(map[string]*RuleAttribution),
+		httpRules: make(map[string][]api.PortRuleHTTP),
+		httpSeen:  make(map[string]map[string]struct{}),
+	}
+}
+
+// addHTTPRules appends rules to the bucket's httpRules slice for the given
+// port-proto key, deduplicating by httpRuleKey so repeat observations of the
+// same (method, path) do not produce duplicates.
+func (pr *peerRules) addHTTPRules(portProtoKey string, rules []api.PortRuleHTTP) {
+	if len(rules) == 0 {
+		return
+	}
+	seen, ok := pr.httpSeen[portProtoKey]
+	if !ok {
+		seen = make(map[string]struct{})
+		pr.httpSeen[portProtoKey] = seen
+	}
+	for _, h := range rules {
+		k := httpRuleKey(h)
+		if _, dup := seen[k]; dup {
+			continue
+		}
+		seen[k] = struct{}{}
+		pr.httpRules[portProtoKey] = append(pr.httpRules[portProtoKey], h)
+	}
 }
 
 func (pr *peerRules) recordAttribution(key RuleKey, f *flowpb.Flow, maxSamples int) {
@@ -332,7 +368,10 @@ func groupFlows(
 				b.entityOrder = append(b.entityOrder, entity)
 			}
 			er.addFlow(fp)
-			er.recordAttribution(ruleKeyFor(direction, Peer{Type: PeerEntity, Entity: string(entity)}, fp), f, opts.MaxSamples)
+			peer := Peer{Type: PeerEntity, Entity: string(entity)}
+			if !recordL7(er, f, fp, direction, peer, opts) {
+				er.recordAttribution(ruleKeyFor(direction, peer, fp), f, opts.MaxSamples)
+			}
 			continue
 		}
 		if isWorldIdentity(ep) {
@@ -351,7 +390,10 @@ func groupFlows(
 				b.cidrOrder = append(b.cidrOrder, cidrStr)
 			}
 			cb.addFlow(fp)
-			cb.recordAttribution(ruleKeyFor(direction, Peer{Type: PeerCIDR, CIDR: cidrStr}, fp), f, opts.MaxSamples)
+			peer := Peer{Type: PeerCIDR, CIDR: cidrStr}
+			if !recordL7(cb.peerRules, f, fp, direction, peer, opts) {
+				cb.recordAttribution(ruleKeyFor(direction, peer, fp), f, opts.MaxSamples)
+			}
 			continue
 		}
 		key := peerKey(ep.Labels)
@@ -365,9 +407,40 @@ func groupFlows(
 			b.peerOrder = append(b.peerOrder, key)
 		}
 		eb.addFlow(fp)
-		eb.recordAttribution(ruleKeyFor(direction, Peer{Type: PeerEndpoint, Labels: selectedLabelsFromFlow(ep)}, fp), f, opts.MaxSamples)
+		peer := Peer{Type: PeerEndpoint, Labels: selectedLabelsFromFlow(ep)}
+		if !recordL7(eb.peerRules, f, fp, direction, peer, opts) {
+			eb.recordAttribution(ruleKeyFor(direction, peer, fp), f, opts.MaxSamples)
+		}
 	}
 	return b
+}
+
+// recordL7 attaches HTTP L7 rules + per-(method, path) attribution to a peer
+// bucket when AttributionOptions.L7Enabled is true and the flow carries a
+// non-nil L7 HTTP record producing at least one rule. Returns true when L7
+// attribution was recorded — caller then SKIPS the bare L4 attribution so
+// the evidence bucket reflects the L7-discriminated rules only (otherwise
+// flows would double-count: once L4, once L7). Returns false when no L7
+// rules were emitted (L7Enabled=false, no HTTP record, or empty method) so
+// the caller falls back to the v1.1 L4 attribution path.
+func recordL7(pr *peerRules, f *flowpb.Flow, fp *flowProto, direction string, peer Peer, opts AttributionOptions) bool {
+	if !opts.L7Enabled {
+		return false
+	}
+	if f.GetL7().GetHttp() == nil {
+		return false
+	}
+	rules := extractHTTPRules(f)
+	if len(rules) == 0 {
+		return false
+	}
+	portKey := strconv.FormatUint(uint64(fp.port), 10) + "/" + string(fp.proto)
+	pr.addHTTPRules(portKey, rules)
+	for _, r := range rules {
+		l7 := &L7Discriminator{Protocol: "http", HTTPMethod: r.Method, HTTPPath: r.Path}
+		pr.recordAttribution(ruleKeyForL7(direction, peer, fp, l7), f, opts.MaxSamples)
+	}
+	return true
 }
 
 func buildIngressRules(flows []*flowpb.Flow, policyNamespace string, tracker FlowTracker, opts AttributionOptions) ([]api.IngressRule, []RuleAttribution) {
@@ -378,21 +451,21 @@ func buildIngressRules(flows []*flowpb.Flow, policyNamespace string, tracker Flo
 	var attrib []RuleAttribution
 	for _, entity := range b.entityOrder {
 		er := b.entities[entity]
-		rules = append(rules, ingressRulesFrom(api.IngressCommonRule{FromEntities: api.EntitySlice{entity}}, er.ports, er.icmpFields)...)
+		rules = append(rules, ingressRulesFrom(api.IngressCommonRule{FromEntities: api.EntitySlice{entity}}, er.ports, er.icmpFields, er.httpRules)...)
 		for _, a := range er.attrib {
 			attrib = append(attrib, *a)
 		}
 	}
 	for _, key := range b.cidrOrder {
 		cb := b.cidrs[key]
-		rules = append(rules, ingressRulesFrom(api.IngressCommonRule{FromCIDR: api.CIDRSlice{cb.cidr}}, cb.ports, cb.icmpFields)...)
+		rules = append(rules, ingressRulesFrom(api.IngressCommonRule{FromCIDR: api.CIDRSlice{cb.cidr}}, cb.ports, cb.icmpFields, cb.httpRules)...)
 		for _, a := range cb.attrib {
 			attrib = append(attrib, *a)
 		}
 	}
 	for _, key := range b.peerOrder {
 		eb := b.peers[key]
-		rules = append(rules, ingressRulesFrom(api.IngressCommonRule{FromEndpoints: []api.EndpointSelector{eb.selector}}, eb.ports, eb.icmpFields)...)
+		rules = append(rules, ingressRulesFrom(api.IngressCommonRule{FromEndpoints: []api.EndpointSelector{eb.selector}}, eb.ports, eb.icmpFields, eb.httpRules)...)
 		for _, a := range eb.attrib {
 			attrib = append(attrib, *a)
 		}
@@ -408,21 +481,21 @@ func buildEgressRules(flows []*flowpb.Flow, policyNamespace string, tracker Flow
 	var attrib []RuleAttribution
 	for _, entity := range b.entityOrder {
 		er := b.entities[entity]
-		rules = append(rules, egressRulesFrom(api.EgressCommonRule{ToEntities: api.EntitySlice{entity}}, er.ports, er.icmpFields)...)
+		rules = append(rules, egressRulesFrom(api.EgressCommonRule{ToEntities: api.EntitySlice{entity}}, er.ports, er.icmpFields, er.httpRules)...)
 		for _, a := range er.attrib {
 			attrib = append(attrib, *a)
 		}
 	}
 	for _, key := range b.cidrOrder {
 		cb := b.cidrs[key]
-		rules = append(rules, egressRulesFrom(api.EgressCommonRule{ToCIDR: api.CIDRSlice{cb.cidr}}, cb.ports, cb.icmpFields)...)
+		rules = append(rules, egressRulesFrom(api.EgressCommonRule{ToCIDR: api.CIDRSlice{cb.cidr}}, cb.ports, cb.icmpFields, cb.httpRules)...)
 		for _, a := range cb.attrib {
 			attrib = append(attrib, *a)
 		}
 	}
 	for _, key := range b.peerOrder {
 		eb := b.peers[key]
-		rules = append(rules, egressRulesFrom(api.EgressCommonRule{ToEndpoints: []api.EndpointSelector{eb.selector}}, eb.ports, eb.icmpFields)...)
+		rules = append(rules, egressRulesFrom(api.EgressCommonRule{ToEndpoints: []api.EndpointSelector{eb.selector}}, eb.ports, eb.icmpFields, eb.httpRules)...)
 		for _, a := range eb.attrib {
 			attrib = append(attrib, *a)
 		}
@@ -430,10 +503,10 @@ func buildEgressRules(flows []*flowpb.Flow, policyNamespace string, tracker Flow
 	return rules, attrib
 }
 
-func ingressRulesFrom(common api.IngressCommonRule, ports []api.PortProtocol, icmps []api.ICMPField) []api.IngressRule {
+func ingressRulesFrom(common api.IngressCommonRule, ports []api.PortProtocol, icmps []api.ICMPField, httpByPort map[string][]api.PortRuleHTTP) []api.IngressRule {
 	var out []api.IngressRule
 	if len(ports) > 0 {
-		out = append(out, api.IngressRule{IngressCommonRule: common, ToPorts: api.PortRules{{Ports: ports}}})
+		out = append(out, api.IngressRule{IngressCommonRule: common, ToPorts: portRulesFor(ports, httpByPort)})
 	}
 	if len(icmps) > 0 {
 		out = append(out, api.IngressRule{IngressCommonRule: common, ICMPs: api.ICMPRules{{Fields: icmps}}})
@@ -441,13 +514,45 @@ func ingressRulesFrom(common api.IngressCommonRule, ports []api.PortProtocol, ic
 	return out
 }
 
-func egressRulesFrom(common api.EgressCommonRule, ports []api.PortProtocol, icmps []api.ICMPField) []api.EgressRule {
+func egressRulesFrom(common api.EgressCommonRule, ports []api.PortProtocol, icmps []api.ICMPField, httpByPort map[string][]api.PortRuleHTTP) []api.EgressRule {
 	var out []api.EgressRule
 	if len(ports) > 0 {
-		out = append(out, api.EgressRule{EgressCommonRule: common, ToPorts: api.PortRules{{Ports: ports}}})
+		out = append(out, api.EgressRule{EgressCommonRule: common, ToPorts: portRulesFor(ports, httpByPort)})
 	}
 	if len(icmps) > 0 {
 		out = append(out, api.EgressRule{EgressCommonRule: common, ICMPs: api.ICMPRules{{Fields: icmps}}})
+	}
+	return out
+}
+
+// portRulesFor builds the PortRule slice for a peer bucket. When no L7 HTTP
+// rules are attached to any port (httpByPort empty), it returns the v1.1
+// shape: a single PortRule with all ports collapsed in. When at least one
+// port carries L7 rules, it emits one PortRule per port — so HTTP rules
+// attach to the matching port only — and the PortRules without L7 rules
+// degrade gracefully into per-port entries with nil Rules. This trades
+// L4-only YAML byte-stability under L7Enabled=true ONLY when L7 records are
+// actually present; the all-empty case still collapses (verified by the
+// L7Enabled toggle byte-identity test).
+func portRulesFor(ports []api.PortProtocol, httpByPort map[string][]api.PortRuleHTTP) api.PortRules {
+	hasAnyL7 := false
+	for _, p := range ports {
+		if len(httpByPort[p.Port+"/"+string(p.Protocol)]) > 0 {
+			hasAnyL7 = true
+			break
+		}
+	}
+	if !hasAnyL7 {
+		return api.PortRules{{Ports: ports}}
+	}
+	out := make(api.PortRules, 0, len(ports))
+	for _, p := range ports {
+		key := p.Port + "/" + string(p.Protocol)
+		pr := api.PortRule{Ports: []api.PortProtocol{p}}
+		if rules := httpByPort[key]; len(rules) > 0 {
+			pr.Rules = &api.L7Rules{HTTP: rules}
+		}
+		out = append(out, pr)
 	}
 	return out
 }
@@ -460,6 +565,15 @@ func ruleKeyFor(direction string, peer Peer, fp *flowProto) RuleKey {
 		Port:      strconv.FormatUint(uint64(fp.port), 10),
 		Protocol:  protoDisplayName(fp.proto),
 	}
+}
+
+// ruleKeyForL7 mirrors ruleKeyFor but populates the L7 discriminator so two
+// rules differing only by HTTP method/path are NOT collapsed into the same
+// attribution bucket (EVID2-02).
+func ruleKeyForL7(direction string, peer Peer, fp *flowProto, l7 *L7Discriminator) RuleKey {
+	k := ruleKeyFor(direction, peer, fp)
+	k.L7 = l7
+	return k
 }
 
 // protoDisplayName returns a human-readable protocol name.

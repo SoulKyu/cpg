@@ -169,13 +169,12 @@ func TestBuildPolicy_L7Enabled_MultiPort_SeparatePortRules(t *testing.T) {
 	require.NotNil(t, p)
 	require.Len(t, p.Spec.Ingress, 1)
 	rule := p.Spec.Ingress[0]
-	require.Len(t, rule.ToPorts, 1, "single same-peer ingress emits one PortRule entry containing all ports")
 
-	// Both ports must be present in the same PortRule.Ports slice with each
-	// carrying their own HTTP rules. Implementation note: builder emits one
-	// PortRule per (port, proto) when L7 is attached, OR one PortRule with
-	// multiple ports when not — verify the structural invariant: each port
-	// has its HTTP block and rules don't bleed across.
+	// Both ports must be present with each carrying their own HTTP rules.
+	// Implementation note: builder emits one PortRule per (port, proto) when
+	// L7 is attached, OR one PortRule with multiple ports when not — verify
+	// the structural invariant: each port has its HTTP block and rules don't
+	// bleed across.
 
 	// Walk the structure: there may be one PortRule per port (when each
 	// carries Rules) — accept either shape but assert HTTP attaches to the
