@@ -32,19 +32,29 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 
 ### Active
 
-<!-- Awaiting v1.2 scoping via /gsd:new-milestone. Candidates: -->
+<!-- v1.2 scope: L7 policies only. Locked via /gsd:new-milestone on 2026-04-25. -->
 
-- [ ] Generate L7 HTTP policies (method, path, headers) from Hubble L7 flows — v1.2 candidate
-- [ ] Generate L7 DNS policies (FQDN matchPattern) from Hubble DNS flows — v1.2 candidate
-- [ ] `cpg apply` command: apply generated policies to cluster (dry-run by default, `--force` to apply) — v1.2 candidate
-- [ ] Policy consolidation / merging into broader rules — v1.2 candidate
-- [ ] Prometheus metrics for long-running instances — v1.2 candidate
+- [ ] Generate L7 HTTP policies (method, path, headers) from Hubble L7 flows — v1.2
+- [ ] Generate L7 DNS policies (FQDN matchPattern) from Hubble DNS flows — v1.2
 
 ### Planned
 
-<!-- Empty — next milestone will redefine v1.2 scope. -->
+<!-- Deferred from v1.2 scoping on 2026-04-25 to keep the milestone focused. -->
 
-- _(defined during `/gsd:new-milestone`)_
+- [ ] `cpg apply` command (dry-run by default, `--force` to apply) — v1.3 candidate
+- [ ] Policy consolidation / merging into broader rules — v1.3 candidate
+- [ ] Prometheus metrics for long-running instances — v1.3 candidate
+- [ ] AI-assisted semantic plausibility verdict on `cpg explain` — shelved (see notes below)
+
+<!-- AI feature: design explored on 2026-04-24, spec drafted, then dropped on
+     2026-04-25 before implementation. Reasons: hallucination risk on confident
+     reasoning, signal quality depends linearly on label hygiene (often poor in
+     practice), latency on bulk explain runs, and blast-radius analysis (static,
+     deterministic) is more operationally useful than semantic plausibility for
+     the same problem space. The design spec lived briefly at
+     docs/superpowers/specs/2026-04-24-ai-policy-analysis-design.md
+     (commit 7e1e455, removed in v1.2 scoping commit). Recover via git history
+     if revisited. -->
 
 ### Out of Scope
 
@@ -90,6 +100,8 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 | Channel fan-out (tee) for policy + evidence writers | Writers independent; neither blocks the other | ✓ Good — shipped v1.1 |
 | `--dry-run` covers policies AND evidence | Pure preview semantics — no filesystem side effects | ✓ Good — shipped v1.1 |
 | `cpg explain` rejects non-`cpg-` YAML names | Guards against explaining hand-crafted/non-cpg policies | ✓ Good — shipped v1.1 |
+| Drop AI-assisted plausibility analysis from v1.2 scope | Signal quality depends on label hygiene; hallucination risk on confident reasoning; blast-radius analysis (static, deterministic) is more operationally useful for the same problem space | — Decided 2026-04-25 |
+| v1.2 scoped to L7 policies only | Smaller focused milestone; `cpg apply`, consolidation, metrics deferred to v1.3 | — Decided 2026-04-25 |
 
 ## Current State
 
@@ -97,16 +109,22 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 
 **Codebase:** 9 packages (`pkg/{labels,policy,output,hubble,k8s,dedup,flowsource,evidence,diff}` + `cmd/`). 180 tests passing. Release-please tagged `v1.6.0` (latest product release).
 
-**Not yet started:** v1.2 scope locked via `/gsd:new-milestone`.
+**Next milestone:** v1.2 L7 Policies — focused, no other scope.
 
-## Next Milestone: v1.2 L7 Policies & Auto-Apply (to be scoped)
+## Next Milestone: v1.2 L7 Policies
 
-Candidate themes — subject to revision during `/gsd:new-milestone`:
-- L7 HTTP policy generation from Hubble L7 flows
-- L7 DNS policy generation (FQDN matchPattern)
-- `cpg apply` command with dry-run-by-default + `--force`
+**Goal:** generate L7 CiliumNetworkPolicies from Hubble L7 flows so users can move from L4 (port + protocol) to L7 (HTTP method/path, DNS FQDN) without leaving the cpg workflow.
+
+**Scope:**
+- L7 HTTP policy generation from Hubble L7 flows (method, path, headers as available in the flow record)
+- L7 DNS policy generation (FQDN matchPattern) from Hubble DNS flows
+- Documented two-step workflow: deploy L4 policies first, observe L7 traffic, then run cpg with L7 enabled to refine
+
+**Deferred to v1.3 (or later):**
+- `cpg apply` (dry-run-default + `--force`)
 - Policy consolidation across overlapping rules
 - Prometheus metrics for long-running deployments
+- AI-assisted plausibility analysis (shelved — see Requirements / Planned section)
 
 ---
-*Last updated: 2026-04-24 — archived v1.0 and v1.1 milestones; v1.2 awaiting scoping.*
+*Last updated: 2026-04-25 — v1.2 scope locked to L7 policies only; AI feature shelved before implementation.*

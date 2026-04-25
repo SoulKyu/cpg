@@ -2,13 +2,13 @@
 
 ## Overview
 
-CPG delivers a Go CLI tool that turns Hubble dropped flows into ready-to-apply CiliumNetworkPolicies. v1.0 shipped the core live-streaming generator. v1.1 added an offline iteration workflow (`cpg replay`), per-rule flow evidence, `cpg explain`, and `--dry-run` with unified YAML diff. Next milestone (v1.2) is planned around L7 policies and `cpg apply`.
+CPG delivers a Go CLI tool that turns Hubble dropped flows into ready-to-apply CiliumNetworkPolicies. v1.0 shipped the core live-streaming generator. v1.1 added an offline iteration workflow (`cpg replay`), per-rule flow evidence, `cpg explain`, and `--dry-run` with unified YAML diff. Next milestone (v1.2) extends generation to L7 (HTTP + DNS).
 
 ## Milestones
 
 - ✅ **v1.0 MVP (Core Policy Generator)** — Phases 1-3 (shipped 2026-03-08) — [archive](milestones/v1.0-ROADMAP.md)
 - ✅ **v1.1 Offline Replay & Policy Analysis** — Phases 4-6 (shipped 2026-04-24) — [archive](milestones/v1.1-ROADMAP.md)
-- 📋 **v1.2 L7 Policies & Auto-Apply** — to be scoped via `/gsd:new-milestone`
+- 🚧 **v1.2 L7 Policies** — focused on L7 HTTP + DNS policy generation. To be planned via `/gsd:new-milestone`.
 
 ## Phases
 
@@ -34,14 +34,20 @@ Full details: [milestones/v1.1-ROADMAP.md](milestones/v1.1-ROADMAP.md)
 
 </details>
 
-### 📋 v1.2 L7 Policies & Auto-Apply (Planned)
+### 🚧 v1.2 L7 Policies (Awaiting plan)
 
-Scope to be locked via `/gsd:new-milestone`. Candidate requirements tracked in `PROJECT.md` under "Planned":
-- L7 HTTP policy generation (method, path, headers) from Hubble L7 flows
+Scope locked to L7 only. Phases to be defined via `/gsd:new-milestone`.
+
+**In scope:**
+- L7 HTTP policy generation (method, path, headers as available in the Hubble L7 flow record)
 - L7 DNS policy generation (FQDN matchPattern) from Hubble DNS flows
-- `cpg apply` command — applies generated policies to cluster (dry-run by default, `--force` to apply)
-- Policy consolidation / merging into broader rules
-- Prometheus metrics exposure for long-running instances
+- Two-step workflow documented: deploy L4 first, observe L7, then enable L7 generation
+
+**Deferred to v1.3 (or later):**
+- `cpg apply` command
+- Policy consolidation / merging
+- Prometheus metrics
+- AI-assisted plausibility analysis (shelved before implementation — design explored, see git history of `docs/superpowers/specs/`)
 
 ## Progress
 
@@ -54,4 +60,4 @@ Scope to be locked via `/gsd:new-milestone`. Candidate requirements tracked in `
 | 5. Dry-Run & Pipeline Integration | v1.1 | 1/1 | Complete | 2026-04-24 |
 | 6. Explain Command | v1.1 | 1/1 | Complete | 2026-04-24 |
 
-**Milestone status:** v1.0 ✅ shipped · v1.1 ✅ shipped · v1.2 📋 awaiting scoping
+**Milestone status:** v1.0 ✅ shipped · v1.1 ✅ shipped · v1.2 🚧 L7 only, awaiting plan
