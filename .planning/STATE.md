@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: L7 Policies (HTTP + DNS)
-status: in_progress
-stopped_at: Completed 08-01-PLAN.md
-last_updated: "2026-04-25T08:01:14.511Z"
+status: executing
+stopped_at: Completed 08-02-PLAN.md
+last_updated: "2026-04-25T08:09:38.880Z"
 last_activity: "2026-04-25 -- Plan 08-01 complete: extractHTTPRules + normalizeHTTPMethod helpers (HTTP-02/03/05), 262 tests pass"
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 8
-  completed_plans: 5
+  completed_plans: 6
 ---
 
 # Project State
@@ -24,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-04-25)
 
 ## Current Position
 
-Phase: 8 (in progress, 1/4 plans) → next: Plan 08-02 (BuildPolicy --l7 integration)
-Plan: 08-01 ✅ complete
-Status: Phase 8 in progress (1/4 plans). v1.2 milestone 1/3 phases done; phase 8 underway.
-Last activity: 2026-04-25 -- Plan 08-01 complete: extractHTTPRules + normalizeHTTPMethod helpers (HTTP-02/03/05), 262 tests pass
+Phase: 8 (in progress, 2/4 plans) → next: Plan 08-03 (pipeline → AttributionOptions.L7Enabled wiring + evidence writer L7Ref)
+Plan: 08-02 ✅ complete
+Status: Phase 8 in progress (2/4 plans). v1.2 milestone 1/3 phases done; phase 8 at 50%.
+Last activity: 2026-04-25 -- Plan 08-02 complete: BuildPolicy emits HTTP rules under L7Enabled (HTTP-01, HTTP-04); 271 tests pass
 
 Progress: v1.0 ✅ · v1.1 ✅ · v1.2 🚧 phases 7 ✅ · 8-9 pending (1/3 complete)
 
@@ -60,6 +60,7 @@ Progress: v1.0 ✅ · v1.1 ✅ · v1.2 🚧 phases 7 ✅ · 8-9 pending (1/3 com
 | Phase 07 P02 | 3min | 2 tasks | 8 files |
 | Phase 07 P04 | 12min | 2 tasks | 7 files |
 | Phase 08 P01 | 12min | 2 tasks | 2 files |
+| Phase 08 P02 | 12 | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -87,6 +88,8 @@ Recent decisions affecting v1.2 work (research-confirmed 2026-04-25):
 - [Phase 07-04]: L7 client construction injected via package-level `l7ClientFactory` swappable var. Tests substitute `kubernetes/fake` clientsets without DI plumbing through every call site or touching the `cobra.Command` surface.
 - [Phase 07-04]: Byte-stability test compares CNP YAML byte-for-byte but evidence sidecars by tree shape only — session UUID + timestamps differ legitimately run-to-run regardless of `--l7`. Invariant applies to codegen, not session-stamped state.
 - [Phase 08]: Plan 08-01: HTTP L7 extraction primitives kept package-private; net/url.Parse handles bare-paths and full-URLs uniformly; empty path emits ^/$; HTTP-05 enforced via dedicated lint test
+- [Phase 08]: BuildPolicy emits per-port PortRules only when L7 rules attach; L4-only path stays collapsed (single PortRule with all ports) to preserve v1.1 byte-stability.
+- [Phase 08]: L7 attribution subsumes L4 attribution per-flow: when recordL7 emits HTTP-discriminated keys, the bare L4 RuleKey is skipped, preventing double-counting in evidence buckets.
 
 ### Pending Todos
 
@@ -101,6 +104,6 @@ None open. Research-flagged items (deferred to phase planning):
 
 ## Session Continuity
 
-Last session: 2026-04-25T08:01:14.506Z
-Stopped at: Completed 08-01-PLAN.md
+Last session: 2026-04-25T08:09:32.670Z
+Stopped at: Completed 08-02-PLAN.md
 Resume: Run `/gsd:execute-phase 8` to continue Phase 8 with Plan 08-02.

@@ -19,10 +19,10 @@ Each requirement maps to exactly one phase. Traceability table at bottom.
 
 ### HTTP L7 Generation
 
-- [ ] **HTTP-01**: When `--l7` is set and `Flow.L7.Http` records are present for a (src, dst, port) tuple, cpg generates a `toPorts.rules.http` block alongside the L4 port rule.
+- [x] **HTTP-01**: When `--l7` is set and `Flow.L7.Http` records are present for a (src, dst, port) tuple, cpg generates a `toPorts.rules.http` block alongside the L4 port rule.
 - [x] **HTTP-02**: HTTP method is normalized to uppercase (`GET`, `POST`, `PUT`, `DELETE`, …) before emission, regardless of how Hubble reports the method casing.
 - [x] **HTTP-03**: HTTP path is emitted as a Cilium-compatible RE2 regex: `regexp.QuoteMeta` applied to the literal path, anchored with `^…$`. No regex inference, no path templating, no auto-collapse — one rule per observed (method, path) pair.
-- [ ] **HTTP-04**: Multiple distinct (method, path) observations for the same (src, dst, port) tuple merge into a single `toPorts.rules.http` list — not into multiple PortRule blocks.
+- [x] **HTTP-04**: Multiple distinct (method, path) observations for the same (src, dst, port) tuple merge into a single `toPorts.rules.http` list — not into multiple PortRule blocks.
 - [x] **HTTP-05**: HTTP `Headers`, `Host`, and `HostExact` rules are NOT generated. Header generation is explicitly out of scope (see Out of Scope, anti-feature: secret leakage into committed YAML).
 
 ### DNS L7 Generation
@@ -35,9 +35,9 @@ Each requirement maps to exactly one phase. Traceability table at bottom.
 ### Evidence Schema (Internal Contract)
 
 - [x] **EVID2-01**: The evidence JSON schema bumps from `schema_version: 1` to `schema_version: 2`. The v2 schema adds an optional `l7` field per `RuleEvidence` (sub-fields: `protocol` ∈ {http, dns}, `http_method`, `http_path`, `dns_matchname`). The existing reader behavior is preserved: any non-`2` value is rejected with a clear error directing the user to wipe `$XDG_CACHE_HOME/cpg/evidence/` (no v1 back-compat layer — v1.1 shipped 2026-04-24, no caches in production).
-- [ ] **EVID2-02**: `RuleKey` extends with an optional L7 discriminator so that two rules differing only by HTTP method or path are not deduplicated into the same evidence bucket.
-- [ ] **EVID2-03**: `mergePortRules` (`pkg/policy/merge.go`) preserves the `Rules` field of `PortRule` across merge operations. Today it silently drops it (latent bug; harmless before L7 codegen, silent data loss after).
-- [ ] **EVID2-04**: `normalizeRule` extends to deterministically sort L7 lists (HTTP method+path lexicographic, DNS matchName lexicographic) so YAML output stays byte-stable across runs and dedup file-comparison stays correct.
+- [x] **EVID2-02**: `RuleKey` extends with an optional L7 discriminator so that two rules differing only by HTTP method or path are not deduplicated into the same evidence bucket.
+- [x] **EVID2-03**: `mergePortRules` (`pkg/policy/merge.go`) preserves the `Rules` field of `PortRule` across merge operations. Today it silently drops it (latent bug; harmless before L7 codegen, silent data loss after).
+- [x] **EVID2-04**: `normalizeRule` extends to deterministically sort L7 lists (HTTP method+path lexicographic, DNS matchName lexicographic) so YAML output stays byte-stable across runs and dedup file-comparison stays correct.
 
 ### CLI Surface
 
