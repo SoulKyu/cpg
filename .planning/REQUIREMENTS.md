@@ -82,8 +82,8 @@ Filled by the roadmapper after phase definition.
 | VIS-01 | Phase 8 | Planned |
 | VIS-02 | Phase 9 | Planned |
 | VIS-03 | Phase 9 | Planned |
-| VIS-04 | Phase 7 | Planned |
-| VIS-05 | Phase 7 | Planned |
+| VIS-04 | Phase 7 | Complete |
+| VIS-05 | Phase 7 | Complete |
 | VIS-06 | Phase 7 | Complete |
 | HTTP-01 | Phase 8 | Planned |
 | HTTP-02 | Phase 8 | Planned |
@@ -94,10 +94,10 @@ Filled by the roadmapper after phase definition.
 | DNS-02 | Phase 9 | Planned |
 | DNS-03 | Phase 9 | Planned |
 | DNS-04 | Phase 9 | Planned |
-| EVID2-01 | Phase 7 | Planned |
-| EVID2-02 | Phase 7 | Planned |
-| EVID2-03 | Phase 7 | Planned |
-| EVID2-04 | Phase 7 | Planned |
+| EVID2-01 | Phase 7 | Complete |
+| EVID2-02 | Phase 7 | Complete |
+| EVID2-03 | Phase 7 | Complete |
+| EVID2-04 | Phase 7 | Complete |
 | L7CLI-01 | Phase 7 | Complete |
 | L7CLI-02 | Phase 9 | Planned |
 | L7CLI-03 | Phase 9 | Planned |
