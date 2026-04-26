@@ -30,8 +30,8 @@
 
 ### EXIT — CI integration
 
-- [ ] **EXIT-01**: User can pass `--fail-on-infra-drops` to make cpg exit with code 1 when ≥ 1 infra drop is observed; default behavior unchanged (exit 0 always)
-- [ ] **EXIT-02**: README documents exit-code semantics + a recommended CI cron pattern using the new flag
+- [x] **EXIT-01**: User can pass `--fail-on-infra-drops` to make cpg exit with code 1 when ≥ 1 infra drop is observed; default behavior unchanged (exit 0 always)
+- [x] **EXIT-02**: README documents exit-code semantics + a recommended CI cron pattern using the new flag
 
 ---
 

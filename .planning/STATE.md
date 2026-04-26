@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Cluster Health Surfacing
-status: executing
-stopped_at: Completed 13-02-commonflags-and-pipeline-wiring-PLAN.md
-last_updated: "2026-04-26T21:03:56.196Z"
+status: verifying
+stopped_at: Completed 13-03-exit-code-and-readme-PLAN.md
+last_updated: "2026-04-26T21:08:15.343Z"
 last_activity: 2026-04-26
 progress:
   total_phases: 4
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 8
-  completed_plans: 7
+  completed_plans: 8
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-26)
 
 Phase: 13 (flags-and-exit-code) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-04-26
 
 Progress: v1.0 ✅ · v1.1 ✅ · v1.2 ✅ · v1.3 🗺 (roadmap ready)
@@ -62,6 +62,7 @@ Phase 13 [          ] 0%   Flags + Exit Code
 | Phase 12-session-summary-block P01 | 146 | 2 tasks | 4 files |
 | Phase 13-flags-and-exit-code P01 | 8 | 2 tasks | 2 files |
 | Phase 13-flags-and-exit-code P02 | 8 | 2 tasks | 5 files |
+| Phase 13-flags-and-exit-code P03 | 146 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -80,6 +81,7 @@ Decisions logged in PROJECT.md Key Decisions table.
 - [Phase 13-flags-and-exit-code]: SetIgnoreDropReasons normalises to UPPERCASE (canonical flowpb enum form); FILTER-01 inserted before ignoreProtocols in Run() for correct filter precedence
 - [Phase 13-flags-and-exit-code]: validateIgnoreDropReasons accepts *zap.Logger for inline FILTER-03 WARN emission; dropClassLabel() local helper avoids exporting String() from pkg/dropclass
 - [Phase 13-flags-and-exit-code]: FailOnInfraDrops stored in PipelineConfig but exit logic not yet implemented (plan 13-03)
+- [Phase 13-flags-and-exit-code]: ExitCodeError defined in pkg/hubble to avoid import cycle; shouldExitForInfraDrops pure helper; errors.As in main.go; exit code 1 only (not 2)
 
 ### Pending Todos
 
@@ -97,6 +99,6 @@ None open. v1.3 deferred items (L7-FUT-01, DNS-FUT-02, etc.) tracked in PROJECT.
 
 ## Session Continuity
 
-Last session: 2026-04-26T21:03:56.189Z
-Stopped at: Completed 13-02-commonflags-and-pipeline-wiring-PLAN.md
+Last session: 2026-04-26T21:08:15.338Z
+Stopped at: Completed 13-03-exit-code-and-readme-PLAN.md
 Resume: `/gsd:plan-phase 10` — Classifier Core (CLASSIFY-01, CLASSIFY-02, CLASSIFY-03)
