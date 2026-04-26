@@ -117,6 +117,16 @@ Filtering:
   -A, --all-namespaces       Observe all namespaces
       --ignore-protocol strs Drop flows whose L4 protocol matches; repeatable / comma-separated.
                              Valid: tcp, udp, icmpv4, icmpv6, sctp (case-insensitive)
+      --ignore-drop-reason strs
+                             Exclude flows by Cilium drop reason name before classification;
+                             repeatable / comma-separated / case-insensitive.
+                             Passing a reason already classified as infra or transient emits
+                             a warning (it is already suppressed by default).
+
+CI integration:
+      --fail-on-infra-drops  Exit with code 1 when ≥1 infra drop is observed (default:
+                             always exit 0). Use in CI/cron pipelines to alert on cluster
+                             health issues.
 
 Output:
   -o, --output-dir string    Output directory (default "./policies")
@@ -231,7 +241,7 @@ cpg replay drops.jsonl.gz -n production    # gzip transparent
 cat drops.jsonl | cpg replay -              # stdin
 ```
 
-Flags shared with `generate` (`--output-dir`, `--cluster-dedup`, `--flush-interval`, `--ignore-protocol`) work identically. Non-DROPPED verdicts and malformed lines are skipped with counters surfaced in the session summary.
+Flags shared with `generate` (`--output-dir`, `--cluster-dedup`, `--flush-interval`, `--ignore-protocol`, `--ignore-drop-reason`, `--fail-on-infra-drops`) work identically. Non-DROPPED verdicts and malformed lines are skipped with counters surfaced in the session summary.
 
 ## L7 Prerequisites <a id="l7-prerequisites"></a>
 
@@ -572,6 +582,31 @@ make all           # lint + test + build
 ```
 
 The test suite covers label selection, policy building, merging, output writing, flow aggregation, pipeline orchestration, and dedup logic. No live cluster required -- the Hubble gRPC client is mocked via interfaces.
+
+## Exit codes
+
+| Code | Meaning |
+|------|-------------------------------------------------------------------------|
+| 0    | Success — policies generated (or previewed). Default even with infra drops. |
+| 1    | `--fail-on-infra-drops` was set **and** ≥1 infra drop was observed. |
+
+Any other non-zero exit means cpg encountered a fatal error (connection
+failure, bad flag, etc.).
+
+### CI / cron example
+
+```bash
+# Alert when infra drops appear in a captured window
+cpg replay /tmp/last-hour.jsonl --fail-on-infra-drops \
+  || alert-team "cpg detected infra drops — check cluster-health.json"
+```
+
+With `cpg generate` (live stream — run for a fixed window with timeout):
+
+```bash
+timeout 300 cpg generate -n production --fail-on-infra-drops \
+  || alert-team "infra drops in production — see cluster-health.json"
+```
 
 ## Limitations
 
