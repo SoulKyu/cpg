@@ -62,8 +62,14 @@ None.
 
 None open. v1.3 deferred items (L7-FUT-01, DNS-FUT-02, etc.) tracked in PROJECT.md Planned section.
 
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260426-pa5 | ignore-protocol flag (cpg generate + replay) | 2026-04-26 | 8f33122 | [260426-pa5-ignore-protocol-flag-cpg-generate-replay](./quick/260426-pa5-ignore-protocol-flag-cpg-generate-replay/) |
+
 ## Session Continuity
 
-Last session: 2026-04-25T11:00:00Z
-Stopped at: v1.0 + v1.1 + v1.2 archived. Ready for v1.3 scoping.
-Resume: Run `/gsd:new-milestone` to scope v1.3.
+Last session: 2026-04-26T16:30:00Z
+Stopped at: Quick task 260426-pa5 (--ignore-protocol flag) shipped on master.
+Resume: Run `/gsd:new-milestone` to scope v1.3, or `/gsd:quick` for next ad-hoc task.
