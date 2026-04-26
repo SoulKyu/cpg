@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/SoulKyu/cpg/compare/v1.7.0...v1.8.0) (2026-04-26)
+
+
+### Features
+
+* **pa5:** --ignore-protocol drops flows by L4 proto in aggregator + counter ([6cea8d5](https://github.com/SoulKyu/cpg/commit/6cea8d5feeeda1547807468dca9597c70059a883))
+
 ## [1.7.0](https://github.com/SoulKyu/cpg/compare/v1.6.0...v1.7.0) (2026-04-25)
 
 
