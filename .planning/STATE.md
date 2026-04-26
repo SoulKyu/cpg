@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Cluster Health Surfacing
-status: verifying
-stopped_at: Completed 12-01-session-summary-block-PLAN.md
-last_updated: "2026-04-26T20:50:24.514Z"
+status: executing
+stopped_at: Completed 13-01-aggregator-ignore-drop-reason-PLAN.md
+last_updated: "2026-04-26T20:59:26.225Z"
 last_activity: 2026-04-26
 progress:
   total_phases: 4
   completed_phases: 3
-  total_plans: 5
-  completed_plans: 5
+  total_plans: 8
+  completed_plans: 6
 ---
 
 # Project State
@@ -20,13 +20,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-26)
 
 **Core value:** Automatically generate correct CiliumNetworkPolicies from observed Hubble denials so that SREs spend zero time manually writing network policies in default-deny environments.
-**Current focus:** Phase 12 — session-summary-block
+**Current focus:** Phase 13 — flags-and-exit-code
 
 ## Current Position
 
-Phase: 13
-Plan: Not started
-Status: Phase complete — ready for verification
+Phase: 13 (flags-and-exit-code) — EXECUTING
+Plan: 2 of 3
+Status: Ready to execute
 Last activity: 2026-04-26
 
 Progress: v1.0 ✅ · v1.1 ✅ · v1.2 ✅ · v1.3 🗺 (roadmap ready)
@@ -60,6 +60,7 @@ Phase 13 [          ] 0%   Flags + Exit Code
 | Phase 11-aggregator-suppression-and-health-writer P01 | 8 | 2 tasks | 3 files |
 | Phase 11-aggregator-suppression-and-health-writer P02 | 3 | 2 tasks | 3 files |
 | Phase 12-session-summary-block P01 | 146 | 2 tasks | 4 files |
+| Phase 13-flags-and-exit-code P01 | 8 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -75,6 +76,7 @@ Decisions logged in PROJECT.md Key Decisions table.
 - [Phase 11-aggregator-suppression-and-health-writer]: drops sorted by flowpb.DropReason_name for deterministic cluster-health.json output
 - [Phase 12-session-summary-block]: PrintClusterHealthSummary takes io.Writer for testability; nil Stdout defaults to os.Stdout at call site in pipeline.go
 - [Phase 12-session-summary-block]: Snapshot() nil-safe method on healthWriter returns shallow copy of drops — avoids re-reading cluster-health.json
+- [Phase 13-flags-and-exit-code]: SetIgnoreDropReasons normalises to UPPERCASE (canonical flowpb enum form); FILTER-01 inserted before ignoreProtocols in Run() for correct filter precedence
 
 ### Pending Todos
 
@@ -92,6 +94,6 @@ None open. v1.3 deferred items (L7-FUT-01, DNS-FUT-02, etc.) tracked in PROJECT.
 
 ## Session Continuity
 
-Last session: 2026-04-26T20:49:46.217Z
-Stopped at: Completed 12-01-session-summary-block-PLAN.md
+Last session: 2026-04-26T20:59:26.220Z
+Stopped at: Completed 13-01-aggregator-ignore-drop-reason-PLAN.md
 Resume: `/gsd:plan-phase 10` — Classifier Core (CLASSIFY-01, CLASSIFY-02, CLASSIFY-03)

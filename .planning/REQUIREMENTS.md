@@ -24,7 +24,7 @@
 
 ### FILTER — User-controlled filtering
 
-- [ ] **FILTER-01**: User can pass `--ignore-drop-reason <reason>` (repeatable, comma-separated, case-insensitive) on both `generate` and `replay` to exclude flows by reason name before classification
+- [x] **FILTER-01**: User can pass `--ignore-drop-reason <reason>` (repeatable, comma-separated, case-insensitive) on both `generate` and `replay` to exclude flows by reason name before classification
 - [ ] **FILTER-02**: Validation rejects unknown reason names at flag-parse time, error message lists valid reasons
 - [ ] **FILTER-03**: WARN emitted when user passes a reason already classified as `infra` / `transient` (redundant with default suppression — surfaced for clarity)
 
