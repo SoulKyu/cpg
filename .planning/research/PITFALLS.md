@@ -1,379 +1,260 @@
 # Pitfalls Research
 
-**Domain:** Adding L7 (HTTP + DNS) policy generation to existing L4 generator (cpg v1.2)
-**Researched:** 2026-04-25
-**Confidence:** HIGH (verified against Cilium docs, Hubble flow proto, existing cpg codebase, prior research archive)
+**Domain:** Adding drop-reason classification + cluster-health surfacing to existing cpg flow-processing pipeline (v1.3)
+**Researched:** 2026-04-26
+**Confidence:** HIGH (verified against Cilium v1.19.1 protobuf source, existing cpg aggregator pattern, codebase audit)
 
-> **Scope note.** v1.2 is L7-only: `cpg apply`, drift detection, RBAC pre-flight, and Envoy-redirect-on-apply (P1, P4, P11 in archive) are deferred to v1.3 and are explicitly out of scope. Prior research archived at `.planning/research/archive-2026-04-25/PITFALLS.md` remains canonical for those topics.
+> **Scope note.** This file is v1.3-specific. v1.2 pitfalls (L7 visibility, HTTP anchoring, DNS companion rules) are archived at `.planning/research/archive-2026-04-25/PITFALLS.md`. The prior research remains canonical for those topics.
 
 ---
 
 ## Critical Pitfalls
 
-### Pitfall 1: L7 Visibility Off — `cpg generate --l7` silently produces L4-only output
+### Pitfall 1: UNKNOWN_REASON defaults to policy bucket — regenerates the original v1.2 bug class
 
 **What goes wrong:**
-Hubble only emits the `Flow.L7` field when traffic is being proxied by Envoy / the DNS proxy. That requires either (a) `enable-l7-proxy=true` on the Cilium agent (default true on most installs) AND (b) a `policy.cilium.io/proxy-visibility` annotation on the target pod, OR (c) an existing CNP with `rules.http`/`rules.dns` already redirecting that port. Without those, every flow has `L7 == nil`. If cpg's L7 builder simply iterates flows checking `f.GetL7() != nil` and finds zero, it writes the same L4 policies as v1.1 — but the user *thinks* they got L7 enforcement.
+The classifier receives a flow whose `DropReasonDesc` is `DROP_REASON_UNKNOWN` (numeric 0) or a numeric value not present in the taxonomy map. If the fallback is `CategoryPolicy`, cpg generates a CNP for it — exactly the regression we are fixing. The trigger was `CT_MAP_INSERTION_FAILED` (155) producing a bogus `cpg-mmtro-adserver` CNP; the same bug fires for any reason not in the map.
 
 **Why it happens:**
-Visibility is a Cilium-side prerequisite that cpg cannot satisfy by reading flows alone. The L7 field being empty is indistinguishable from "no L7 traffic happened" without auxiliary detection.
+Developers write `switch reason { case policy: ... default: policy }` as a natural fallback, not realising that "unknown" means "we don't know, do NOT generate a policy". The safe interpretation of unknown is: skip policy generation AND record to cluster-health.
 
 **How to avoid:**
-- After flush, if **any** `toPorts` candidate matches a known L7 port (80, 8080, 443 with TLS-terminating gateway, 53/UDP) AND zero L7 records were observed for that workload, log a `WARN` with copy-pasteable remediation:
+- Default bucket for all unrecognised numeric values MUST be `CategoryUncategorized` (or a distinct `CategoryUnknown`), never `CategoryPolicy`.
+- `DROP_REASON_UNKNOWN` (0) must be explicitly mapped to `CategoryUncategorized`, not inferred from a zero-value Go constant that could silently fall through.
+- The classifier must emit a `WARN` log on every first-occurrence of an unrecognised value: `"unrecognised Cilium drop reason — treating as infra/uncategorized; update classifier taxonomy: <numeric_value>"`.
+- Include a unit test: `classifyReason(DROP_REASON_UNKNOWN) == CategoryUncategorized`, `classifyReason(9999) == CategoryUncategorized` (future Cilium value).
+
+**Warning signs:**
+- CNPs appearing for `CT_MAP_INSERTION_FAILED`, `IP_FRAGMENTATION_NOT_SUPPORTED`, or any infra reason.
+- `cluster-health.json` shows zero entries while `policies/` grows with unexpected files.
+- No WARN log lines mentioning "unrecognised drop reason".
+
+**Phase to address:**
+Phase 1 (classifier core) — must be correct before any pipeline wiring. The test for unknown-reason fallback must be part of the Phase 1 acceptance gate, not a later review.
+
+---
+
+### Pitfall 2: Cilium adds new DropReason enum values silently across minor versions
+
+**What goes wrong:**
+Cilium has added ~15 new `DropReason` values between 1.14 and 1.19 (e.g. `DROP_HOST_NOT_READY` = 202, `DROP_EP_NOT_READY` = 203, `DROP_NO_EGRESS_IP` = 204 appeared in recent minor versions). When cpg is built against Cilium 1.19.1 and run against a cluster on 1.20+, protobuf will deserialise unrecognised enum values as `DROP_REASON_UNKNOWN` (0) on wire — this is protobuf's forward-compat rule for enums. The classifier then sees 0, which maps to `CategoryUncategorized` (safe), BUT the actual reason string may be in `DropReasonDesc`'s string representation or a companion text field.
+
+**Why it happens:**
+Cilium uses protobuf enum extensions. New values added upstream are valid wire integers but not present in the compiled Go stubs until the dependency is bumped. The numeric zero fallback is silent — there is no protobuf decode error, no panic, just a loss of classification fidelity.
+
+**How to avoid:**
+- Never classify by string name alone (brittle across versions). Classify by the `DropReasonDesc` int32 numeric value — protobuf guarantees numeric stability even when names are unavailable.
+- Maintain a `classifierVersion` constant in the taxonomy file, bump it when new reasons are added. Log it in session summary.
+- At startup (or on first unrecognised value), log: `"classifier taxonomy built against Cilium <version> — flows with newer drop reasons will be reported as uncategorized"`.
+- Add a CI job that diffs the taxonomy map against the latest Cilium release's proto file and fails if new values are found. This can be a simple `go generate` script.
+
+**Warning signs:**
+- Cluster-health counter shows high volume of `category=uncategorized`.
+- Users report that `cpg` stopped generating policies after a Cilium upgrade (all reasons landing in uncategorized).
+- `WARN unrecognised Cilium drop reason` appearing frequently in logs.
+
+**Phase to address:**
+Phase 1 (classifier) — add `classifierVersion` and the WARN log. Phase 4 (session summary) — surface uncategorized count so operators notice. CI job is a post-ship follow-up.
+
+---
+
+### Pitfall 3: Cluster-health alerts buried in log stream — invisible to operators scanning for CNPs
+
+**What goes wrong:**
+cpg's primary output is YAML files. Operators typically run `cpg generate ... 2>/dev/null` or redirect stderr to a file, then inspect `policies/`. An infra alert emitted as a `zap.Warn` line at T+30s scrolls off the terminal. The operator sees the policies (the "real" output) and never acts on the cluster-health information.
+
+**Why it happens:**
+cpg was designed as a code generator, not a monitoring tool. Adding health alerts to the same log stream as policy-generation noise creates information-density competition. The alert wins only if it's visually distinct and structurally different from normal log output.
+
+**How to avoid:**
+- Write a separate `cluster-health.json` file alongside policies that is machine-readable and persists after the session ends.
+- Print a structured session-summary block to stdout (separate from zap/stderr logs) at shutdown, similar to how `kubectl` prints summaries. Use `fmt.Fprintf(os.Stdout, ...)` not `logger.Warn(...)` for the final infra-drops banner.
+- The banner must be impossible to miss: `\n=== CLUSTER HEALTH ISSUES DETECTED ===\n`, with counts and the path to `cluster-health.json`.
+- Do NOT suppress this banner in `--dry-run` mode — dry-run is explicitly a preview, not a silence mode.
+
+**Warning signs:**
+- In user testing: no one mentions infra drops even though they occurred.
+- `cluster-health.json` has entries but no ticket was opened.
+- Users ask "cpg generated a weird policy for CT_MAP_INSERTION_FAILED" (means they never saw the warning).
+
+**Phase to address:**
+Phase 3 (cluster-health.json writer) + Phase 4 (session summary banner). The banner is not optional polish — it is the primary UX mechanism that prevents the alert from being ignored.
+
+---
+
+### Pitfall 4: Exit code change breaks existing automations without opt-in gate
+
+**What goes wrong:**
+Every existing cpg CI pipeline, cron job, and post-hook that tests `if cpg generate ...; then apply; fi` has been written assuming `exit 0` = success, `exit 1` = connection/config error. If infra drops now cause `exit 2` (or any non-zero) by default, every automation breaks silently on the first session that observes infra drops — which is every prod session with any cluster stress.
+
+**Why it happens:**
+Feature authors think "exit non-zero on serious issues is natural" without auditing the downstream contract. In a code generator, exit 0 has always meant "generation succeeded, files are valid". Infra drops do not invalidate the generated policies.
+
+**How to avoid:**
+- `--fail-on-infra-drops` is already scoped as opt-in. ENFORCE: default is always exit 0 when policies generated successfully, regardless of infra drop count.
+- Never add a new exit code without a flag gate. The flag must be documented with the exact exit code it produces (`exit 2` for infra drops, distinct from `exit 1` for errors).
+- In the session summary banner, print: `"Use --fail-on-infra-drops to exit with code 2 when infra drops are detected"` — this surfaces the opt-in to users who need it.
+- Document in CHANGELOG and README migration guide: "v1.3 introduces exit code 2, opt-in only via `--fail-on-infra-drops`. Default exit behavior unchanged."
+
+**Warning signs:**
+- Any PR adding `os.Exit` with a new code without an associated flag-gate check.
+- Test suite not covering `--fail-on-infra-drops` off-by-default behaviour.
+- CI test asserting `exit 0` failing after v1.3 merge.
+
+**Phase to address:**
+Phase 5 (--fail-on-infra-drops flag). The off-by-default invariant must be a unit test: run pipeline with infra drops, no flag set → assert `RunPipeline` returns `nil`.
+
+---
+
+### Pitfall 5: cluster-health.json committed to git as a policy artifact
+
+**What goes wrong:**
+Users run `cpg generate -o ./policies/` and then `git add ./policies/`. If `cluster-health.json` lives in `./policies/`, it gets committed. The file is session state (volatile, changes every run), not a policy artifact (stable, reviewed, versioned). Git history fills up with health snapshots; diffs become noisy; `git blame` on policies becomes unreliable.
+
+**Why it happens:**
+Putting health output next to policy output is the path of least resistance. Developers conflate "output" with "output directory".
+
+**How to avoid:**
+- `cluster-health.json` must NOT live in `--output-dir`. Options ranked by preference:
+  1. **Evidence dir** (`$XDG_CACHE_HOME/cpg/evidence/...`): consistent with where session state already lives (evidence JSON). Accessible via `cpg explain`. Not committed. XDG-compliant. RECOMMENDED.
+  2. **Separate `--health-output` flag**: gives operators explicit control, but adds surface area.
+  3. **Current working directory**: bad — pollutes project root, easy to commit.
+- Add `cluster-health.json` to `.gitignore` template in README, and emit a WARN if the file would be written into a directory that appears to be under git version control (heuristic: `git rev-parse --is-inside-work-tree` returns true AND path is not in `.gitignore`).
+- Document clearly: "cluster-health.json is session state, not a policy artifact. It lives in the evidence directory, not alongside policies."
+
+**Warning signs:**
+- `cluster-health.json` appearing in `git status` output.
+- User PR adding `cluster-health.json` to the policies directory.
+- Repeated entries in `git log --name-only` for `policies/cluster-health.json`.
+
+**Phase to address:**
+Phase 3 (cluster-health.json writer) — location decision must be made before the first line of writer code, not as a post-ship fix.
+
+---
+
+### Pitfall 6: Counter increment / flow skip race leading to undercounting in summary
+
+**What goes wrong:**
+The aggregator runs in a single goroutine (no concurrent flow processing), so there is no data-race risk on counters in the current architecture. However, the proposed classifier introduces a new code path: if the classifier check (which may skip the flow) occurs *before* the `a.flowsSeen++` increment, flows classified as infra/transient are never counted in `flowsSeen`. The session summary then shows `flows_seen=42` when 100 flows arrived, with 58 silently vanished.
+
+**Why it happens:**
+The `--ignore-protocol` pattern increments `ignoredByProtocol[name]++` and then `continue`s before `flowsSeen++`. This is correct because those flows are intentionally excluded. But infra/transient drops are a different category: they ARE seen, they ARE counted, they just don't generate CNPs. The distinction matters for operators diagnosing cluster health.
+
+**How to avoid:**
+- Define clear counting semantics in a comment before `Run()`:
   ```
-  WARN  no L7 records for production/api-server on 8080/TCP — L7 generation skipped.
-        Enable visibility: kubectl annotate pod -n production -l app.kubernetes.io/name=api-server \
-          policy.cilium.io/proxy-visibility='<Egress/53/UDP/DNS>,<Ingress/8080/TCP/HTTP>'
-        Or apply a baseline L7 CNP first, then re-run cpg.
+  // flowsSeen: every flow that reaches keyFromFlow(), regardless of category.
+  // ignoredByProtocol: flows skipped BEFORE flowsSeen (intentionally excluded).
+  // classifiedInfra / classifiedTransient: flows counted IN flowsSeen but routed
+  //   to health accounting instead of policy generation.
   ```
-- Track the counter as a first-class skip reason `l7_visibility_off` in the Unhandled flows summary (parallel to `no_l4`).
-- Document in README that L7 generation is **observational** — cpg cannot turn visibility on for you. Two-step workflow is canonical.
-- **Do not silently downgrade to L4** when `--l7-only` is passed; exit non-zero so CI catches it.
+- Increment `flowsSeen` BEFORE the classifier branch, not after policy routing.
+- Separate counters: `infraDrops uint64`, `transientDrops uint64` — surfaced in SessionStats alongside `flowsSeen`.
+- Unit test: send 5 policy flows + 3 infra flows → assert `flowsSeen=8`, `infraDrops=3`, policies generated=5.
 
 **Warning signs:**
-- `--l7` produced a policy file that is byte-identical to the v1.1 L4-only output.
-- `Flow.L7` field is `nil` for 100% of observed flows on application ports.
-- Hubble UI shows the same flows without method/path/query data.
+- `flows_seen` in session summary equals `policies_generated` exactly (suspiciously clean).
+- Infra drop counters are always 0 even when `cluster-health.json` has entries.
+- Test covering the counter invariant is missing.
 
 **Phase to address:**
-L7 ingestion phase. Detection runs before the builder — it gates whether L7 generation ran at all and produces an actionable warning.
+Phase 2 (aggregator wiring) — counter semantics must be specified in the Phase 2 acceptance criteria.
 
 ---
 
-### Pitfall 2: Path Explosion — REST IDs blow up rule count
+### Pitfall 7: --ignore-drop-reason silently no-ops when reason is already infra-suppressed
 
 **What goes wrong:**
-A 10-minute capture of a typical REST API (`GET /api/users/123`, `GET /api/users/124`, `GET /api/orders/abc-uuid-…`, …) yields thousands of unique path strings. A naive builder that emits one `{method, path}` rule per observed (method, path) pair produces policies with 5000+ entries: unreviewable, unmergeable, and pushing Envoy filter-chain compile time into seconds. Operators see policies they can't audit, then disable cpg.
+An operator passes `--ignore-drop-reason CT_MAP_INSERTION_FAILED`. The classifier already routes this to `CategoryInfra` (suppressed from CNP generation by default). The `--ignore-drop-reason` filter then has no observable effect. The operator gets no feedback. They conclude the flag is broken, file a bug, or worse, assume the behaviour changed.
 
 **Why it happens:**
-`Flow.L7.Http.Url` carries the literal request URL. There's no semantic "route template" in the flow record — the API gateway / framework's route table is the only authoritative source, and Hubble doesn't have it.
+The filter and the classifier operate at different levels. The filter is "I want this reason completely invisible (no health count either)". The classifier is "route this reason to the correct output channel". When the user intent is "stop generating CNPs for this", the classifier already handles it — the flag is redundant and confusing.
 
 **How to avoid:**
-- **Default-on path templating** in the builder. Heuristics applied left-to-right per segment:
-  - All-digits segment ≥2 chars → `\d+`
-  - UUID v4 (36 chars, 8-4-4-4-12 hex) → `[0-9a-f-]{36}`
-  - 24+ char hex (Mongo ObjectID, sha) → `[0-9a-f]+`
-  - Base64-ish (≥16 chars `[A-Za-z0-9+/=_-]`) → `[A-Za-z0-9+/=_-]+`
-- **Hard cap** per `(workload, method, peer)` tuple, default 50 rules. On overflow: collapse to a prefix rule (`^/api/.*`) and `WARN` with the dropped-paths count.
-- **Opt-out**: `--l7-paths=literal` (no templating, raw paths) for users who *want* exact match — but require `--l7-paths-cap=N` explicit too, so they can't shoot themselves in the foot accidentally.
-- **Observation budget visibility**: `cpg explain` should surface "X paths observed, Y collapsed into Z templates" so users see the lossiness.
-
-**Warning signs:**
-- Generated YAML > 1 MB for a single workload.
-- `kubectl apply` slow (Envoy regenerates filter chains).
-- `cilium-agent` CPU spike correlated with policy import.
-- More than 100 distinct paths under a single `toPorts.rules.http`.
-
-**Phase to address:**
-L7 HTTP builder. Templating must ship in the same PR as raw path extraction — releasing literal-only first creates dependency on a bad default.
-
----
-
-### Pitfall 3: Regex Injection / Under-anchoring on HTTP Path
-
-**What goes wrong:**
-Cilium's `rules.http[].path` is a Go `regexp` (RE2), **not** a glob and **not** anchored. Two failure modes:
-1. **Under-escaping**: observed `/api/v1.0/users` written as `path: "/api/v1.0/users"` matches `/api/v1X0/users` (the `.` is a wildcard). For dotted version segments, query-strings, or paths with `?`/`*`/`+`/`(`, the rule is silently more permissive than intended.
-2. **Under-anchoring**: `path: "/api/v1/users"` matches anywhere in the request path. `/evil/api/v1/users` is allowed. Cilium's Envoy filter does not auto-anchor.
-
-This is a **security-impacting** bug — the rule looks correct in YAML review but allows traffic the operator believes is denied.
-
-**Why it happens:**
-RE2 semantics differ from glob (operators expect glob from K8s NetworkPolicy / nginx). Cilium docs mention regex but the example rules in tutorials happen to not contain regex metacharacters, so the trap is invisible until a path with a `.` shows up.
-
-**How to avoid:**
-- Builder helper `regexEscapePath(p string) string`: wrap `regexp.QuoteMeta(p)` and add `^` + `$` anchors.
-- Templating substitutions (Pitfall 2) must produce already-escaped fragments — no double-escaping `\d+`.
-- Round-trip test: every generated `path` value must compile via `regexp.MustCompile` AND its match-set must equal the observed input(s) (literal) or the templated set (templated). Property test: random URL paths through builder → only the input(s) match.
-- Lint pass before write: reject any unescaped `(`, `[`, `{`, `?`, `+`, `*`, `|` not produced by templating.
-
-**Warning signs:**
-- `cilium policy get` shows path values without leading `^` or trailing `$`.
-- An audit query (e.g., `curl /evil/api/v1/users`) succeeds against a policy that "should" forbid it.
-- Path contains a literal `.` not preceded by `\`.
-
-**Phase to address:**
-L7 HTTP builder. Regex escaping is a same-PR sibling of templating; ship together.
-
----
-
-### Pitfall 4: HTTP Method Casing — `get` vs `GET`
-
-**What goes wrong:**
-Cilium's `rules.http[].method` matcher is case-sensitive and Cilium normalizes nothing. Hubble flow protos historically populated `L7.Http.Method` from the wire, which is canonically uppercase, but some flow producers / replay captures / older Cilium versions emit lowercase or mixed-case. cpg copying the field verbatim writes `method: get`, which never matches real HTTP/1.1 traffic (always uppercase on the wire) → silent allow-nothing.
-
-**Why it happens:**
-Observed in Cilium issues around envoy filter regen. RFC 9110 §9.1: methods are case-sensitive and uppercase by convention. But Hubble's L7 parser path varies between Envoy proxy and DNS proxy producers; replay captures from older Cilium runtimes can have lowercased fields.
-
-**How to avoid:**
-- Normalize at ingestion: `strings.ToUpper(flow.GetL7().GetHttp().GetMethod())`.
-- Whitelist known methods (`GET POST PUT PATCH DELETE HEAD OPTIONS`); skip with `unknown_http_method` skip-counter for anything else.
-- Round-trip test: lowercase / mixed-case input → uppercase output.
-
-**Warning signs:**
-- Generated YAML contains lowercase methods.
-- Apply succeeds, but Hubble shows DROPPED on traffic the policy claims to allow.
-
-**Phase to address:**
-L7 HTTP builder. One-line normalization, one test, ship in the first L7 PR.
-
----
-
-### Pitfall 5: ToFQDNs Without Companion DNS Allow Rule (silent breakage)
-
-**What goes wrong:**
-`toFQDNs` works because Cilium's in-agent DNS proxy intercepts the resolver response and pins the FQDN→IP mapping for that identity. If DNS itself isn't allowed (UDP/53 to kube-dns) AND inspected (`rules.dns.matchPattern`), the proxy never sees the answer, the mapping is never populated, and traffic to the FQDN is dropped — silently. Worse: nothing in the Hubble feed of that workload says "DNS was denied"; the user only sees "egress to api.example.com is dropped despite my policy allowing it." This is **the** classic ToFQDNs trap.
-
-**Why it happens:**
-The two rules belong logically together but live in different `toPorts`/`toEndpoints` blocks. Operators writing by hand from a tutorial copy the FQDN block and forget the DNS block. cpg generating from observed FQDN flows can fall into the same trap if the DNS-companion rule is treated as optional.
-
-**How to avoid:**
-- `toFQDNs` generator MUST also emit the kube-dns companion in the **same egress rule list** of the same CNP:
-  ```yaml
-  egress:
-  - toEndpoints:
-    - matchLabels:
-        k8s:io.kubernetes.pod.namespace: kube-system
-        k8s:k8s-app: kube-dns
-    toPorts:
-    - ports: [{port: "53", protocol: ANY}]
-      rules:
-        dns:
-        - matchPattern: "*"
-  - toFQDNs:
-    - matchPattern: "*.example.com"
-    toPorts:
-    - ports: [{port: "443", protocol: TCP}]
+- At flag parse time, validate each `--ignore-drop-reason` value against the classifier taxonomy. If the reason is already in `CategoryInfra` or `CategoryTransient` (not in `CategoryPolicy`), emit a `WARN`:
   ```
-- Idempotency: if cluster-dedup detects an existing cluster-wide DNS allow CNP / CCNP that covers this workload, skip the companion and add a YAML comment `# DNS allow handled by <cluster-policy-name>` so reviewers understand.
-- Make the companion match-pattern **scoped** to the FQDN being allowed (`matchPattern: "*.example.com"` not `"*"`) when the user is privacy-sensitive — flag-gated `--l7-dns-scope=match|wildcard`, default `match`.
-
-**Warning signs:**
-- Egress traffic to FQDN target dropped despite policy "allowing" it.
-- `hubble observe -t l7` shows DNS queries in DROPPED state.
-- Generated CNP has `toFQDNs` but no sibling `rules.dns` block.
-
-**Phase to address:**
-L7 DNS builder. Hard requirement — `toFQDNs` and the companion ship in the same code path; generator never emits one without the other.
-
----
-
-### Pitfall 6: ToFQDNs `matchPattern` Glob ≠ HTTP `path` Regex
-
-**What goes wrong:**
-Cilium uses **two different syntaxes** in the same CRD:
-- `rules.http[].path` → RE2 regex
-- `toFQDNs[].matchPattern` and `rules.dns[].matchPattern` → DNS-style glob (`*` = any subdomain label, `?` = single char)
-
-Copy-pasting between them, or asking a single helper to "make a pattern," produces wrong-syntax matchers. `*.example.com` in the path field matches nothing reasonable (regex: any-char × 0 or more, then `example` then any-char then `com`); `^.*\.example\.com$` in the FQDN field is treated literally — it never matches a real FQDN.
-
-**Why it happens:**
-The fields have similar names (`matchPattern` vs `path`) and both accept "patterns". The CRD schema doesn't enforce different syntax — both are strings.
-
-**How to avoid:**
-- Two **separate** builder helpers, no shared "pattern" helper:
-  - `httpPathRegex(literal string) string` (Pitfall 3)
-  - `dnsGlob(domain string) string` returning `*.<domain>` or stripped trailing-dot exact
-- Strong types in Go: `type HTTPPath string` and `type DNSPattern string`. The builder API takes the typed values; a string can't accidentally flow into the wrong slot.
-- Test matrix: feed the cross-product (HTTP literal, HTTP regex, DNS exact, DNS glob) into both helpers and assert the wrong-helper output is rejected by validation.
-
-**Warning signs:**
-- A `toFQDNs.matchPattern` value contains `^`, `$`, `\.`, `(`, `)`, `[`.
-- A `rules.http.path` value contains a leading `*.`.
-- Cilium agent logs `invalid pattern` on policy import.
-
-**Phase to address:**
-L7 builder phase, type-design subtask. Cheap to get right at the start, expensive to retrofit.
-
----
-
-### Pitfall 7: Reading the IP Layer of a DNS Flow Instead of the DNS Layer
-
-**What goes wrong:**
-A Hubble flow representing a DNS *resolution* contains both an L4 layer (UDP/53 to kube-dns) and an L7 DNS payload (`L7.Dns.Query`, `L7.Dns.Ips`, `L7.Dns.Rcode`). If the L7 builder dispatches on "destination port == 53" rather than `L7.GetDns() != nil`, two failures:
-1. It writes a `toEndpoints` rule allowing UDP/53 to kube-dns (correct but redundant) and **misses** the FQDN rule entirely.
-2. For the *application* flow that was made possible by the resolution (e.g., HTTPS to the resolved IP), the builder writes a `toCIDR` rule for the resolved IP — defeating the whole point of FQDN policies (the IP rotates, the policy goes stale).
-
-**Why it happens:**
-The L7 DNS record sits inside `L7.Dns`; the IP layer of the *subsequent* HTTPS flow shows a CIDR. Treating each flow independently and matching on L4 alone produces CIDR egress rules that the operator wanted to be FQDN rules.
-
-**How to avoid:**
-- DNS dispatch keys off `flow.GetL7().GetDns() != nil` (or equivalently `flow.GetL7().GetType() == flow.L7FlowType_RESPONSE` AND `Dns` populated) — never off `port == 53`.
-- For the application-flow side (the HTTPS flow to the resolved IP), maintain a per-(source-identity) DNS cache built from observed DNS RESPONSE flows: `IP → FQDN`. When generating a CIDR egress rule, look up the dest IP in the cache. If found, emit `toFQDNs` instead of `toCIDR` and add the kube-dns companion (Pitfall 5).
-- Cache TTL bounded: observed-IP entries expire after 1h or end-of-session. Document that cpg's FQDN inference is best-effort: if no DNS resolution was captured for an IP, we fall back to CIDR with an INFO log.
-- `cpg explain` shows the inferred FQDN with provenance: "IP 1.2.3.4 → api.example.com (inferred from DNS RESPONSE flow at 14:02:11)".
-
-**Warning signs:**
-- Generated policy has `toCIDR: 1.2.3.4/32` for an IP that's clearly a CDN / cloud-managed endpoint (rotating).
-- The `toFQDNs` block is empty even though DNS traffic was captured.
-- Re-running cpg a day later produces a different `toCIDR` set for the same workload (IP rotation).
-
-**Phase to address:**
-L7 DNS builder. Cross-flow correlation (DNS resp → IP → subsequent flow) is the harder design problem; specify it before coding.
-
----
-
-### Pitfall 8: L4-only `toPorts` Becomes "Allow All L7" When L7 Is Enabled
-
-**What goes wrong:**
-Cilium policy semantics: a `toPorts` block **without** `rules` allows all traffic on that port (including all HTTP, all DNS). A `toPorts` **with** `rules.http: [{}]` (empty match) is also "allow all HTTP". A `toPorts` with `rules.http: [{method: GET, path: ^/foo$}]` is restrictive.
-
-The trap: if cpg merges a v1.1-generated L4-only policy with new L7 observations, two paths exist:
-- **Wrong**: Keep the L4-only port entry AND add a separate L7 entry for the same port. Cilium evaluates `toPorts` as a *union* — the L4-only entry wins, and the L7 rules are ignored. Operator audits the YAML, sees method/path, believes enforcement is L7. It isn't.
-- **Right**: Replace the L4-only entry with the L7-restrictive entry. But this is a behavior change (was: "any TCP/8080"; now: "only GET /foo"), which can break legitimate traffic that wasn't observed in the capture window.
-
-**Why it happens:**
-`pkg/policy/merge.go::mergePortRules()` (lines 172+) currently dedupes by (port, protocol) only. Adding L7 to the mix without a deliberate merge strategy collapses to the wrong path.
-
-**How to avoid:**
-- Per-port merge policy is explicit and labeled in code:
-  - `mergeL7Strategy = "replace"` (default with `--l7`): port becomes L7-restricted; emit a `WARN` listing what was previously L4-only and asking the user to re-capture if they expected wider traffic.
-  - `mergeL7Strategy = "augment"` (advanced): keep L4-only AND add a separate, sibling CNP with L7 rules so the L4 one is delete-able later. Requires the user to manage two CNPs.
-  - **Refuse to silently mix L4-only and L7 entries on the same port within one CNP**.
-- Diff in `--dry-run` must highlight L4 → L7 transition with an explicit banner: `[!] toPorts/8080: L4-only → L7-restrictive (was implicitly allow-all-HTTP, now restricted to N method+path rules)`. This is the user's last chance to catch over-tightening.
-- Test cases: (a) merge L4-only + L7 fresh, (b) merge L7 + L7 same-type, (c) merge L7 + L7 type-conflict (HTTP vs DNS on same port — see archive Pitfall 2).
-
-**Warning signs:**
-- Generated CNP has two `toPorts` entries with the same port: one with `rules.http`, one without.
-- Audit traffic shows methods/paths the policy "shouldn't" allow but does — because the L4-only entry shadowed the L7 one.
-
-**Phase to address:**
-L7 merge phase. Must precede the HTTP builder going to disk.
-
----
-
-### Pitfall 9: Capture-Window Drift — Observed ≪ Production Reality
-
-**What goes wrong:**
-A 10-minute capture sees `GET /api/v1/users/me` but not the once-per-day `POST /api/v1/admin/sync`. Generated policy enforces `GET` only. Apply at 02:00, the daily sync at 03:00 fires, gets dropped, on-call gets paged. The L7 builder's exhaustiveness is fundamentally bounded by the capture window — and this gap is invisible from inside cpg.
-
-**Why it happens:**
-L4 generation suffered the same problem (a port that wasn't hit during capture isn't in the policy), but the blast radius was small (one port = one rule). L7 expands the surface: one port has dozens of (method, path) combos, and rare ones are over-represented in production tail traffic.
-
-**How to avoid:**
-- `cpg explain` (already shipped v1.1) is the primary mitigation — every rule has flow evidence with `first_seen`/`last_seen`/`flow_count`. Document the workflow: "before applying, run `cpg explain` and look for rules with flow_count < 5 — those are the ones most likely to be capture-window artifacts."
-- Add an L7-specific session summary at flush:
+  WARN  --ignore-drop-reason CT_MAP_INSERTION_FAILED has no effect: this reason is
+        already classified as 'infra' and does not generate policies. Use this flag
+        only to suppress reasons classified as 'policy' or 'uncategorized'.
   ```
-  L7 coverage:  api-server  HTTP: 4 methods, 12 templated paths, 891 flows
-                api-server  source diversity: 3 distinct peer identities
-                api-server  observation: 11m 47s
-  ```
-- New `--min-flows-per-l7-rule N` flag (default 3): rules backed by fewer than N flows are emitted as commented-out YAML lines `# low-confidence: 2 flows over 11m`. User uncomments deliberately.
-- README: explicit "**Run for at least one full traffic cycle**" guidance — for batch / cron / weekly traffic, capture must span one full period.
-- `--dry-run` diff includes a "rules added since previous run" section; if the user has been iterating, they see new rare-traffic rules accumulate.
+- Document the semantics: `--ignore-drop-reason` suppresses from ALL output (including cluster-health.json), unlike the classifier which routes non-policy reasons to health accounting.
+- Add a unit test for the warning path.
 
 **Warning signs:**
-- Production drops on traffic that "should" be allowed, post-apply.
-- A single-flow rule for a method/path the operator doesn't recognize.
-- Capture session shorter than the workload's known traffic period.
+- User opens issue: "my --ignore-drop-reason flag doesn't work".
+- No WARN log when passing an infra-classified reason.
+- Flag documentation only says "suppress from output" without explaining interaction with classifier.
 
 **Phase to address:**
-L7 ingestion phase (flow counting) + L7 explain phase (surface low-confidence rules). Documentation is part of the phase.
+Phase 5 (--ignore-drop-reason flag) — validation warning must be in the flag parsing, not the aggregator.
 
 ---
 
-### Pitfall 10: Hubble Partial L7 Records — Method Without Path
+### Pitfall 8: cpg replay on old jsonpb capture with different Cilium version floods uncategorized warnings
 
 **What goes wrong:**
-Some Cilium versions, some Envoy filter configs, and some replay captures emit L7 HTTP records with `Method` populated but `Url` / `Path` empty (or vice versa). The DNS path is similar: `Query` may be present but `Ips` empty (NXDOMAIN, truncation). A naive builder either:
-- Silently writes `path: ""` → matches everything (worse than no rule).
-- Crashes on a nil dereference.
-- Writes a half-rule the user can't review.
+An operator runs `cpg replay old-capture-cilium-1.14.json`. The capture was taken against Cilium 1.14 where some drop reasons had different numeric codes or names. Protobuf deserialises known numerics correctly (numerics are stable in Cilium's proto history), but if the capture contains raw integer drop_reason values that are in gaps in the enum (e.g. 159 is unassigned in 1.19), the classifier emits a WARN for each such flow. If the capture has 10k flows, 10k WARNs appear.
 
 **Why it happens:**
-Envoy's HTTP filter has a fast-path that doesn't always serialize the full URL into the access log, depending on the proxy config (`policy_enforcement_mode`, `http_normalize_path`). Replay captures from multiple Cilium versions mix records.
+The `--ignore-protocol` pattern emits one-shot warnings via `warnedReserved` dedup. The drop-reason classifier may not have an equivalent dedup gate, leading to log spam in replay mode.
 
 **How to avoid:**
-- Validation per L7 record at the ingestion boundary, fail-soft:
-  - HTTP REQUEST: require non-empty `Method` AND non-empty `Url`/`Path`. Otherwise skip with `incomplete_l7_http` counter.
-  - DNS RESPONSE: require non-empty `Query` AND `Rcode == 0` for FQDN inference. Otherwise skip with `incomplete_l7_dns` counter.
-  - HTTP RESPONSE flows (`L7FlowType_RESPONSE` for HTTP): always skip — they carry no method/path. (Per archive P9.)
-- Skip-reason counter surfaces in the flush summary; user can `--debug` to see which records were dropped and why.
-- **Never** emit a half-rule. Empty path → no rule at all.
+- The "unrecognised drop reason" WARN must be deduped per unique numeric value, exactly as `warnedReserved` deduplicates per reserved-identity+direction. Use a `warnedUnknownReason map[int32]struct{}` in the Aggregator.
+- In replay mode (`cpg replay`), add a session-end summary: `"N flows had unrecognised drop reasons (values: 159, 161): consider updating cpg to a version built against a newer Cilium release"`.
+- Document in README: `cpg replay` against captures from a different Cilium version may produce higher uncategorized counts than a live run.
 
 **Warning signs:**
-- `incomplete_l7_*` counter > 0 in the flush summary.
-- Generated CNP has a `path: ""` or `method: ""` value (would indicate the validator was bypassed — bug).
+- `cpg replay old.jsonpb` produces hundreds of WARN lines for the same drop reason numeric value.
+- Session summary uncategorized count is unexpectedly high on replay vs. live runs.
 
 **Phase to address:**
-L7 ingestion phase. The validator gates entry to the builder; cheaper than fixing every builder code path.
+Phase 1 (classifier) — the `warnedUnknownReason` dedup must be designed alongside the classifier's WARN, not added later. Phase 3 (session summary) — the per-reason uncategorized count must be in the summary.
 
 ---
 
-### Pitfall 11: Compounding with Existing `peerKey` Aggregation
+### Pitfall 9: Remediation hint URLs in cluster-health.json become stale or dead
 
 **What goes wrong:**
-v1.1 aggregates flows by `peerKey = (peer-selector, port, protocol)`. Adding L7 means two flows with identical `peerKey` but different (method, path) must produce a *single* `toPorts` entry with multiple `rules.http[]` items, not two `toPorts` entries that differ only in their L7 rules. If the aggregator stays as v1.1 — keying only by L3/L4 — it does this correctly by accident; but if the L7 builder runs *after* L4 aggregation, only the last-observed (method, path) survives the map collapse.
+`cluster-health.json` includes `remediation_hint` fields pointing to Cilium documentation. Cilium reorganises their docs with major releases. A URL valid for Cilium 1.19 (`https://docs.cilium.io/en/v1.19/...`) 404s on a cluster running 1.21.
 
 **Why it happens:**
-The aggregator was designed for a value type that has no L7 dimension. Adding L7 either requires:
-- Extending the value type to be a list of L7 rules (and the aggregator merges lists at flush), OR
-- Keying by L7 and getting back the peerKey-explosion of Pitfall 2 inside the aggregator.
+Hard-coded version-pinned URLs in code are a maintenance burden that accumulates silently. Operators click the link, get a 404, and lose trust in the tool.
 
 **How to avoid:**
-- Keep peerKey identical to v1.1 (L3/L4 only — `peer × port × protocol`).
-- Aggregator value gains an `L7Rules` field — a deduplicating set of (method, templated-path) for HTTP, (matchPattern) for DNS. Merge on insert: dedup by tuple, cap at the rule limit (Pitfall 2).
-- The builder consumes the `L7Rules` set unchanged and emits one `toPorts` block per peerKey.
-- Aggregator unit tests: 100 flows with same peerKey, 5 distinct (method, path) → 1 toPorts entry, 5 http rules.
+- All hint URLs must be **version-unqualified or redirect-stable**. Use `https://docs.cilium.io/en/stable/...` (stable redirects to latest) or anchor the URL in a cpg-controlled redirector (`https://github.com/SoulKyu/cpg/wiki/...`).
+- Confirm: hints are static strings in the classifier taxonomy map in code — they are NOT user-influenceable. The security risk of user-controlled links in JSON output is zero here; the risk is only staleness.
+- Add a CI job (or release checklist item) to check that all hint URLs return HTTP 200.
 
 **Warning signs:**
-- Generated CNP has duplicate `toPorts` entries with same port that differ only in L7.
-- `flow_count` in evidence sums > total observed flows (double-counting from key explosion).
+- 404s when clicking hint links after a Cilium major release.
+- Hint URLs containing version strings like `/en/v1.19/`.
 
 **Phase to address:**
-L7 aggregation phase, before builder. This is a v1.1-internals refactor disguised as an L7 feature.
+Phase 1 (classifier taxonomy) — URL format decision made when writing the taxonomy map. Use `stable` immediately, never pin to a version.
 
 ---
 
-### Pitfall 12: Compounding with Cluster Dedup — L7 Comparison Asymmetry
+### Pitfall 10: Classifier called per-flow with O(n) iteration instead of O(1) map lookup
 
 **What goes wrong:**
-`--cluster-dedup` (v1.0) skips a generated policy if it's structurally equivalent to a live cluster policy. Two compounding traps:
-- **L7 not normalized in `PoliciesEquivalent`**: `pkg/policy/dedup.go::normalizeRule()` (line 49+) sorts L4 fields only. A locally-generated CNP with HTTP rules in `[GET, POST]` order vs a cluster CNP with `[POST, GET]` order is reported as "different" → cpg overwrites every flush. (Mirrors archive P8.)
-- **Cluster has L4-only, generated has L7 (or vice versa)**: dedup can falsely call them equivalent if it strips L7 before comparing, or falsely call them different if it doesn't. Either way the operator gets the wrong answer about whether the cluster is up-to-date.
+If the classifier is implemented as a `switch` statement or a slice scan (`for _, entry := range taxonomy`), it is O(n) where n = number of classified reasons (currently ~75 entries). With Hubble streaming at 1000+ flows/sec under cluster stress, the classifier becomes the hot path in the aggregator goroutine, adding measurable latency.
+
+**Why it happens:**
+A `switch` is the natural Go pattern for enum dispatch. It is O(n) in compiled form unless the compiler optimises it to a jump table (which Go does for consecutive integer ranges, but the Cilium DropReason enum starts at 130 with gaps, so no jump table). A `map[DropReason]Category` is O(1) at the cost of map initialisation at startup.
 
 **How to avoid:**
-- Extend `normalizeRule` to deeply sort `PortRule.Rules.HTTP` (by (method, path)), `PortRule.Rules.DNS` (by (matchName, matchPattern)), `PortRule.Rules.Kafka` (by topic/role). Empty/nil L7 normalizes the same way as a missing field — but a populated-with-empty-list L7 (`rules.http: []`) is **not** equivalent to a missing L7 (semantically: empty list = "match nothing", missing = "allow all").
-- `PoliciesEquivalent` test matrix: (L4 only, L4+empty-HTTP, L4+populated-HTTP) cross-product, both directions, all asserted distinct except identity.
+- Use `var reasonCategory = map[flowpb.DropReason]Category{ ... }` initialised once at package init.
+- Classifier function: `func ClassifyReason(r flowpb.DropReason) Category { if c, ok := reasonCategory[r]; ok { return c }; return CategoryUncategorized }`.
+- This is a single map lookup per flow — effectively free.
+- Do NOT use `switch` for the main classification path. `switch` is acceptable for the human-readable category-to-string mapping (3 cases).
 
 **Warning signs:**
-- cpg writes the same policy every flush even with `--cluster-dedup` set.
-- Diff between cluster and local shows only key ordering changes.
+- Classifier implemented as `switch r { case CT_MAP_INSERTION_FAILED: ... default: ... }`.
+- Performance regression detectable in `cpg generate` under load (aggregator goroutine CPU spike).
+- Missing benchmark test for classifier.
 
 **Phase to address:**
-L7 dedup phase. Must precede first L7 release, otherwise `--cluster-dedup` regresses.
-
----
-
-## Moderate Pitfalls
-
-### Pitfall 13: DNS Trailing-Dot Mismatch
-Hubble DNS query is FQDN with trailing dot (`api.example.com.`); Cilium `matchName` requires no trailing dot. Strip with `strings.TrimSuffix(query, ".")` at ingestion. (Archive P10.)
-
-### Pitfall 14: HTTP Response Flows Have No Method/Path
-`L7FlowType_RESPONSE` HTTP flows carry status code only. Filter to `REQUEST` only at the L7 ingestion boundary. (Archive P9.)
-
-### Pitfall 15: ToFQDNs Identity Exhaustion on Wildcards
-`*.amazonaws.com` resolves to hundreds of IPs, each gets a Cilium identity → identity-space pressure, agent CPU. WARN on wildcards that would match common cloud providers (`*.amazonaws.com`, `*.azure.*`, `*.googleapis.com`). Suggest CIDR alternatives in the warning text. (Archive P12.)
-
-### Pitfall 16: `kube-dns` Selector Is Cluster-Specific
-The companion DNS rule (Pitfall 5) needs the right selector for *this cluster's* DNS service. Most clusters use `k8s-app=kube-dns` (covers CoreDNS too — service is named `kube-dns` even when CoreDNS is the impl). Some use NodeLocal DNS (`k8s-app=node-local-dns`). Detect at runtime if `--cluster-dedup` is on (we already have a kube client); otherwise fall back to `k8s-app=kube-dns` and emit a YAML comment listing the assumption.
-
-### Pitfall 17: Envoy Performance Impact Not Communicated
-Adding L7 to a port adds an Envoy hop per packet. p99 latency can rise by 1-5ms; throughput drops 10-30% on TLS-terminating workloads. cpg should emit a YAML header comment on every L7 policy:
-```yaml
-# cpg: L7 policy. Enables Envoy proxy for the listed ports.
-# Performance impact: +1-5ms p99 latency, ~10-30% throughput reduction on TLS.
-# Connection migration: applying this for the first time on a port that previously
-# had no L7 enforcement will reset existing connections (TCP RST). Roll out off-peak.
-```
-This is the v1.2-scoped echo of archive P1 (Envoy redirect on apply): we don't *prevent* the disruption (apply isn't in v1.2), we *warn* in the artifact.
-
-### Pitfall 18: Identity Churn Compounds L7 Cost
-Each Cilium identity gets its own Envoy filter chain. Workloads with high pod-restart rate (CronJobs, HPA-thrashing, preemptible workers) cause filter-chain regen storms when L7 is enabled. This isn't cpg's bug to fix, but cpg should detect: if observed source identities for a workload exceed (say) 50 over the capture window, WARN that L7 enforcement may amplify identity-churn cost.
-
-### Pitfall 19: TLS-Terminating Ingress Hides L7 Visibility
-Cilium can only inspect HTTP, not HTTPS-not-yet-terminated. If the workload is talking to TLS endpoints directly (no Envoy SNI termination configured), `L7.Http` is `nil` for those flows even though the L4 layer says port 443. Don't try to generate HTTP rules for port 443 unless an L7 record was actually observed — fall back to L4 with an INFO note "port 443 TLS not L7-inspected".
+Phase 1 (classifier) — the map-based design must be specified before implementation. A `BenchmarkClassifyReason` with 1M iterations should be in the Phase 1 acceptance criteria.
 
 ---
 
@@ -381,131 +262,196 @@ Cilium can only inspect HTTP, not HTTPS-not-yet-terminated. If the workload is t
 
 | Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
 |----------|-------------------|----------------|-----------------|
-| Skip path templating, ship literal-only first | Faster v1.2 cut | Users adopt with raw paths, complain about explosion, blame cpg | Never — ship templating in same PR |
-| Skip regex anchoring/escaping (Pitfall 3) | Tiny code reduction | Security regression: rules more permissive than reviewed | Never |
-| Treat HTTP and DNS patterns as one helper | Less code | Pitfall 6: cross-syntax bugs at runtime | Never |
-| Detect L7 visibility off but proceed silently | Smaller error path | User ships a fake-L7 policy to prod, no enforcement | Never |
-| Don't emit DNS companion automatically (Pitfall 5) | Builder simpler | Every FQDN policy fails for users until they figure out the missing piece | Never |
-| Punt the aggregator refactor (Pitfall 11) — re-key by full L4+L7 tuple | Less plumbing | Rule explosion inside aggregator, evidence double-counts | Never |
-| Default `--min-flows-per-l7-rule=1` (Pitfall 9) | More rules captured by default | Capture-window flukes become enforced rules | Acceptable for v1.2 if `cpg explain` is documented as the gate |
-| Skip cluster-dedup L7 normalization in v1.2 | Less code | `--cluster-dedup` regresses for L7 users; constant rewrites | Never — same release as builder |
+| Hardcode all 75 DropReason entries in one Go file | Simple, no code gen | Must be manually updated on each Cilium bump; silent misclassification if missed | Acceptable for v1.3; add `go generate` script in v1.4 |
+| Use `CategoryUncategorized` for all new/unknown reasons | Safe default, no false positives | High uncategorized count on Cilium upgrades until taxonomy is updated | Always acceptable — it is the correct safe default |
+| Write cluster-health.json to evidence dir only | Consistent with existing evidence pattern | Less discoverable than output-dir | Acceptable; README and session summary banner must point to the path |
+| Single in-memory map for health counters | No persistence overhead | Lost on crash mid-session | Acceptable; evidence dir write at shutdown is sufficient for operator use |
+| Static remediation hints (no dynamic lookup) | Zero latency, no network calls | Hints can go stale with Cilium version changes | Acceptable; use `stable` URLs and add CI link-check |
 
-## Integration Gotchas (cpg-internal compounds)
+---
+
+## Integration Gotchas
 
 | Integration | Common Mistake | Correct Approach |
 |-------------|----------------|------------------|
-| `pkg/policy/builder.go::BuildPolicy` (lines 109, 171) | Skip flow on `f.L4 == nil` only; assume L7 implies L4 | Keep L4 guard; **also** dispatch to L7 sub-builder when `f.GetL7() != nil`, even when the L4 path emits an L4 rule |
-| `pkg/hubble/aggregator` peerKey | Add (method, path) to peerKey to avoid losing L7 detail | Keep peerKey at L4; add `L7Set` to value type (Pitfall 11) |
-| `pkg/policy/merge.go::mergePortRules` (line 172) | Concat `Rules` slices unconditionally | Merge L7 rules under same port; honor type-union (HTTP xor DNS xor Kafka per port-rule); explicit replace-vs-augment policy (Pitfall 8) |
-| `pkg/policy/dedup.go::normalizeRule` (line 49) | Sort L4 only | Sort HTTP by (method, path), DNS by (matchName, matchPattern); preserve nil-vs-empty distinction (Pitfall 12) |
-| `pkg/labels/selector.go` for kube-dns companion | Hardcode `k8s-app=kube-dns` | Hardcode is acceptable for v1.2 with comment; runtime detection deferred (Pitfall 16) |
-| `pkg/evidence/writer.go` schema | Reuse v1 schema for L7 (it has no method/path field) | Bump to schema v2; samples carry `l7_method`, `l7_path` / `l7_query`, `l7_rcode`; reader rejects unknown fields per existing pinning policy |
-| `pkg/diff/yaml.go` for `--dry-run` | Treat L4→L7 transition as a normal field change | Dedicated banner output for L4→L7 transitions and FQDN-without-DNS-companion warnings (Pitfall 8) |
-| `cpg explain` rendering | Show ports only | Surface method/path/FQDN per rule + flow_count per (method, path) so capture-window low-confidence is visible (Pitfall 9) |
-| `pkg/hubble/unhandled.go` skip counters | Add `l7_visibility_off`, `incomplete_l7_http`, `incomplete_l7_dns`, `unknown_http_method` | Each surfaces in flush summary like existing `no_l4` etc. |
-| Reserved-identity warnings (host, kube-apiserver) | Apply only at L4 generation | Same warn applies for L7; ensure code path covers L7 path |
+| Cilium DropReason proto enum | Classify by string name from `DropReason_name` map | Classify by numeric `int32` value — names are generated Go constants, numerics are the stable protobuf contract |
+| `flowpb.Flow.DropReasonDesc` field | Assume it is always populated | Field is `optional`; `DROP_REASON_UNKNOWN` (0) is the zero value and appears on non-drop flows too; always check `Verdict == DROPPED` first |
+| `Flow.drop_reason` (field 3) vs `Flow.drop_reason_desc` (field 25) | Use the deprecated `uint32 drop_reason` field | Use `DropReasonDesc` (field 25, typed `DropReason` enum) — `drop_reason` is deprecated since Cilium 1.11 |
+| cobra exit code with `RunE` | Return `fmt.Errorf(...)` from `RunE` to signal infra drops | cobra converts any non-nil error to `exit 1`; for `exit 2` (infra drops) use `os.Exit(2)` in `RunE` after `RunPipeline` returns, guarded by the `--fail-on-infra-drops` flag |
+| `--ignore-drop-reason` with comma-separated values | Use `StringSlice` flag | Use `StringSlice` (same as `--ignore-protocol`) — `StringSlice` handles both `--flag a,b` and `--flag a --flag b` |
+
+---
 
 ## Performance Traps
 
 | Trap | Symptoms | Prevention | When It Breaks |
 |------|----------|------------|----------------|
-| Path explosion (Pitfall 2) | YAML > 1MB, slow `kubectl apply`, agent CPU | Templating + per-port rule cap | ~100 paths/port, ~5k paths total |
-| FQDN identity blow-up (Pitfall 15) | Cilium identities > 10k, agent restart loop | Warn on cloud-provider wildcards, suggest CIDR | CDN/cloud domains, immediately |
-| Envoy filter regen on identity churn (Pitfall 18) | agent CPU spikes correlated with pod churn | Warn on >50 source identities per workload | High-restart workloads with L7 |
-| Envoy hop overhead (Pitfall 17) | p99 latency rise post-apply | YAML header comment with explicit perf cost | Always present, varies by workload |
-| L7 flow volume during capture | Hubble Relay backpressure, dropped flows in cpg pipeline | L7 is opt-in (`--l7`); document `--flush-interval` tuning | High-RPS workloads with visibility broadly enabled |
+| O(n) classifier in aggregator hot path | CPU spike in aggregator goroutine; latency visible in flow-to-policy pipeline | `map[DropReason]Category` initialised at package init | Under load >1000 flows/sec (prod cluster stress events) |
+| Per-flow `cluster-health.json` flush | I/O spike; disk writes on every flow | Accumulate in memory; write once at session end (same as evidence JSON) | Any prod session |
+| Holding all health counters in a single lock-protected struct | Lock contention if health writer is in a separate goroutine | Aggregator is single-goroutine; no lock needed unless health writer is promoted to a goroutine | Only if architecture changes to concurrent health writing |
+
+---
 
 ## Security Mistakes
 
 | Mistake | Risk | Prevention |
 |---------|------|------------|
-| Unanchored / unescaped regex path (Pitfall 3) | Generated rule is more permissive than reviewed; bypass via crafted URL | `regexp.QuoteMeta` + `^…$` anchors; lint-before-write |
-| L4-only entry shadowing L7 entry on same port (Pitfall 8) | Operator believes traffic is L7-restricted; isn't. Audit-bypassable | Refuse to mix in builder; explicit replace-vs-augment policy |
-| Method case mismatch (Pitfall 4) | Rule never matches; user *thinks* GET-only, actually nothing allowed (fail-closed but invisible) | Normalize at ingestion + whitelist |
-| FQDN without DNS allow (Pitfall 5) | Effective deny → operator opens broader rule to "fix" → wider attack surface | Auto-generate companion |
-| Generated rule from compromised flow data | If Hubble/replay file is tampered, generated policy could whitelist attacker traffic | Replay file source provenance is operator's responsibility; document in README. Out of scope for cpg to validate. |
-| Inferring FQDN from observed IP (Pitfall 7) | Wrong FQDN inferred if multiple FQDNs resolve to same IP | Cache only RESPONSE→IP mappings observed within capture; conflicts → fall back to CIDR + WARN |
+| Remediation hint URLs are user-influenceable | Open redirect / phishing if written to JSON and opened by operator | Hints are static strings in code, never derived from flow data or user input — confirmed safe |
+| `cluster-health.json` written to `--output-dir` | Accidental commit of session state exposing cluster topology (drop reason by node + workload) | Write to evidence dir (XDG_CACHE_HOME), not output dir; document clearly |
+| Node names and workload names in `cluster-health.json` | File may be committed to a public repo | Same mitigation as above; README must warn this file contains cluster topology data |
+
+---
 
 ## UX Pitfalls
 
 | Pitfall | User Impact | Better Approach |
 |---------|-------------|-----------------|
-| `--l7` produces empty policies silently when visibility is off | User loses confidence in cpg, suspects bug | Hard WARN + non-zero exit on `--l7-only`; copy-pasteable annotation command (Pitfall 1) |
-| Captured-too-short policy gets applied, breaks rare traffic (Pitfall 9) | 03:00 page on missing daily-cron rule | `--min-flows-per-l7-rule` flag, low-confidence comments, README guidance |
-| YAML diff of L4→L7 transition looks like "small change" | Operator approves without realizing connection-reset risk | Explicit banner in `--dry-run` for L4→L7 transitions |
-| HTTP/DNS pattern syntax confusion (Pitfall 6) | Operator copy-pastes a pattern that looks reasonable but doesn't match | Typed APIs in code; in README, side-by-side example showing both syntaxes with the *same* domain to make the difference visible |
-| `cpg explain` for L7 hides flow_count per (method, path) | Reviewer can't tell which rules are well-supported | Render one row per (method, path) with its own flow_count, first/last seen |
-| FQDN companion DNS rule is "noise" in YAML review | Reviewer asks "why is this rule here?" | YAML comment auto-inserted: `# Required by toFQDNs above; without this, FQDN resolution is denied and the policy never matches.` |
+| Health alerts only in log stream | Operators miss infra issues; no action taken | Dedicated `cluster-health.json` + shutdown banner on stdout (`fmt.Fprintf`, not logger) |
+| `--fail-on-infra-drops` enabled by default | All existing CI pipelines break silently | Opt-in only; default exit 0; document the flag prominently |
+| Health output mixed with policy output in same dir | Accidental git commit of session state | Evidence dir; `.gitignore` template in README |
+| No hint when `--ignore-drop-reason` flag is redundant | User thinks flag is broken | WARN at flag parse time if reason is already non-policy |
+| Uncategorized count in summary with no remediation path | Operator sees count, doesn't know what to do | Summary should print: "N uncategorized drops: run with `--debug` to see numeric reason codes, then report at github.com/SoulKyu/cpg/issues" |
+
+---
 
 ## "Looks Done But Isn't" Checklist
 
-- [ ] **L7 HTTP builder:** Method normalized to uppercase? Path regex-escaped AND anchored? Templating applied? Per-port rule cap honored? Tests for all four?
-- [ ] **L7 DNS builder:** Trailing dot stripped? Companion kube-dns rule emitted in same CNP? Wildcard-FQDN warning fires? `matchName` vs `matchPattern` chosen correctly per input?
-- [ ] **L7 dispatch:** Builder dispatches on `flow.GetL7() != nil`, not `port == 80`? RESPONSE flows filtered out for HTTP? `Rcode==0` filtered for DNS?
-- [ ] **L7 visibility detection:** When zero L7 records observed but L7 mode requested, WARN with remediation command? Skip-counter `l7_visibility_off` populated?
-- [ ] **Aggregator:** peerKey unchanged (L3/L4 only)? Value type carries deduped L7 set? 100-flow / 5-tuple test passes with single `toPorts` block?
-- [ ] **Merge:** L7 rules merged under same port? L4-only + L7 same port refuses to silently mix? Replace-vs-augment policy explicit and tested?
-- [ ] **Dedup `normalizeRule`:** HTTP sorted by (method, path)? DNS sorted? Empty-list-vs-nil distinction preserved? Cluster-dedup round-trip with L7 stable across flushes?
-- [ ] **Evidence schema:** Bumped to v2? Reader rejects v1+L7? Method/path/query persisted? `cpg explain` reads new fields?
-- [ ] **Diff (`--dry-run`):** L4→L7 transition banner present? FQDN-without-companion would-be-error caught at write time?
-- [ ] **README:** Two-step workflow documented? Capture-window guidance present? L7 visibility prerequisite documented? Performance impact comment template shown?
+- [ ] **Classifier fallback:** Verify `classifyReason(0) == CategoryUncategorized` (not CategoryPolicy) in unit test.
+- [ ] **Classifier fallback:** Verify `classifyReason(9999) == CategoryUncategorized` (future Cilium value) in unit test.
+- [ ] **Flow counting:** Verify `flowsSeen` includes infra/transient drops, not just policy-routed flows.
+- [ ] **Exit code:** Verify `RunPipeline` returns `nil` (exit 0) when infra drops observed but `--fail-on-infra-drops` not set.
+- [ ] **cluster-health.json location:** Verify file is NOT written inside `--output-dir`.
+- [ ] **cluster-health.json dry-run:** Verify file is NOT written when `--dry-run` is set (consistent with evidence/policy writer dry-run semantics from v1.1).
+- [ ] **Session summary banner:** Verify banner is printed to stdout (not logger) so it appears even when stderr is redirected.
+- [ ] **--ignore-drop-reason warning:** Verify WARN is emitted when user passes an already-infra-classified reason.
+- [ ] **Unknown reason dedup:** Verify that 10k replay flows with the same unrecognised reason produce exactly 1 WARN log line (not 10k).
+- [ ] **Deprecated field:** Verify classifier reads `Flow.DropReasonDesc` (field 25), not the deprecated `Flow.drop_reason` (field 3).
+
+---
 
 ## Recovery Strategies
 
 | Pitfall | Recovery Cost | Recovery Steps |
 |---------|---------------|----------------|
-| Visibility off, fake-L7 policy applied (Pitfall 1) | LOW | Delete policy, enable visibility annotations, re-run cpg with `--l7`. No traffic was ever L7-enforced; behavior unchanged. |
-| Path explosion in committed YAML (Pitfall 2) | MEDIUM | Re-run cpg with templating; commit replacement; review diff carefully (now broader). |
-| Under-anchored regex bypassed in audit (Pitfall 3) | HIGH | Treat as security incident. Patch CNP manually, then re-run cpg with fixed builder, then commit. Audit logs for any bypass attempts. |
-| Method-casing bug (Pitfall 4) | LOW | Re-generate, re-apply. Workloads were fail-closed (denied), not breached. |
-| FQDN without DNS companion (Pitfall 5) | LOW | Add companion (manually or re-run with fixed builder); FQDN policy starts working. |
-| HTTP/DNS pattern syntax mix-up (Pitfall 6) | LOW | Cilium agent rejected the bad-syntax policy on import; fix and re-apply. |
-| CIDR-when-should-be-FQDN (Pitfall 7) | MEDIUM | Re-capture with DNS visibility on; re-run cpg; replace CIDR rules with FQDN rules. Policies must be re-applied on each IP rotation otherwise. |
-| L4 shadowing L7 (Pitfall 8) | HIGH if security-relevant | Fix builder merge; re-generate; review diff; re-apply during a maintenance window (connection reset on Envoy redirect). |
-| Capture-window drift breaks production (Pitfall 9) | HIGH (page) | Roll back policy; lengthen capture window across a full traffic period; re-run; re-review. |
-| Aggregator dup `toPorts` (Pitfall 11) | LOW | Patch aggregator; re-run from same captures. |
-| Cluster-dedup constantly rewriting (Pitfall 12) | LOW (annoyance) | Patch `normalizeRule`; rewrites stop. |
+| Wrong default bucket (policy instead of uncategorized) | HIGH — must revert; bogus CNPs may have been applied | Roll back, add `DELETE_IF_EMPTY` migration for affected CNPs, add regression test |
+| cluster-health.json committed to git | LOW | Add to `.gitignore`, `git rm --cached cluster-health.json`, amend history if needed |
+| Exit code change breaks CI | MEDIUM | Revert to exit 0 default, re-release; document `--fail-on-infra-drops` as migration path |
+| Stale remediation URLs | LOW | Update taxonomy map URLs, re-release; no user data affected |
+| Flood of WARN logs in replay | LOW | Add dedup gate, re-release; cosmetic issue only |
+
+---
 
 ## Pitfall-to-Phase Mapping
 
 | Pitfall | Prevention Phase | Verification |
 |---------|------------------|--------------|
-| 1: Visibility off | L7 ingestion | Integration test with no-L7 capture → emits WARN, exits non-zero with `--l7-only` |
-| 2: Path explosion | L7 HTTP builder | Unit test: 5000 unique IDs → ≤50 templated rules; YAML byte size budget |
-| 3: Regex injection / under-anchor | L7 HTTP builder | Property test: random URLs round-trip through builder, only original(s) match generated regex |
-| 4: Method casing | L7 ingestion | Table test: `get/Get/GET` all → `GET`; `unknown` → skip |
-| 5: ToFQDNs DNS companion | L7 DNS builder | Test: `toFQDNs` rule built ⇒ companion present in same `egress` list |
-| 6: HTTP vs DNS pattern syntax | L7 builder design | Type test: cross-feeding rejected at compile time |
-| 7: DNS layer vs IP layer | L7 DNS ingestion | Test: DNS RESPONSE flow + subsequent HTTPS to resolved IP → `toFQDNs` rule (not `toCIDR`) |
-| 8: L4 shadowing L7 | L7 merge | Test: merge of v1.1 L4-only CNP with new L7 obs → single `toPorts` per port; explicit strategy logged |
-| 9: Capture-window drift | L7 explain + UX | Manual test: `cpg explain` shows flow_count per (method, path); `--min-flows-per-l7-rule` flag works |
-| 10: Partial L7 records | L7 ingestion | Table test: empty-method, empty-path, empty-query, `Rcode!=0` → skipped + counter incremented |
-| 11: Aggregator peerKey + L7 | L7 aggregation | Test: 100 flows × 5 (method,path) → 1 toPorts, 5 http rules |
-| 12: Cluster-dedup blind to L7 | L7 dedup | Test: shuffled HTTP-rule order between local and cluster → equivalent; missing-vs-empty L7 → not equivalent |
-| 13: DNS trailing dot | L7 DNS ingestion | Unit: `api.example.com.` → `api.example.com` |
-| 14: HTTP RESPONSE filtered | L7 ingestion | Unit: RESPONSE flow → skipped, REQUEST flow → built |
-| 15: Identity exhaustion on wildcards | L7 DNS builder | Unit: `*.amazonaws.com` → emit WARN, suggest CIDR |
-| 16: kube-dns selector cluster-specific | L7 DNS builder | Comment in YAML; runtime detection deferred |
-| 17: Envoy perf cost not communicated | L7 builder output | Generated YAML contains header comment; snapshot test |
-| 18: Identity churn × L7 | L7 ingestion telemetry | Unit: >50 source identities triggers WARN |
-| 19: TLS-not-terminated 443 | L7 ingestion | Unit: port 443 flow with `L7==nil` → L4 rule + INFO note, no HTTP rule attempted |
+| UNKNOWN_REASON → policy bucket regression | Phase 1 (classifier) | Unit test: `classifyReason(0) == CategoryUncategorized` |
+| Cilium enum versioning — new values land as uncategorized | Phase 1 (classifier + WARN log) | Unit test: `classifyReason(9999)` + WARN emission test |
+| Health alerts invisible in log stream | Phase 3 (writer) + Phase 4 (banner) | Manual review: banner must appear on stdout even with `2>/dev/null` |
+| Exit code breaks automations | Phase 5 (flag) | Unit test: exit 0 default without flag; exit 2 with flag |
+| cluster-health.json committed to git | Phase 3 (writer) | File path assertion: must be under evidence dir, not output dir |
+| Counter skip leading to undercounting | Phase 2 (aggregator) | Unit test: 5 policy + 3 infra flows → `flowsSeen=8`, `infraDrops=3` |
+| --ignore-drop-reason redundant flag confusion | Phase 5 (flag) | Unit test: passing infra-classified reason emits WARN |
+| Replay flood of unknown-reason WARNs | Phase 1 (classifier dedup) | Test: 10k identical-reason flows → exactly 1 WARN |
+| Stale remediation hint URLs | Phase 1 (taxonomy) | Use `stable` URL prefix; CI link-check job |
+| O(n) classifier performance | Phase 1 (classifier) | Benchmark: `BenchmarkClassifyReason` must show O(1) |
+
+---
+
+## Exhaustive Cilium Drop Reason Classification Reference
+
+Enumerated from `github.com/cilium/cilium@v1.19.1/api/v1/flow/flow.pb.go`. Provides the authoritative ground truth for the v1.3 taxonomy map. New values in future Cilium versions will appear as `CategoryUncategorized` until the map is updated.
+
+**CategoryPolicy (generate CNPs):**
+- `POLICY_DENIED` (133) — L3/L4 policy deny
+- `POLICY_DENY` (181) — policy deny (newer alias)
+- `AUTH_REQUIRED` (189) — mutual auth / mTLS required
+- `NO_CONFIGURATION_AVAILABLE_TO_PERFORM_POLICY_DECISION` (165) — policy engine not ready
+
+**CategoryInfra (record in cluster-health, no CNP):**
+- `CT_MAP_INSERTION_FAILED` (155) — conntrack map full (the v1.3 trigger bug)
+- `CT_TRUNCATED_OR_INVALID_HEADER` (135)
+- `CT_MISSING_TCP_ACK_FLAG` (136)
+- `CT_UNKNOWN_L4_PROTOCOL` (137)
+- `CT_CANNOT_CREATE_ENTRY_FROM_PACKET` (138)
+- `CT_NO_MAP_FOUND` (190)
+- `SNAT_NO_MAP_FOUND` (191)
+- `ERROR_WRITING_TO_PACKET` (141)
+- `ERROR_WHILE_CORRECTING_L3_CHECKSUM` (153)
+- `ERROR_WHILE_CORRECTING_L4_CHECKSUM` (154)
+- `ERROR_RETRIEVING_TUNNEL_KEY` (147)
+- `ERROR_RETRIEVING_TUNNEL_OPTIONS` (148)
+- `MISSED_TAIL_CALL` (140)
+- `FAILED_TO_INSERT_INTO_PROXYMAP` (161)
+- `FIB_LOOKUP_FAILED` (169)
+- `LOCAL_HOST_IS_UNREACHABLE` (164)
+- `NO_TUNNEL_OR_ENCAPSULATION_ENDPOINT` (160)
+- `SOCKET_LOOKUP_FAILED` (178)
+- `SOCKET_ASSIGN_FAILED` (179)
+- `DROP_HOST_NOT_READY` (202)
+- `DROP_EP_NOT_READY` (203)
+- `DROP_NO_EGRESS_IP` (204)
+
+**CategoryTransient (datapath/packet issues, no CNP, low severity):**
+- `INVALID_SOURCE_IP` (132) — spoofed/invalid source (ephemeral)
+- `INVALID_SOURCE_MAC` (130)
+- `INVALID_DESTINATION_MAC` (131)
+- `INVALID_PACKET_DROPPED` (134)
+- `STALE_OR_UNROUTABLE_IP` (151)
+- `IP_FRAGMENTATION_NOT_SUPPORTED` (157)
+- `UNKNOWN_L4_PROTOCOL` (142)
+- `UNKNOWN_L3_TARGET_ADDRESS` (150)
+- `UNSUPPORTED_L3_PROTOCOL` (139)
+- `UNSUPPORTED_L2_PROTOCOL` (166)
+- `UNKNOWN_ICMPV4_CODE` (143), `UNKNOWN_ICMPV4_TYPE` (144)
+- `UNKNOWN_ICMPV6_CODE` (145), `UNKNOWN_ICMPV6_TYPE` (146)
+- `UNKNOWN_CONNECTION_TRACKING_STATE` (163)
+- `FORBIDDEN_ICMPV6_MESSAGE` (176)
+- `TTL_EXCEEDED` (196)
+- `REACHED_EDT_RATE_LIMITING_DROP_HORIZON` (162)
+- `DROP_RATE_LIMITED` (198)
+- `INVALID_IPV6_EXTENSION_HEADER` (156)
+- `INVALID_TC_BUFFER` (184)
+- `INVALID_GENEVE_OPTION` (149)
+- `INVALID_VNI` (183)
+- `ENCAPSULATION_TRAFFIC_IS_PROHIBITED` (170)
+- `INVALID_CLUSTER_ID` (192)
+- `UNENCRYPTED_TRAFFIC` (195)
+- `PROXY_REDIRECTION_NOT_SUPPORTED_FOR_PROTOCOL` (180)
+- `DROP_PUNT_PROXY` (205)
+
+**Ambiguous / needs operator decision:**
+- `SERVICE_BACKEND_NOT_FOUND` (158) — could be infra (pod not ready) or mis-configuration (wrong CNP selector); default `CategoryInfra`, document that operators may reclassify
+- `NO_MATCHING_LOCAL_CONTAINER_FOUND` (152) — routing table issue, `CategoryInfra`
+- `UNKNOWN_SENDER` (172) — unknown source identity, `CategoryTransient`
+- `DENIED_BY_LB_SRC_RANGE_CHECK` (177) — LoadBalancer source range policy, `CategoryPolicy`
+- `NO_EGRESS_GATEWAY` (194) — missing egress gateway config, `CategoryInfra`
+- `IGMP_HANDLED` (199), `IGMP_SUBSCRIBED` (200), `MULTICAST_HANDLED` (201) — control plane housekeeping, `CategoryTransient`
+- `NAT_NOT_NEEDED` (173), `NAT46` (187), `NAT64` (188) — NAT translation drops, `CategoryTransient`
+- `NO_SID` (185), `MISSING_SRV6_STATE` (186) — SRv6 segment routing, `CategoryInfra`
+- `VLAN_FILTERED` (182) — VLAN config, `CategoryInfra`
+- `IS_A_CLUSTERIP` (174) — routing bypass, `CategoryTransient`
+- `FIRST_LOGICAL_DATAGRAM_FRAGMENT_NOT_FOUND` (175) — fragmentation, `CategoryTransient`
+- `UNSUPPORTED_PROTOCOL_FOR_NAT_MASQUERADE` (168), `NO_MAPPING_FOR_NAT_MASQUERADE` (167) — NAT, `CategoryTransient`
+- `UNSUPPORTED_PROTOCOL_FOR_DSR_ENCAP` (193) — DSR, `CategoryInfra`
+
+**CategoryUncategorized (safe fallback):**
+- `DROP_REASON_UNKNOWN` (0) — protobuf zero value / unset
+- Any numeric value not in the above map
+
+Approximate real-prod fraction: based on the enum analysis, ~2 out of 75 values are pure policy (`POLICY_DENIED`, `POLICY_DENY`). `AUTH_REQUIRED` and `DENIED_BY_LB_SRC_RANGE_CHECK` are policy-adjacent. The remaining ~71 values (94%) are infrastructure or transient. Under steady-state prod traffic, policy drops dominate in default-deny environments, but during cluster stress events (OOM, scale-out, rolling restarts), infra drops can briefly outnumber policy drops.
+
+---
 
 ## Sources
 
-- [Cilium L7 Protocol Visibility](https://docs.cilium.io/en/stable/observability/visibility/) — visibility annotation prerequisite (Pitfall 1)
-- [Cilium DNS-Based Policies](https://docs.cilium.io/en/stable/security/dns/) — `toFQDNs` mechanics, DNS companion (Pitfall 5), matchPattern glob (Pitfall 6)
-- [Cilium Policy Language Reference](https://docs.cilium.io/en/stable/security/policy/language/) — RE2 regex on `path` (Pitfall 3), L7 union (archive P2), method matching (Pitfall 4)
-- [Cilium Envoy Proxy](https://docs.cilium.io/en/stable/security/network/proxy/envoy/) — performance impact (Pitfall 17), filter-chain regen (Pitfall 18)
-- [Cilium Flow Protobuf API](https://docs.cilium.io/en/stable/_api/v1/flow/README/) — `L7.Http`, `L7.Dns`, `L7FlowType` (Pitfalls 7, 10, 14)
-- [Hubble Visibility annotation reference](https://docs.cilium.io/en/stable/observability/visibility/#proxy-visibility) — annotation syntax (Pitfall 1)
-- [RFC 9110 §9.1 — HTTP method case sensitivity](https://www.rfc-editor.org/rfc/rfc9110#name-method) (Pitfall 4)
-- [Go regexp / RE2 syntax](https://pkg.go.dev/regexp/syntax) — anchoring + QuoteMeta (Pitfall 3)
-- [Cilium issue #31197 — FQDN DNS proxy truncation](https://github.com/cilium/cilium/issues/31197) (Pitfall 10)
-- [Cilium issue #35525 / #43964 / #30581 — Envoy redirect resets](https://github.com/cilium/cilium/issues/35525) (Pitfall 17 / archive P1)
-- [Debug Cilium toFQDN Network Policies (Medium)](https://mcvidanagama.medium.com/debug-cilium-tofqdn-network-policies-b5c4837e3fc4) (Pitfall 5)
-- Prior research: `.planning/research/archive-2026-04-25/PITFALLS.md` (P2/P6/P8/P9/P10/P12 confirmed; P1/P4/P11 deferred to v1.3)
-- cpg codebase: `pkg/policy/builder.go:109,171` (L4 dispatch), `pkg/policy/merge.go:172` (`mergePortRules`), `pkg/policy/dedup.go:49` (`normalizeRule`), `pkg/hubble/unhandled.go:130` (skip counters)
+- Cilium v1.19.1 protobuf enum: `/home/gule/go/pkg/mod/github.com/cilium/cilium@v1.19.1/api/v1/flow/flow.pb.go` (direct inspection)
+- cpg aggregator pattern: `/home/gule/Workspace/team-infrastructure/cpg/pkg/hubble/aggregator.go` — `--ignore-protocol` as the reference for filter + counter + dedup WARN
+- cpg reasons: `/home/gule/Workspace/team-infrastructure/cpg/pkg/policy/reasons.go` — existing UnhandledReason enum pattern
+- cpg pipeline: `/home/gule/Workspace/team-infrastructure/cpg/pkg/hubble/pipeline.go` — fan-out, SessionStats, exit code contract
+- cpg main: `/home/gule/Workspace/team-infrastructure/cpg/cmd/cpg/main.go` — single `os.Exit(1)` call confirming exit-0-on-success contract
+- cpg PROJECT.md Key Decisions table — v1.1 evidence dir (XDG), v1.1 FlowSource, v1.2 warn-and-proceed exit code precedent
 
 ---
-*Pitfalls research for: cpg v1.2 — L7 (HTTP + DNS) policy generation.*
-*Researched: 2026-04-25*
+*Pitfalls research for: cpg v1.3 — Cluster Health Surfacing*
+*Researched: 2026-04-26*
