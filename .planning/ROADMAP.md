@@ -63,7 +63,11 @@ Full details: [milestones/v1.2-ROADMAP.md](milestones/v1.2-ROADMAP.md)
   1. Every Cilium ≥1.14 DropReason enum value maps to exactly one of {policy, infra, transient, unknown} — no value returns an unclassified result at runtime
   2. An unrecognized DropReason (e.g. from a future Cilium version) resolves to `unknown` (never `policy`) and emits a single deduplicated WARN log per unique unrecognized value across the session
   3. `cluster-health.json` carries a `classifierVersion` semver string that identifies the taxonomy version, enabling operators to detect when reason mappings changed between cpg releases
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 10-01-taxonomy-and-hints-PLAN.md — DropClass enum, O(1) taxonomy map (76 reasons), RemediationHint URL table, ClassifierVersion, ValidReasonNames()
+- [ ] 10-02-unknown-dedup-warn-PLAN.md — SetWarnLogger + sync.Map dedup WARN for unrecognized reasons
 
 ### Phase 11: Aggregator Suppression + Health Writer
 **Goal**: cpg never generates a CiliumNetworkPolicy for infra or transient drops, and all non-policy drops are aggregated into `cluster-health.json` with per-reason counters and remediation hints
@@ -112,7 +116,7 @@ Full details: [milestones/v1.2-ROADMAP.md](milestones/v1.2-ROADMAP.md)
 | 7. L7 Infrastructure Prep | v1.2 | 4/4 | Complete | 2026-04-25 |
 | 8. HTTP L7 Generation | v1.2 | 4/4 | Complete | 2026-04-25 |
 | 9. DNS L7 Generation + explain L7 + Docs | v1.2 | 4/4 | Complete | 2026-04-25 |
-| 10. Classifier Core | v1.3 | 0/? | Not started | - |
+| 10. Classifier Core | v1.3 | 0/2 | Not started | - |
 | 11. Aggregator Suppression + Health Writer | v1.3 | 0/? | Not started | - |
 | 12. Session Summary Block | v1.3 | 0/? | Not started | - |
 | 13. Flags + Exit Code | v1.3 | 0/? | Not started | - |
