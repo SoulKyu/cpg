@@ -1,16 +1,17 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.3
-milestone_name: Cluster Health Surfacing
-status: verifying
-stopped_at: Completed 13-03-exit-code-and-readme-PLAN.md
-last_updated: "2026-04-26T21:08:57.793Z"
-last_activity: 2026-04-26
+milestone: v1.4
+milestone_name: awaiting-scope
+status: between_milestones
+stopped_at: v1.3 archived 2026-04-26; next milestone awaits /gsd:new-milestone
+last_updated: "2026-04-26T22:00:00.000Z"
+last_activity: 2026-04-26 -- Archived v1.3 Cluster Health Surfacing milestone
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 8
-  completed_plans: 8
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
