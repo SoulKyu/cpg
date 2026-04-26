@@ -50,7 +50,7 @@ Full details: [milestones/v1.2-ROADMAP.md](milestones/v1.2-ROADMAP.md)
 
 - [x] **Phase 10: Classifier Core** - Drop-reason taxonomy in `pkg/dropclass/` covering all Cilium ≥1.14 DropReason values with stable versioning (completed 2026-04-26)
 - [x] **Phase 11: Aggregator Suppression + Health Writer** - Aggregator gates CNP generation on drop class; infra/transient flows written to `cluster-health.json` (completed 2026-04-26)
-- [ ] **Phase 12: Session Summary Block** - End-of-run summary listing infra drops by severity with top-3 nodes/workloads and path to `cluster-health.json`
+- [x] **Phase 12: Session Summary Block** - End-of-run summary listing infra drops by severity with top-3 nodes/workloads and path to `cluster-health.json` (completed 2026-04-26)
 - [ ] **Phase 13: Flags + Exit Code** - `--ignore-drop-reason`, `--fail-on-infra-drops`, `--dry-run` parity, and README CI/cron documentation
 
 ## Phase Details
@@ -96,7 +96,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 12-01-session-summary-block-PLAN.md — PrintClusterHealthSummary + healthWriter.Snapshot() + PipelineConfig.Stdout + pipeline wiring
+- [x] 12-01-session-summary-block-PLAN.md — PrintClusterHealthSummary + healthWriter.Snapshot() + PipelineConfig.Stdout + pipeline wiring
 
 ### Phase 13: Flags + Exit Code
 **Goal**: Users can exclude specific drop reasons from processing and wire cpg into CI/cron pipelines with a deterministic non-zero exit when infra drops are detected
@@ -125,7 +125,7 @@ Plans:
 | 9. DNS L7 Generation + explain L7 + Docs | v1.2 | 4/4 | Complete | 2026-04-25 |
 | 10. Classifier Core | v1.3 | 2/2 | Complete    | 2026-04-26 |
 | 11. Aggregator Suppression + Health Writer | v1.3 | 2/2 | Complete    | 2026-04-26 |
-| 12. Session Summary Block | v1.3 | 0/1 | Not started | - |
+| 12. Session Summary Block | v1.3 | 1/1 | Complete   | 2026-04-26 |
 | 13. Flags + Exit Code | v1.3 | 0/? | Not started | - |
 
 **Milestone status:** v1.0 ✅ shipped · v1.1 ✅ shipped · v1.2 ✅ shipped · v1.3 📋 in progress
