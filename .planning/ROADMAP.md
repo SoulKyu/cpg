@@ -116,7 +116,7 @@ Plans:
 | 7. L7 Infrastructure Prep | v1.2 | 4/4 | Complete | 2026-04-25 |
 | 8. HTTP L7 Generation | v1.2 | 4/4 | Complete | 2026-04-25 |
 | 9. DNS L7 Generation + explain L7 + Docs | v1.2 | 4/4 | Complete | 2026-04-25 |
-| 10. Classifier Core | v1.3 | 2/2 | Complete   | 2026-04-26 |
+| 10. Classifier Core | v1.3 | 2/2 | Complete    | 2026-04-26 |
 | 11. Aggregator Suppression + Health Writer | v1.3 | 0/? | Not started | - |
 | 12. Session Summary Block | v1.3 | 0/? | Not started | - |
 | 13. Flags + Exit Code | v1.3 | 0/? | Not started | - |
