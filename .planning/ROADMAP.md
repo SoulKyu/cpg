@@ -78,7 +78,11 @@ Plans:
   2. `cluster-health.json` is written atomically to `$XDG_CACHE_HOME/cpg/evidence/<hash>/` with counters keyed by `reason × node × workload` and a remediation-hint URL for each reason
   3. Infra and transient drops still increment `flowsSeen` — the observed traffic count remains accurate and complete
   4. Running with `--dry-run` leaves `cluster-health.json` unwritten (filesystem untouched, matching policy and evidence dry-run behavior)
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 11-01-aggregator-classification-gate-PLAN.md — Classification gate in Run(): Infra/Transient suppressed, infraDrops counter, DropEvent channel, flowsSeen invariant
+- [ ] 11-02-health-writer-and-pipeline-wiring-PLAN.md — healthWriter atomic JSON write + pipeline third-channel wiring + dry-run gate
 
 ### Phase 12: Session Summary Block
 **Goal**: Users see a concise cluster-health summary at the end of every `generate` and `replay` run so infra-level drop events are never silently lost
