@@ -111,6 +111,15 @@ type Aggregator struct {
 	// classification gate (Infra and Transient classes). Surfaced via
 	// InfraDrops() + InfraDropTotal() for SessionStats and --fail-on-infra-drops (phase 13).
 	infraDrops map[flowpb.DropReason]uint64
+
+	// ignoreDropReasons is the uppercase set of DropReason name strings whose
+	// flows must be dropped before the protocol filter and classification gate.
+	// Populated via SetIgnoreDropReasons (phase 13 FILTER-01).
+	ignoreDropReasons map[string]struct{}
+
+	// ignoredByDropReason counts flows dropped via --ignore-drop-reason per
+	// reason name (uppercase canonical form). Surfaced via IgnoredByDropReason().
+	ignoredByDropReason map[string]uint64
 }
 
 // NewAggregator creates a new Aggregator with the given flush interval.
@@ -125,9 +134,10 @@ func NewAggregator(interval time.Duration, logger *zap.Logger, tracker flushingT
 		logger:            logger,
 		warnedReserved:    make(map[string]struct{}),
 		tracker:           tracker,
-		seenWorkloads:     make(map[string]struct{}),
-		ignoredByProtocol: make(map[string]uint64),
-		infraDrops:        make(map[flowpb.DropReason]uint64),
+		seenWorkloads:       make(map[string]struct{}),
+		ignoredByProtocol:   make(map[string]uint64),
+		infraDrops:          make(map[flowpb.DropReason]uint64),
+		ignoredByDropReason: make(map[string]uint64),
 	}
 }
 
@@ -152,6 +162,33 @@ func (a *Aggregator) SetIgnoreProtocols(protos []string) {
 func (a *Aggregator) IgnoredByProtocol() map[string]uint64 {
 	out := make(map[string]uint64, len(a.ignoredByProtocol))
 	for k, v := range a.ignoredByProtocol {
+		out[k] = v
+	}
+	return out
+}
+
+// SetIgnoreDropReasons configures the uppercase set of DropReason name strings
+// that must be dropped before the protocol filter and classification gate.
+// nil/empty disables filtering. Inputs are uppercased for case-insensitive
+// matching against the flowpb.DropReason_name canonical form.
+func (a *Aggregator) SetIgnoreDropReasons(reasons []string) {
+	if len(reasons) == 0 {
+		a.ignoreDropReasons = nil
+		return
+	}
+	set := make(map[string]struct{}, len(reasons))
+	for _, r := range reasons {
+		set[strings.ToUpper(r)] = struct{}{}
+	}
+	a.ignoreDropReasons = set
+}
+
+// IgnoredByDropReason returns a copy of the per-reason drop counter populated
+// during Run(). Keys are uppercase canonical DropReason names.
+// Map iteration order is not stable; sort at the call site for deterministic output.
+func (a *Aggregator) IgnoredByDropReason() map[string]uint64 {
+	out := make(map[string]uint64, len(a.ignoredByDropReason))
+	for k, v := range a.ignoredByDropReason {
 		out[k] = v
 	}
 	return out
@@ -322,6 +359,19 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan *flowpb.Flow, out chan<-
 			}
 			if f.GetL7().GetDns() != nil {
 				a.l7DNSCount++
+			}
+			// FILTER-01: drop flows matching --ignore-drop-reason BEFORE the
+			// protocol filter and classification gate. User-explicit exclusion
+			// takes precedence. These flows do NOT increment flowsSeen,
+			// infraDrops, or reach healthCh.
+			if len(a.ignoreDropReasons) > 0 {
+				name := flowpb.DropReason_name[int32(f.GetDropReasonDesc())]
+				if name != "" {
+					if _, drop := a.ignoreDropReasons[name]; drop {
+						a.ignoredByDropReason[name]++
+						continue
+					}
+				}
 			}
 			// PA5: drop ignored protocols BEFORE bucketing so flowsSeen and
 			// the unhandled tracker remain consistent — these flows are
