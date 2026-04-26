@@ -131,6 +131,6 @@ Plans:
 | 10. Classifier Core | v1.3 | 2/2 | Complete    | 2026-04-26 |
 | 11. Aggregator Suppression + Health Writer | v1.3 | 2/2 | Complete    | 2026-04-26 |
 | 12. Session Summary Block | v1.3 | 1/1 | Complete    | 2026-04-26 |
-| 13. Flags + Exit Code | v1.3 | 3/3 | Complete   | 2026-04-26 |
+| 13. Flags + Exit Code | v1.3 | 3/3 | Complete    | 2026-04-26 |
 
 **Milestone status:** v1.0 ✅ shipped · v1.1 ✅ shipped · v1.2 ✅ shipped · v1.3 📋 in progress
