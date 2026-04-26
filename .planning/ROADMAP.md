@@ -93,7 +93,10 @@ Plans:
   2. The summary shows the top-3 nodes and top-3 workloads by infra drop volume
   3. The summary includes the absolute path to `cluster-health.json` so operators can open it directly
   4. When zero infra drops were observed, the summary block is omitted entirely (no noise on healthy-cluster runs)
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 12-01-session-summary-block-PLAN.md — PrintClusterHealthSummary + healthWriter.Snapshot() + PipelineConfig.Stdout + pipeline wiring
 
 ### Phase 13: Flags + Exit Code
 **Goal**: Users can exclude specific drop reasons from processing and wire cpg into CI/cron pipelines with a deterministic non-zero exit when infra drops are detected
@@ -122,7 +125,7 @@ Plans:
 | 9. DNS L7 Generation + explain L7 + Docs | v1.2 | 4/4 | Complete | 2026-04-25 |
 | 10. Classifier Core | v1.3 | 2/2 | Complete    | 2026-04-26 |
 | 11. Aggregator Suppression + Health Writer | v1.3 | 2/2 | Complete    | 2026-04-26 |
-| 12. Session Summary Block | v1.3 | 0/? | Not started | - |
+| 12. Session Summary Block | v1.3 | 0/1 | Not started | - |
 | 13. Flags + Exit Code | v1.3 | 0/? | Not started | - |
 
 **Milestone status:** v1.0 ✅ shipped · v1.1 ✅ shipped · v1.2 ✅ shipped · v1.3 📋 in progress
