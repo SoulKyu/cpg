@@ -81,7 +81,7 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 11-01-aggregator-classification-gate-PLAN.md — Classification gate in Run(): Infra/Transient suppressed, infraDrops counter, DropEvent channel, flowsSeen invariant
+- [x] 11-01-aggregator-classification-gate-PLAN.md — Classification gate in Run(): Infra/Transient suppressed, infraDrops counter, DropEvent channel, flowsSeen invariant
 - [ ] 11-02-health-writer-and-pipeline-wiring-PLAN.md — healthWriter atomic JSON write + pipeline third-channel wiring + dry-run gate
 
 ### Phase 12: Session Summary Block
@@ -121,7 +121,7 @@ Plans:
 | 8. HTTP L7 Generation | v1.2 | 4/4 | Complete | 2026-04-25 |
 | 9. DNS L7 Generation + explain L7 + Docs | v1.2 | 4/4 | Complete | 2026-04-25 |
 | 10. Classifier Core | v1.3 | 2/2 | Complete    | 2026-04-26 |
-| 11. Aggregator Suppression + Health Writer | v1.3 | 0/? | Not started | - |
+| 11. Aggregator Suppression + Health Writer | v1.3 | 1/2 | In Progress|  |
 | 12. Session Summary Block | v1.3 | 0/? | Not started | - |
 | 13. Flags + Exit Code | v1.3 | 0/? | Not started | - |
 

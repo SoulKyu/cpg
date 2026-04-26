@@ -16,11 +16,11 @@
 
 ### HEALTH — Suppression + reporting
 
-- [ ] **HEALTH-01**: cpg does NOT generate a CiliumNetworkPolicy for flows whose drop reason is classified as `infra` or `transient`
+- [x] **HEALTH-01**: cpg does NOT generate a CiliumNetworkPolicy for flows whose drop reason is classified as `infra` or `transient`
 - [ ] **HEALTH-02**: User sees infra + transient flows aggregated into `cluster-health.json` (atomic write, in evidence dir `$XDG_CACHE_HOME/cpg/evidence/<hash>/`) with counters keyed by `reason × node × workload` plus a remediation-hint URL per reason
 - [ ] **HEALTH-03**: User sees a session-summary block at end of `generate` / `replay` listing infra drops sorted by severity, top-3 nodes / workloads, and the absolute path to `cluster-health.json`
 - [ ] **HEALTH-04**: `--dry-run` suppresses the `cluster-health.json` write (parity with policies + evidence)
-- [ ] **HEALTH-05**: Infra / transient drops still increment the `flowsSeen` counter (observed traffic count remains accurate; only CNP generation is gated)
+- [x] **HEALTH-05**: Infra / transient drops still increment the `flowsSeen` counter (observed traffic count remains accurate; only CNP generation is gated)
 
 ### FILTER — User-controlled filtering
 
