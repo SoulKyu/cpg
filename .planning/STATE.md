@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Cluster Health Surfacing
-status: executing
-stopped_at: Completed 10-01-taxonomy-and-hints-PLAN.md
-last_updated: "2026-04-26T20:14:13.731Z"
+status: verifying
+stopped_at: Completed 10-02-unknown-dedup-warn-PLAN.md
+last_updated: "2026-04-26T20:19:39.313Z"
 last_activity: 2026-04-26
 progress:
   total_phases: 4
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 2
-  completed_plans: 1
+  completed_plans: 2
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-26)
 
 Phase: 10 (classifier-core) — EXECUTING
 Plan: 2 of 2
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-04-26
 
 Progress: v1.0 ✅ · v1.1 ✅ · v1.2 ✅ · v1.3 🗺 (roadmap ready)
@@ -56,6 +56,7 @@ Phase 13 [          ] 0%   Flags + Exit Code
 
 *Updated after each plan completion.*
 | Phase 10-classifier-core P01 | 4 | 2 tasks | 5 files |
+| Phase 10-classifier-core P02 | 3 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -64,6 +65,7 @@ Phase 13 [          ] 0%   Flags + Exit Code
 Decisions logged in PROJECT.md Key Decisions table.
 
 - [Phase 10-classifier-core]: O(1) map[flowpb.DropReason]DropClass lookup (not switch) for Classify(); fallback DropClassUnknown NEVER Policy
+- [Phase 10-classifier-core]: sync.Map.LoadOrStore for dedup in Classify(): zero-alloc on hot path for already-seen unknown values
 
 ### Pending Todos
 
@@ -81,6 +83,6 @@ None open. v1.3 deferred items (L7-FUT-01, DNS-FUT-02, etc.) tracked in PROJECT.
 
 ## Session Continuity
 
-Last session: 2026-04-26T20:14:13.726Z
-Stopped at: Completed 10-01-taxonomy-and-hints-PLAN.md
+Last session: 2026-04-26T20:19:39.304Z
+Stopped at: Completed 10-02-unknown-dedup-warn-PLAN.md
 Resume: `/gsd:plan-phase 10` — Classifier Core (CLASSIFY-01, CLASSIFY-02, CLASSIFY-03)

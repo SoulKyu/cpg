@@ -48,7 +48,7 @@ Full details: [milestones/v1.2-ROADMAP.md](milestones/v1.2-ROADMAP.md)
 
 ### 📋 v1.3 Cluster Health Surfacing (Phases 10-13)
 
-- [ ] **Phase 10: Classifier Core** - Drop-reason taxonomy in `pkg/dropclass/` covering all Cilium ≥1.14 DropReason values with stable versioning
+- [x] **Phase 10: Classifier Core** - Drop-reason taxonomy in `pkg/dropclass/` covering all Cilium ≥1.14 DropReason values with stable versioning (completed 2026-04-26)
 - [ ] **Phase 11: Aggregator Suppression + Health Writer** - Aggregator gates CNP generation on drop class; infra/transient flows written to `cluster-health.json`
 - [ ] **Phase 12: Session Summary Block** - End-of-run summary listing infra drops by severity with top-3 nodes/workloads and path to `cluster-health.json`
 - [ ] **Phase 13: Flags + Exit Code** - `--ignore-drop-reason`, `--fail-on-infra-drops`, `--dry-run` parity, and README CI/cron documentation
@@ -67,7 +67,7 @@ Full details: [milestones/v1.2-ROADMAP.md](milestones/v1.2-ROADMAP.md)
 
 Plans:
 - [x] 10-01-taxonomy-and-hints-PLAN.md — DropClass enum, O(1) taxonomy map (76 reasons), RemediationHint URL table, ClassifierVersion, ValidReasonNames()
-- [ ] 10-02-unknown-dedup-warn-PLAN.md — SetWarnLogger + sync.Map dedup WARN for unrecognized reasons
+- [x] 10-02-unknown-dedup-warn-PLAN.md — SetWarnLogger + sync.Map dedup WARN for unrecognized reasons
 
 ### Phase 11: Aggregator Suppression + Health Writer
 **Goal**: cpg never generates a CiliumNetworkPolicy for infra or transient drops, and all non-policy drops are aggregated into `cluster-health.json` with per-reason counters and remediation hints
@@ -116,7 +116,7 @@ Plans:
 | 7. L7 Infrastructure Prep | v1.2 | 4/4 | Complete | 2026-04-25 |
 | 8. HTTP L7 Generation | v1.2 | 4/4 | Complete | 2026-04-25 |
 | 9. DNS L7 Generation + explain L7 + Docs | v1.2 | 4/4 | Complete | 2026-04-25 |
-| 10. Classifier Core | v1.3 | 1/2 | In Progress|  |
+| 10. Classifier Core | v1.3 | 2/2 | Complete   | 2026-04-26 |
 | 11. Aggregator Suppression + Health Writer | v1.3 | 0/? | Not started | - |
 | 12. Session Summary Block | v1.3 | 0/? | Not started | - |
 | 13. Flags + Exit Code | v1.3 | 0/? | Not started | - |
