@@ -479,6 +479,80 @@ func TestReplay_L7DNSDisabled_FallbackByteStable(t *testing.T) {
 	}
 }
 
+// TestReplay_IgnoreProtocol_ICMP is the PA5 e2e acceptance test: replaying a
+// mixed TCP+ICMPv4 fixture with --ignore-protocol icmpv4,icmpv6 must produce
+// at least one TCP policy YAML, NEVER emit an icmps:/ICMPv4/ICMPv6 block, and
+// log a session summary whose ignored_by_protocol field reports icmpv4>=1.
+func TestReplay_IgnoreProtocol_ICMP(t *testing.T) {
+	logs := initObservedLoggerForTesting(t)
+
+	outDir := t.TempDir()
+	evDir := t.TempDir()
+
+	cmd := newReplayCmd()
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SilenceUsage = true
+	cmd.SetArgs([]string{
+		"../../testdata/flows/mixed_tcp_icmp.jsonl",
+		"--output-dir", outDir,
+		"--evidence-dir", evDir,
+		"--flush-interval", "100ms",
+		"--ignore-protocol", "icmpv4,icmpv6",
+	})
+	require.NoError(t, cmd.Execute())
+
+	yamls := walkRelFiles(t, outDir)
+	require.NotEmpty(t, yamls, "at least one policy YAML must be written")
+
+	hasTCP := false
+	for _, rel := range yamls {
+		data, err := os.ReadFile(filepath.Join(outDir, rel))
+		require.NoError(t, err)
+		yaml := string(data)
+		assert.NotContains(t, yaml, "icmps:", "%s must not contain icmps block", rel)
+		assert.NotContains(t, yaml, "ICMPv4", "%s must not contain ICMPv4 entries", rel)
+		assert.NotContains(t, yaml, "ICMPv6", "%s must not contain ICMPv6 entries", rel)
+		if strings.Contains(yaml, "protocol: TCP") {
+			hasTCP = true
+		}
+	}
+	assert.True(t, hasTCP, "at least one YAML must carry a TCP rule")
+
+	// Session summary must report icmpv4 drops >= 1.
+	matches := 0
+	for _, e := range logs.All() {
+		if e.Message != "session summary" {
+			continue
+		}
+		matches++
+		fields := e.ContextMap()
+		raw, ok := fields["ignored_by_protocol"]
+		require.True(t, ok, "session summary must carry ignored_by_protocol field")
+		// zap.Any may surface the map as map[string]uint64 or map[string]interface{}
+		switch m := raw.(type) {
+		case map[string]uint64:
+			assert.GreaterOrEqual(t, m["icmpv4"], uint64(1))
+		case map[string]interface{}:
+			v, ok := m["icmpv4"]
+			require.True(t, ok, "icmpv4 entry expected")
+			switch n := v.(type) {
+			case uint64:
+				assert.GreaterOrEqual(t, n, uint64(1))
+			case int64:
+				assert.GreaterOrEqual(t, n, int64(1))
+			case int:
+				assert.GreaterOrEqual(t, n, 1)
+			default:
+				t.Fatalf("unexpected counter type %T", v)
+			}
+		default:
+			t.Fatalf("unexpected ignored_by_protocol type %T", raw)
+		}
+	}
+	assert.Equal(t, 1, matches, "session summary must fire exactly once")
+}
+
 func TestReplayDryRunWritesNothing(t *testing.T) {
 	outDir := t.TempDir()
 	evDir := t.TempDir()
