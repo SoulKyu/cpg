@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,8 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/SoulKyu/cpg/pkg/hubble"
 )
 
 var version = "dev"
@@ -56,6 +59,10 @@ func main() {
 	rootCmd.AddCommand(newExplainCmd())
 
 	if err := rootCmd.Execute(); err != nil {
+		var ec *hubble.ExitCodeError
+		if errors.As(err, &ec) {
+			os.Exit(ec.Code)
+		}
 		os.Exit(1)
 	}
 }

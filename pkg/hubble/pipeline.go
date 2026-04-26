@@ -2,6 +2,7 @@ package hubble
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -17,6 +18,24 @@ import (
 	"github.com/SoulKyu/cpg/pkg/output"
 	"github.com/SoulKyu/cpg/pkg/policy"
 )
+
+// ExitCodeError carries a specific numeric exit code for conditions that
+// represent a successful pipeline run with a non-default exit signal.
+// Used by --fail-on-infra-drops (EXIT-01): the pipeline completed correctly
+// but the caller (cmd/cpg/main.go) should exit with Code instead of 0.
+type ExitCodeError struct {
+	Code int
+	Msg  string
+}
+
+func (e *ExitCodeError) Error() string { return e.Msg }
+
+// shouldExitForInfraDrops returns true when --fail-on-infra-drops is set
+// and at least one infra drop was observed. Factored out for unit testing
+// without os.Exit involvement.
+func shouldExitForInfraDrops(failOnInfraDrops bool, infraDropTotal uint64) bool {
+	return failOnInfraDrops && infraDropTotal > 0
+}
 
 // PipelineConfig holds all configuration for the streaming pipeline.
 type PipelineConfig struct {
@@ -296,5 +315,13 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 	PrintClusterHealthSummary(stdout, hw.Snapshot(), stats, healthPath, cfg.DryRun)
 
 	stats.Log(cfg.Logger)
+	// EXIT-01: --fail-on-infra-drops opt-in exit code.
+	// Default behavior (exit 0) is UNCHANGED when flag is not set (Pitfall P3).
+	if err == nil && shouldExitForInfraDrops(cfg.FailOnInfraDrops, stats.InfraDropTotal) {
+		return &ExitCodeError{
+			Code: 1,
+			Msg:  fmt.Sprintf("--fail-on-infra-drops: %d infra drop(s) observed", stats.InfraDropTotal),
+		}
+	}
 	return err
 }
