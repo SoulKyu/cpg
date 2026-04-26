@@ -115,6 +115,8 @@ Connection:
 Filtering:
   -n, --namespace strings    Namespace filter (repeatable)
   -A, --all-namespaces       Observe all namespaces
+      --ignore-protocol strs Drop flows whose L4 protocol matches; repeatable / comma-separated.
+                             Valid: tcp, udp, icmpv4, icmpv6, sctp (case-insensitive)
 
 Output:
   -o, --output-dir string    Output directory (default "./policies")
@@ -229,7 +231,7 @@ cpg replay drops.jsonl.gz -n production    # gzip transparent
 cat drops.jsonl | cpg replay -              # stdin
 ```
 
-Flags shared with `generate` (`--output-dir`, `--cluster-dedup`, `--flush-interval`) work identically. Non-DROPPED verdicts and malformed lines are skipped with counters surfaced in the session summary.
+Flags shared with `generate` (`--output-dir`, `--cluster-dedup`, `--flush-interval`, `--ignore-protocol`) work identically. Non-DROPPED verdicts and malformed lines are skipped with counters surfaced in the session summary.
 
 ## L7 Prerequisites <a id="l7-prerequisites"></a>
 
