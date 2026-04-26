@@ -5,6 +5,9 @@ import (
 	"testing"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/SoulKyu/cpg/pkg/dropclass"
 )
@@ -168,4 +171,94 @@ func BenchmarkClassifyReason(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_ = dropclass.Classify(flowpb.DropReason_CT_MAP_INSERTION_FAILED)
 	}
+}
+
+// newObservedLogger returns a zap.Logger backed by an in-memory observer core
+// so tests can assert on emitted log entries.
+func newObservedLogger(t *testing.T) (*zap.Logger, *observer.ObservedLogs) {
+	t.Helper()
+	core, logs := observer.New(zapcore.WarnLevel)
+	return zap.New(core), logs
+}
+
+// TestClassifyUnknownEmitsWarn asserts that a single WARN is emitted when
+// Classify is called with an unrecognized DropReason.
+func TestClassifyUnknownEmitsWarn(t *testing.T) {
+	dropclass.ResetWarnStateForTest()
+	logger, logs := newObservedLogger(t)
+	dropclass.SetWarnLogger(logger)
+	defer dropclass.SetWarnLogger(nil)
+
+	got := dropclass.Classify(flowpb.DropReason(9999))
+	if got != dropclass.DropClassUnknown {
+		t.Fatalf("Classify(9999) = %v, want DropClassUnknown", got)
+	}
+
+	if n := logs.FilterMessage("unrecognized").Len(); n != 1 {
+		t.Errorf("want 1 warn log containing 'unrecognized', got %d", n)
+	}
+}
+
+// TestClassifyUnknownDedupWarn asserts that calling Classify 100 times with the
+// same unknown reason emits exactly one WARN (dedup by int32 value).
+func TestClassifyUnknownDedupWarn(t *testing.T) {
+	dropclass.ResetWarnStateForTest()
+	logger, logs := newObservedLogger(t)
+	dropclass.SetWarnLogger(logger)
+	defer dropclass.SetWarnLogger(nil)
+
+	for i := 0; i < 100; i++ {
+		dropclass.Classify(flowpb.DropReason(8888))
+	}
+
+	if n := logs.Len(); n != 1 {
+		t.Errorf("want exactly 1 warn log for repeated reason 8888, got %d", n)
+	}
+}
+
+// TestClassifyUnknownDedupPerValue asserts two distinct unknown values each emit
+// exactly one WARN (total = 2 entries).
+func TestClassifyUnknownDedupPerValue(t *testing.T) {
+	dropclass.ResetWarnStateForTest()
+	logger, logs := newObservedLogger(t)
+	dropclass.SetWarnLogger(logger)
+	defer dropclass.SetWarnLogger(nil)
+
+	for i := 0; i < 50; i++ {
+		dropclass.Classify(flowpb.DropReason(8887))
+		dropclass.Classify(flowpb.DropReason(8886))
+	}
+
+	if n := logs.Len(); n != 2 {
+		t.Errorf("want exactly 2 warn logs (one per unique unknown value), got %d", n)
+	}
+}
+
+// TestClassifyKnownNoWarn asserts that known DropReasons never trigger a WARN log.
+func TestClassifyKnownNoWarn(t *testing.T) {
+	dropclass.ResetWarnStateForTest()
+	logger, logs := newObservedLogger(t)
+	dropclass.SetWarnLogger(logger)
+	defer dropclass.SetWarnLogger(nil)
+
+	for i := 0; i < 10; i++ {
+		dropclass.Classify(flowpb.DropReason_POLICY_DENIED)
+	}
+
+	if n := logs.Len(); n != 0 {
+		t.Errorf("want 0 warn logs for known reason POLICY_DENIED, got %d", n)
+	}
+}
+
+// TestClassifyNilLoggerSafe asserts that calling Classify with nil logger does
+// not panic and still returns DropClassUnknown.
+func TestClassifyNilLoggerSafe(t *testing.T) {
+	dropclass.ResetWarnStateForTest()
+	dropclass.SetWarnLogger(nil)
+
+	got := dropclass.Classify(flowpb.DropReason(7777))
+	if got != dropclass.DropClassUnknown {
+		t.Fatalf("Classify(7777) with nil logger = %v, want DropClassUnknown", got)
+	}
+	// no panic = test passes
 }
