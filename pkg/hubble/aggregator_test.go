@@ -431,6 +431,104 @@ func TestAggregator_TracksEmptyNamespace(t *testing.T) {
 	assert.Equal(t, "empty_namespace", fieldString(debugLogs[0], "reason"))
 }
 
+// TestAggregator_IgnoreProtocols_DropsICMPv4 asserts that a single ICMPv4 flow
+// is dropped before bucketing when icmpv4 is in the ignore set: no PolicyEvent
+// is emitted, FlowsSeen stays at 0, and the per-protocol counter records the
+// drop.
+func TestAggregator_IgnoreProtocols_DropsICMPv4(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+	agg.SetIgnoreProtocols([]string{"icmpv4"})
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+
+	in <- testdata.EgressICMPv4Flow(
+		[]string{"k8s:app=client"}, "production",
+		[]string{"k8s:app=server"}, "10.0.0.1", 8,
+	)
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out))
+
+	events := drainEvents(out)
+	assert.Empty(t, events, "ignored protocol must not produce PolicyEvent")
+	assert.Equal(t, uint64(0), agg.FlowsSeen(), "ignored flow must not count toward FlowsSeen")
+	assert.Equal(t, uint64(1), agg.IgnoredByProtocol()["icmpv4"], "icmpv4 counter must register the drop")
+}
+
+// TestAggregator_IgnoreProtocols_TCPPassthrough asserts that TCP flows pass
+// through untouched while ICMPv4 flows are filtered when only ICMP is excluded.
+func TestAggregator_IgnoreProtocols_TCPPassthrough(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+	agg.SetIgnoreProtocols([]string{"icmpv4", "icmpv6"})
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+
+	in <- testdata.IngressTCPFlow([]string{"k8s:app=c"}, []string{"k8s:app=s"}, "production", 80)
+	in <- testdata.EgressICMPv4Flow([]string{"k8s:app=c"}, "production", []string{"k8s:app=x"}, "10.0.0.1", 8)
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out))
+
+	events := drainEvents(out)
+	assert.Len(t, events, 1, "TCP flow must produce one PolicyEvent")
+	assert.Equal(t, uint64(1), agg.FlowsSeen())
+	assert.Equal(t, uint64(1), agg.IgnoredByProtocol()["icmpv4"])
+}
+
+// TestAggregator_IgnoreProtocols_MultipleProtocols asserts that the ignore set
+// honours multiple entries simultaneously.
+func TestAggregator_IgnoreProtocols_MultipleProtocols(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+	agg.SetIgnoreProtocols([]string{"tcp", "udp"})
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+
+	in <- testdata.IngressTCPFlow([]string{"k8s:app=c"}, []string{"k8s:app=s"}, "production", 80)
+	in <- testdata.EgressUDPFlow([]string{"k8s:app=c"}, []string{"k8s:app=dns"}, "production", 53)
+	in <- testdata.EgressICMPv4Flow([]string{"k8s:app=c"}, "production", []string{"k8s:app=x"}, "10.0.0.1", 8)
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out))
+
+	events := drainEvents(out)
+	assert.Len(t, events, 1, "only the ICMPv4 flow survives bucketing")
+	counters := agg.IgnoredByProtocol()
+	assert.Equal(t, uint64(1), counters["tcp"])
+	assert.Equal(t, uint64(1), counters["udp"])
+	assert.Zero(t, counters["icmpv4"], "icmpv4 was not in the ignore set")
+}
+
+// TestAggregator_IgnoreProtocols_EmptyIsNoOp asserts that calling
+// SetIgnoreProtocols with nil is a no-op: flows are processed as usual and the
+// per-protocol counter is empty.
+func TestAggregator_IgnoreProtocols_EmptyIsNoOp(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+	agg.SetIgnoreProtocols(nil)
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+
+	in <- testdata.IngressTCPFlow([]string{"k8s:app=c"}, []string{"k8s:app=s"}, "production", 80)
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out))
+
+	events := drainEvents(out)
+	assert.Len(t, events, 1)
+	assert.Empty(t, agg.IgnoredByProtocol(), "no entries when ignore set is empty")
+}
+
 // fieldString extracts a string field value from a log entry.
 func fieldString(entry observer.LoggedEntry, key string) string {
 	for _, f := range entry.Context {

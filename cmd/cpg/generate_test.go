@@ -241,6 +241,43 @@ func TestMaybeRunL7Preflight_Gating(t *testing.T) {
 	}
 }
 
+// TestParseCommonFlags_IgnoreProtocol_CaseInsensitiveAndCommaSep asserts the
+// flag is repeatable + comma-separated and parseCommonFlags surfaces the raw
+// input verbatim (normalization happens in validateIgnoreProtocols).
+func TestParseCommonFlags_IgnoreProtocol_CaseInsensitiveAndCommaSep(t *testing.T) {
+	cmd := newGenerateCmd()
+	require.NoError(t, cmd.Flags().Set("ignore-protocol", "ICMPv4,icmpv6"))
+	require.NoError(t, cmd.Flags().Set("ignore-protocol", "TCP"))
+
+	f := parseCommonFlags(cmd)
+	assert.Equal(t, []string{"ICMPv4", "icmpv6", "TCP"}, f.ignoreProtocols)
+}
+
+// TestValidateIgnoreProtocols_Normalization asserts mixed-case input is
+// lower-cased and order is preserved.
+func TestValidateIgnoreProtocols_Normalization(t *testing.T) {
+	got, err := validateIgnoreProtocols([]string{"ICMPv4", "Tcp", "icmpv6"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"icmpv4", "tcp", "icmpv6"}, got)
+}
+
+// TestValidateIgnoreProtocols_UnknownReturnsError asserts the error message
+// names the offending value AND the sorted allowlist.
+func TestValidateIgnoreProtocols_UnknownReturnsError(t *testing.T) {
+	_, err := validateIgnoreProtocols([]string{"foo"})
+	require.Error(t, err)
+	msg := err.Error()
+	assert.Contains(t, msg, "foo")
+	assert.Contains(t, msg, "icmpv4, icmpv6, sctp, tcp, udp")
+}
+
+// TestValidateIgnoreProtocols_EmptyIsNoOp asserts nil input returns (nil, nil).
+func TestValidateIgnoreProtocols_EmptyIsNoOp(t *testing.T) {
+	got, err := validateIgnoreProtocols(nil)
+	require.NoError(t, err)
+	assert.Nil(t, got)
+}
+
 // TestReplayCmd_RejectsNoL7PreflightFlag asserts that --no-l7-preflight is
 // generate-only. Cobra surfaces unknown flags via SetArgs+Execute.
 func TestReplayCmd_RejectsNoL7PreflightFlag(t *testing.T) {
