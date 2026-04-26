@@ -164,6 +164,44 @@ func (hw *healthWriter) finalize(stats *SessionStats) error {
 	return nil
 }
 
+// HealthDropSnapshot is the per-reason view used by the summary formatter.
+// Unexported beyond pkg/hubble; used only by PrintClusterHealthSummary.
+type HealthDropSnapshot struct {
+	Reason     flowpb.DropReason
+	Class      dropclass.DropClass
+	Count      uint64
+	ByNode     map[string]uint64 // shallow copy
+	ByWorkload map[string]uint64 // shallow copy
+}
+
+// Snapshot returns a copy of the accumulated drop entries.
+// Returns nil when hw is nil (dry-run / evidence disabled).
+func (hw *healthWriter) Snapshot() []HealthDropSnapshot {
+	if hw == nil {
+		return nil
+	}
+	result := make([]HealthDropSnapshot, 0, len(hw.drops))
+	for _, e := range hw.drops {
+		result = append(result, HealthDropSnapshot{
+			Reason:     e.reason,
+			Class:      e.class,
+			Count:      e.count,
+			ByNode:     shallowCopyMap(e.byNode),
+			ByWorkload: shallowCopyMap(e.byWorkload),
+		})
+	}
+	return result
+}
+
+// shallowCopyMap returns a shallow copy of a string->uint64 map.
+func shallowCopyMap(m map[string]uint64) map[string]uint64 {
+	out := make(map[string]uint64, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
 // dropClassString converts a DropClass to its lowercase string representation
 // for JSON output. Fallback to "unknown" for unrecognized values.
 func dropClassString(c dropclass.DropClass) string {

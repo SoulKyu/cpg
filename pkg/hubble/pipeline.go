@@ -2,6 +2,8 @@ package hubble
 
 import (
 	"context"
+	"io"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -54,6 +56,10 @@ type PipelineConfig struct {
 	// names whose flows must be dropped before bucketing (PA5). Caller
 	// (cmd/cpg) is responsible for normalization + allowlist validation.
 	IgnoreProtocols []string
+
+	// Stdout is the writer for human-readable output (session summary block).
+	// Nil defaults to os.Stdout. Use bytes.Buffer in tests.
+	Stdout io.Writer
 }
 
 // SessionStats tracks pipeline metrics for the session summary.
@@ -269,6 +275,14 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 			zap.String("path", filepath.Join(cfg.EvidenceDir, cfg.OutputHash, "cluster-health.json")),
 		)
 	}
+
+	// HEALTH-03: print cluster-health summary block to stdout.
+	stdout := cfg.Stdout
+	if stdout == nil {
+		stdout = os.Stdout
+	}
+	healthPath := filepath.Join(cfg.EvidenceDir, cfg.OutputHash, "cluster-health.json")
+	PrintClusterHealthSummary(stdout, hw.Snapshot(), stats, healthPath, cfg.DryRun)
 
 	stats.Log(cfg.Logger)
 	return err
