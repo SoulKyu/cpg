@@ -108,7 +108,12 @@ Plans:
   3. Passing a reason already classified as `infra` or `transient` to `--ignore-drop-reason` emits a WARN noting the redundancy rather than silently accepting or rejecting the flag
   4. `--fail-on-infra-drops` exits cpg with code 1 when ≥1 infra drop is observed; without the flag, cpg always exits 0 regardless of infra drop count
   5. README documents exit-code semantics and includes a copy-pasteable CI cron pattern using `--fail-on-infra-drops`
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 13-01-aggregator-ignore-drop-reason-PLAN.md — SetIgnoreDropReasons + IgnoredByDropReason + Run() filter precedence (FILTER-01 aggregator side)
+- [ ] 13-02-commonflags-and-pipeline-wiring-PLAN.md — validateIgnoreDropReasons + flag registration + PipelineConfig.IgnoreDropReasons/FailOnInfraDrops (FILTER-01, FILTER-02, FILTER-03)
+- [ ] 13-03-exit-code-and-readme-PLAN.md — ExitCodeError + shouldExitForInfraDrops + RunPipelineWithSource exit signal + README docs (EXIT-01, EXIT-02)
 
 ## Progress
 
@@ -126,6 +131,6 @@ Plans:
 | 10. Classifier Core | v1.3 | 2/2 | Complete    | 2026-04-26 |
 | 11. Aggregator Suppression + Health Writer | v1.3 | 2/2 | Complete    | 2026-04-26 |
 | 12. Session Summary Block | v1.3 | 1/1 | Complete    | 2026-04-26 |
-| 13. Flags + Exit Code | v1.3 | 0/? | Not started | - |
+| 13. Flags + Exit Code | v1.3 | 0/3 | Not started | - |
 
 **Milestone status:** v1.0 ✅ shipped · v1.1 ✅ shipped · v1.2 ✅ shipped · v1.3 📋 in progress
