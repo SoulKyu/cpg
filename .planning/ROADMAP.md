@@ -49,7 +49,7 @@ Full details: [milestones/v1.2-ROADMAP.md](milestones/v1.2-ROADMAP.md)
 ### 📋 v1.3 Cluster Health Surfacing (Phases 10-13)
 
 - [x] **Phase 10: Classifier Core** - Drop-reason taxonomy in `pkg/dropclass/` covering all Cilium ≥1.14 DropReason values with stable versioning (completed 2026-04-26)
-- [ ] **Phase 11: Aggregator Suppression + Health Writer** - Aggregator gates CNP generation on drop class; infra/transient flows written to `cluster-health.json`
+- [x] **Phase 11: Aggregator Suppression + Health Writer** - Aggregator gates CNP generation on drop class; infra/transient flows written to `cluster-health.json` (completed 2026-04-26)
 - [ ] **Phase 12: Session Summary Block** - End-of-run summary listing infra drops by severity with top-3 nodes/workloads and path to `cluster-health.json`
 - [ ] **Phase 13: Flags + Exit Code** - `--ignore-drop-reason`, `--fail-on-infra-drops`, `--dry-run` parity, and README CI/cron documentation
 
@@ -82,7 +82,7 @@ Plans:
 
 Plans:
 - [x] 11-01-aggregator-classification-gate-PLAN.md — Classification gate in Run(): Infra/Transient suppressed, infraDrops counter, DropEvent channel, flowsSeen invariant
-- [ ] 11-02-health-writer-and-pipeline-wiring-PLAN.md — healthWriter atomic JSON write + pipeline third-channel wiring + dry-run gate
+- [x] 11-02-health-writer-and-pipeline-wiring-PLAN.md — healthWriter atomic JSON write + pipeline third-channel wiring + dry-run gate
 
 ### Phase 12: Session Summary Block
 **Goal**: Users see a concise cluster-health summary at the end of every `generate` and `replay` run so infra-level drop events are never silently lost
@@ -121,7 +121,7 @@ Plans:
 | 8. HTTP L7 Generation | v1.2 | 4/4 | Complete | 2026-04-25 |
 | 9. DNS L7 Generation + explain L7 + Docs | v1.2 | 4/4 | Complete | 2026-04-25 |
 | 10. Classifier Core | v1.3 | 2/2 | Complete    | 2026-04-26 |
-| 11. Aggregator Suppression + Health Writer | v1.3 | 1/2 | In Progress|  |
+| 11. Aggregator Suppression + Health Writer | v1.3 | 2/2 | Complete   | 2026-04-26 |
 | 12. Session Summary Block | v1.3 | 0/? | Not started | - |
 | 13. Flags + Exit Code | v1.3 | 0/? | Not started | - |
 

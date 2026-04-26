@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Cluster Health Surfacing
-status: executing
-stopped_at: Completed 11-01-aggregator-classification-gate-PLAN.md
-last_updated: "2026-04-26T20:35:50.059Z"
+status: verifying
+stopped_at: Completed 11-02-health-writer-and-pipeline-wiring-PLAN.md
+last_updated: "2026-04-26T20:41:04.615Z"
 last_activity: 2026-04-26
 progress:
   total_phases: 4
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 4
-  completed_plans: 3
+  completed_plans: 4
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-26)
 
 Phase: 11 (aggregator-suppression-and-health-writer) — EXECUTING
 Plan: 2 of 2
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-04-26
 
 Progress: v1.0 ✅ · v1.1 ✅ · v1.2 ✅ · v1.3 🗺 (roadmap ready)
@@ -58,6 +58,7 @@ Phase 13 [          ] 0%   Flags + Exit Code
 | Phase 10-classifier-core P01 | 4 | 2 tasks | 5 files |
 | Phase 10-classifier-core P02 | 3 | 2 tasks | 3 files |
 | Phase 11-aggregator-suppression-and-health-writer P01 | 8 | 2 tasks | 3 files |
+| Phase 11-aggregator-suppression-and-health-writer P02 | 3 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -69,6 +70,8 @@ Decisions logged in PROJECT.md Key Decisions table.
 - [Phase 10-classifier-core]: sync.Map.LoadOrStore for dedup in Classify(): zero-alloc on hot path for already-seen unknown values
 - [Phase 11-aggregator-suppression-and-health-writer]: Verdict==DROPPED guard in classification gate prevents false suppression of zero-Verdict test/forwarded flows (protobuf zero-value semantics)
 - [Phase 11-aggregator-suppression-and-health-writer]: pipeline.go passes nil healthCh (temporary) until plan 11-02 creates real healthWriter channel
+- [Phase 11-aggregator-suppression-and-health-writer]: hw nil-gate mirrors ew: cfg.EvidenceEnabled && !cfg.DryRun ensures health writer co-located with evidence writer
+- [Phase 11-aggregator-suppression-and-health-writer]: drops sorted by flowpb.DropReason_name for deterministic cluster-health.json output
 
 ### Pending Todos
 
@@ -86,6 +89,6 @@ None open. v1.3 deferred items (L7-FUT-01, DNS-FUT-02, etc.) tracked in PROJECT.
 
 ## Session Continuity
 
-Last session: 2026-04-26T20:35:50.052Z
-Stopped at: Completed 11-01-aggregator-classification-gate-PLAN.md
+Last session: 2026-04-26T20:41:04.610Z
+Stopped at: Completed 11-02-health-writer-and-pipeline-wiring-PLAN.md
 Resume: `/gsd:plan-phase 10` — Classifier Core (CLASSIFY-01, CLASSIFY-02, CLASSIFY-03)
