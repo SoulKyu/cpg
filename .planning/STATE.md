@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Cluster Health Surfacing
 status: executing
-stopped_at: Completed 13-01-aggregator-ignore-drop-reason-PLAN.md
-last_updated: "2026-04-26T20:59:26.225Z"
+stopped_at: Completed 13-02-commonflags-and-pipeline-wiring-PLAN.md
+last_updated: "2026-04-26T21:03:56.196Z"
 last_activity: 2026-04-26
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 8
-  completed_plans: 6
+  completed_plans: 7
 ---
 
 # Project State
@@ -25,7 +25,7 @@ See: .planning/PROJECT.md (updated 2026-04-26)
 ## Current Position
 
 Phase: 13 (flags-and-exit-code) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-04-26
 
@@ -61,6 +61,7 @@ Phase 13 [          ] 0%   Flags + Exit Code
 | Phase 11-aggregator-suppression-and-health-writer P02 | 3 | 2 tasks | 3 files |
 | Phase 12-session-summary-block P01 | 146 | 2 tasks | 4 files |
 | Phase 13-flags-and-exit-code P01 | 8 | 2 tasks | 2 files |
+| Phase 13-flags-and-exit-code P02 | 8 | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -77,6 +78,8 @@ Decisions logged in PROJECT.md Key Decisions table.
 - [Phase 12-session-summary-block]: PrintClusterHealthSummary takes io.Writer for testability; nil Stdout defaults to os.Stdout at call site in pipeline.go
 - [Phase 12-session-summary-block]: Snapshot() nil-safe method on healthWriter returns shallow copy of drops — avoids re-reading cluster-health.json
 - [Phase 13-flags-and-exit-code]: SetIgnoreDropReasons normalises to UPPERCASE (canonical flowpb enum form); FILTER-01 inserted before ignoreProtocols in Run() for correct filter precedence
+- [Phase 13-flags-and-exit-code]: validateIgnoreDropReasons accepts *zap.Logger for inline FILTER-03 WARN emission; dropClassLabel() local helper avoids exporting String() from pkg/dropclass
+- [Phase 13-flags-and-exit-code]: FailOnInfraDrops stored in PipelineConfig but exit logic not yet implemented (plan 13-03)
 
 ### Pending Todos
 
@@ -94,6 +97,6 @@ None open. v1.3 deferred items (L7-FUT-01, DNS-FUT-02, etc.) tracked in PROJECT.
 
 ## Session Continuity
 
-Last session: 2026-04-26T20:59:26.220Z
-Stopped at: Completed 13-01-aggregator-ignore-drop-reason-PLAN.md
+Last session: 2026-04-26T21:03:56.189Z
+Stopped at: Completed 13-02-commonflags-and-pipeline-wiring-PLAN.md
 Resume: `/gsd:plan-phase 10` — Classifier Core (CLASSIFY-01, CLASSIFY-02, CLASSIFY-03)

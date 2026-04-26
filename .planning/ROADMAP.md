@@ -112,7 +112,7 @@ Plans:
 
 Plans:
 - [x] 13-01-aggregator-ignore-drop-reason-PLAN.md — SetIgnoreDropReasons + IgnoredByDropReason + Run() filter precedence (FILTER-01 aggregator side)
-- [ ] 13-02-commonflags-and-pipeline-wiring-PLAN.md — validateIgnoreDropReasons + flag registration + PipelineConfig.IgnoreDropReasons/FailOnInfraDrops (FILTER-01, FILTER-02, FILTER-03)
+- [x] 13-02-commonflags-and-pipeline-wiring-PLAN.md — validateIgnoreDropReasons + flag registration + PipelineConfig.IgnoreDropReasons/FailOnInfraDrops (FILTER-01, FILTER-02, FILTER-03)
 - [ ] 13-03-exit-code-and-readme-PLAN.md — ExitCodeError + shouldExitForInfraDrops + RunPipelineWithSource exit signal + README docs (EXIT-01, EXIT-02)
 
 ## Progress
@@ -131,6 +131,6 @@ Plans:
 | 10. Classifier Core | v1.3 | 2/2 | Complete    | 2026-04-26 |
 | 11. Aggregator Suppression + Health Writer | v1.3 | 2/2 | Complete    | 2026-04-26 |
 | 12. Session Summary Block | v1.3 | 1/1 | Complete    | 2026-04-26 |
-| 13. Flags + Exit Code | v1.3 | 1/3 | In Progress|  |
+| 13. Flags + Exit Code | v1.3 | 2/3 | In Progress|  |
 
 **Milestone status:** v1.0 ✅ shipped · v1.1 ✅ shipped · v1.2 ✅ shipped · v1.3 📋 in progress
