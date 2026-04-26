@@ -792,6 +792,155 @@ func TestInfraDropTotal(t *testing.T) {
 	assert.Equal(t, uint64(3), agg.InfraDropTotal())
 }
 
+// TestAggregatorIgnoreDropReasonFilter asserts that a flow whose DropReasonDesc
+// matches an entry in ignoreDropReasons is skipped entirely: no PolicyEvent,
+// flowsSeen=0, infraDrops=0, no healthCh send, ignoredByDropReason incremented.
+func TestAggregatorIgnoreDropReasonFilter(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+	agg.SetIgnoreDropReasons([]string{"CT_MAP_INSERTION_FAILED"})
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+	healthCh := make(chan DropEvent, 10)
+
+	in <- makeInfraFlow(flowpb.DropReason_CT_MAP_INSERTION_FAILED)
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out, healthCh))
+
+	close(healthCh)
+	var healthEvents []DropEvent
+	for ev := range healthCh {
+		healthEvents = append(healthEvents, ev)
+	}
+
+	events := drainEvents(out)
+	assert.Empty(t, events, "ignored drop reason must not produce PolicyEvent")
+	assert.Equal(t, uint64(0), agg.FlowsSeen(), "ignored flow must not count toward flowsSeen")
+	assert.Equal(t, uint64(0), agg.InfraDropTotal(), "ignored flow must not count toward infraDrops")
+	assert.Empty(t, healthEvents, "ignored flow must not reach healthCh")
+	assert.Equal(t, uint64(1), agg.IgnoredByDropReason()["CT_MAP_INSERTION_FAILED"])
+}
+
+// TestAggregatorIgnoreDropReasonCounter asserts that multiple flows with the
+// same ignored reason accumulate in the per-reason counter.
+func TestAggregatorIgnoreDropReasonCounter(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+	agg.SetIgnoreDropReasons([]string{"CT_MAP_INSERTION_FAILED"})
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+
+	in <- makeInfraFlow(flowpb.DropReason_CT_MAP_INSERTION_FAILED)
+	in <- makeInfraFlow(flowpb.DropReason_CT_MAP_INSERTION_FAILED)
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out, nil))
+	drainEvents(out)
+
+	assert.Equal(t, uint64(2), agg.IgnoredByDropReason()["CT_MAP_INSERTION_FAILED"])
+}
+
+// TestAggregatorIgnoreDropReasonPrecedence asserts that the ignore-drop-reason
+// filter fires BEFORE --ignore-protocol: if both would match the same flow,
+// only ignoredByDropReason is incremented (not ignoredByProtocol).
+func TestAggregatorIgnoreDropReasonPrecedence(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+	agg.SetIgnoreDropReasons([]string{"CT_MAP_INSERTION_FAILED"})
+	agg.SetIgnoreProtocols([]string{"tcp"})
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+
+	// TCP flow with infra drop reason — both filters would match; reason filter must fire first.
+	f := makeInfraFlow(flowpb.DropReason_CT_MAP_INSERTION_FAILED)
+	// makeInfraFlow already sets TCP L4
+	in <- f
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out, nil))
+	drainEvents(out)
+
+	assert.Equal(t, uint64(1), agg.IgnoredByDropReason()["CT_MAP_INSERTION_FAILED"], "drop-reason filter must fire")
+	assert.Equal(t, uint64(0), agg.IgnoredByProtocol()["tcp"], "protocol filter must NOT fire for reason-filtered flows")
+}
+
+// TestAggregatorIgnoreDropReasonCaseInsensitive asserts that lowercase reason
+// names are normalised to their uppercase canonical form.
+func TestAggregatorIgnoreDropReasonCaseInsensitive(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+	agg.SetIgnoreDropReasons([]string{"ct_map_insertion_failed"}) // lowercase input
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+
+	in <- makeInfraFlow(flowpb.DropReason_CT_MAP_INSERTION_FAILED)
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out, nil))
+	drainEvents(out)
+
+	assert.Equal(t, uint64(0), agg.FlowsSeen(), "lowercase reason input must still filter the flow")
+	assert.Equal(t, uint64(1), agg.IgnoredByDropReason()["CT_MAP_INSERTION_FAILED"],
+		"counter key must be uppercase canonical form")
+}
+
+// TestAggregatorIgnoreDropReasonNonMatching asserts that a flow whose reason is
+// NOT in the ignore set passes through normally without incrementing any counter.
+func TestAggregatorIgnoreDropReasonNonMatching(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+	agg.SetIgnoreDropReasons([]string{"STALE_OR_UNROUTABLE_IP"})
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+
+	// CT_MAP_INSERTION_FAILED is NOT in the ignore set — it should be classified normally.
+	in <- makeInfraFlow(flowpb.DropReason_CT_MAP_INSERTION_FAILED)
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out, nil))
+	drainEvents(out)
+
+	assert.Equal(t, uint64(1), agg.FlowsSeen(), "non-ignored flow must count toward flowsSeen")
+	assert.Equal(t, uint64(1), agg.InfraDropTotal(), "non-ignored infra flow must count in infraDrops")
+	assert.Empty(t, agg.IgnoredByDropReason(), "no drop-reason counter must be incremented")
+}
+
+// TestIgnoredByDropReasonCopy asserts that IgnoredByDropReason() returns an
+// independent copy; mutating the returned map must not affect internal state.
+func TestIgnoredByDropReasonCopy(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+	agg.SetIgnoreDropReasons([]string{"CT_MAP_INSERTION_FAILED"})
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+
+	in <- makeInfraFlow(flowpb.DropReason_CT_MAP_INSERTION_FAILED)
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out, nil))
+	drainEvents(out)
+
+	copy1 := agg.IgnoredByDropReason()
+	copy1["CT_MAP_INSERTION_FAILED"] = 999
+
+	copy2 := agg.IgnoredByDropReason()
+	assert.Equal(t, uint64(1), copy2["CT_MAP_INSERTION_FAILED"],
+		"modifying the returned map must not affect the internal counter")
+}
+
 // TestInfraDropsCopy verifies that InfraDrops() returns an independent copy.
 func TestInfraDropsCopy(t *testing.T) {
 	logger := zaptest.NewLogger(t)
