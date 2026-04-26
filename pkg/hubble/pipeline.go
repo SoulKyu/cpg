@@ -2,6 +2,7 @@ package hubble
 
 import (
 	"context"
+	"path/filepath"
 	"time"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
@@ -143,6 +144,12 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 	policies := make(chan policy.PolicyEvent, 64)
 	policyCh := make(chan policy.PolicyEvent, 64)
 	evidenceCh := make(chan policy.PolicyEvent, 64)
+	healthCh := make(chan DropEvent, 64)
+
+	var hw *healthWriter
+	if cfg.EvidenceEnabled && !cfg.DryRun {
+		hw = newHealthWriter(cfg.EvidenceDir, cfg.OutputHash, cfg.Logger, stats.StartTime)
+	}
 
 	var ew *evidenceWriter
 	if cfg.EvidenceEnabled && !cfg.DryRun {
@@ -158,16 +165,20 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 	g, gctx := errgroup.WithContext(ctx)
 
 	// Stage 1: Aggregate flows and build policies.
-	// healthCh is nil until plan 11-02 creates the real health writer channel.
+	// healthCh receives DropEvents for Infra/Transient flows (HEALTH-02).
 	g.Go(func() error {
-		return agg.Run(gctx, flows, policies, nil)
+		return agg.Run(gctx, flows, policies, healthCh)
 	})
 
 	// Stage 1b: Fan out PolicyEvent to the policy writer and evidence writer.
 	// Neither consumer may block the other.
+	// healthCh is closed here because agg.Run closes its out (policies) channel;
+	// when policies drains, we are done forwarding and must close healthCh so
+	// Stage 2c exits cleanly.
 	g.Go(func() error {
 		defer close(policyCh)
 		defer close(evidenceCh)
+		defer close(healthCh)
 		for pe := range policies {
 			policyCh <- pe
 			evidenceCh <- pe
@@ -192,6 +203,18 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 		for pe := range evidenceCh {
 			if ew != nil {
 				ew.handle(pe)
+			}
+		}
+		return nil
+	})
+
+	// Stage 2c: Drain healthCh into the in-memory health writer accumulator.
+	// Always drains to prevent channel blocking; accumulate() is skipped when
+	// hw is nil (dry-run or evidence disabled).
+	g.Go(func() error {
+		for e := range healthCh {
+			if hw != nil {
+				hw.accumulate(e)
 			}
 		}
 		return nil
@@ -233,6 +256,20 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 		ew.session.EndedAt = time.Now()
 		ew.finalize(int64(stats.FlowsSeen), int64(stats.LostEvents))
 	}
+
+	// HEALTH-02: write cluster-health.json atomically after all goroutines are done.
+	// finalize() is nil-safe (dry-run or evidence disabled → hw is nil → no-op).
+	if err := hw.finalize(stats); err != nil {
+		cfg.Logger.Warn("health writer finalize failed", zap.Error(err))
+	}
+	// Dry-run informational log when infra drops were observed but not written.
+	if cfg.DryRun && stats.InfraDropTotal > 0 {
+		cfg.Logger.Info("dry-run: would write cluster-health.json",
+			zap.Uint64("infra_drop_total", stats.InfraDropTotal),
+			zap.String("path", filepath.Join(cfg.EvidenceDir, cfg.OutputHash, "cluster-health.json")),
+		)
+	}
+
 	stats.Log(cfg.Logger)
 	return err
 }
