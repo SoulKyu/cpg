@@ -125,7 +125,7 @@ Plans:
 | 9. DNS L7 Generation + explain L7 + Docs | v1.2 | 4/4 | Complete | 2026-04-25 |
 | 10. Classifier Core | v1.3 | 2/2 | Complete    | 2026-04-26 |
 | 11. Aggregator Suppression + Health Writer | v1.3 | 2/2 | Complete    | 2026-04-26 |
-| 12. Session Summary Block | v1.3 | 1/1 | Complete   | 2026-04-26 |
+| 12. Session Summary Block | v1.3 | 1/1 | Complete    | 2026-04-26 |
 | 13. Flags + Exit Code | v1.3 | 0/? | Not started | - |
 
 **Milestone status:** v1.0 ✅ shipped · v1.1 ✅ shipped · v1.2 ✅ shipped · v1.3 📋 in progress
