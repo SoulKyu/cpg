@@ -194,7 +194,7 @@ func TestClassifyUnknownEmitsWarn(t *testing.T) {
 		t.Fatalf("Classify(9999) = %v, want DropClassUnknown", got)
 	}
 
-	if n := logs.FilterMessage("unrecognized").Len(); n != 1 {
+	if n := logs.FilterMessageSnippet("unrecognized").Len(); n != 1 {
 		t.Errorf("want 1 warn log containing 'unrecognized', got %d", n)
 	}
 }

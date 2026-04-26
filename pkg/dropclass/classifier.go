@@ -2,8 +2,10 @@ package dropclass
 
 import (
 	"sort"
+	"sync"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
+	"go.uber.org/zap"
 )
 
 // DropClass is the bucket a Cilium drop reason falls into.
@@ -240,6 +242,23 @@ var dropReasonClass = map[flowpb.DropReason]DropClass{
 	flowpb.DropReason_DROP_NO_EGRESS_IP: DropClassInfra,
 }
 
+// warnLogger is the package-level logger for unrecognized DropReason WARNs.
+// nil = no-op (safe). Set once per process via SetWarnLogger before Run().
+var (
+	warnLogger    *zap.Logger
+	warnLoggerMu  sync.RWMutex
+	warnedUnknown sync.Map // key: int32(reason), value: struct{}
+)
+
+// SetWarnLogger sets the logger used to emit a single WARN per unique
+// unrecognized DropReason value. Safe to call before or after Classify.
+// Pass nil to disable warn logging (zero-value safe).
+func SetWarnLogger(l *zap.Logger) {
+	warnLoggerMu.Lock()
+	warnLogger = l
+	warnLoggerMu.Unlock()
+}
+
 // validReasonNamesSorted is built once at init from flowpb.DropReason_name values.
 var validReasonNamesSorted []string
 
@@ -254,10 +273,25 @@ func init() {
 
 // Classify returns the DropClass for a given Cilium drop reason.
 // Returns DropClassUnknown for any reason not in the taxonomy map.
-// O(1) map lookup — safe for high-frequency hot path.
+// O(1) map lookup — safe for high-frequency hot path (concurrent-safe).
+// Emits a single deduplicated WARN per unique unrecognized int32 value so
+// operators can detect forward-compatibility issues with newer Cilium versions.
 func Classify(reason flowpb.DropReason) DropClass {
 	if c, ok := dropReasonClass[reason]; ok {
 		return c
+	}
+	// Unknown reason: never Policy (prevents CNP generation for forward-compat codes).
+	// Fire a deduplicated WARN once per unique unrecognized value.
+	key := int32(reason)
+	if _, loaded := warnedUnknown.LoadOrStore(key, struct{}{}); !loaded {
+		warnLoggerMu.RLock()
+		l := warnLogger
+		warnLoggerMu.RUnlock()
+		if l != nil {
+			l.Warn("unrecognized Cilium DropReason — classified as Unknown; consider upgrading cpg",
+				zap.Int32("drop_reason_code", key),
+			)
+		}
 	}
 	return DropClassUnknown
 }
