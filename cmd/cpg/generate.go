@@ -150,6 +150,10 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	ignoreDropReasons, err := validateIgnoreDropReasons(f.ignoreDropReasons, logger)
+	if err != nil {
+		return err
+	}
 
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -242,7 +246,9 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 
 		L7Enabled: f.l7,
 
-		IgnoreProtocols: ignoreProtocols,
+		IgnoreProtocols:   ignoreProtocols,
+		IgnoreDropReasons: ignoreDropReasons,
+		FailOnInfraDrops:  f.failOnInfraDrops,
 	})
 }
 

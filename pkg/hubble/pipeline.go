@@ -57,6 +57,16 @@ type PipelineConfig struct {
 	// (cmd/cpg) is responsible for normalization + allowlist validation.
 	IgnoreProtocols []string
 
+	// IgnoreDropReasons is the uppercase, already-validated set of DropReason
+	// name strings excluded before classification (FILTER-01 phase 13).
+	// Caller (cmd/cpg) is responsible for validation via validateIgnoreDropReasons.
+	IgnoreDropReasons []string
+
+	// FailOnInfraDrops signals that the caller should exit with code 1 when
+	// InfraDropTotal > 0. The pipeline does NOT call os.Exit — that is
+	// cmd/cpg's responsibility (plan 13-03).
+	FailOnInfraDrops bool
+
 	// Stdout is the writer for human-readable output (session summary block).
 	// Nil defaults to os.Stdout. Use bytes.Buffer in tests.
 	Stdout io.Writer
@@ -138,6 +148,7 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 	agg := NewAggregator(cfg.FlushInterval, cfg.Logger, tracker)
 	agg.SetL7Enabled(cfg.L7Enabled)
 	agg.SetIgnoreProtocols(cfg.IgnoreProtocols)
+	agg.SetIgnoreDropReasons(cfg.IgnoreDropReasons)
 	if cfg.EvidenceEnabled {
 		agg.SetMaxSamples(cfg.EvidenceCaps.MaxSamples)
 	}

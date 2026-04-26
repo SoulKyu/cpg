@@ -54,6 +54,10 @@ func runReplay(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	ignoreDropReasons, err := validateIgnoreDropReasons(f.ignoreDropReasons, logger)
+	if err != nil {
+		return err
+	}
 
 	path := args[0]
 	source, err := flowsource.NewFileSource(path, logger)
@@ -116,7 +120,9 @@ func runReplay(cmd *cobra.Command, args []string) error {
 		// cpg replay NEVER invokes L7 pre-flight (offline path) regardless of --l7.
 		L7Enabled: f.l7,
 
-		IgnoreProtocols: ignoreProtocols,
+		IgnoreProtocols:   ignoreProtocols,
+		IgnoreDropReasons: ignoreDropReasons,
+		FailOnInfraDrops:  f.failOnInfraDrops,
 	}
 
 	return hubble.RunPipelineWithSource(ctx, cfg, source)
