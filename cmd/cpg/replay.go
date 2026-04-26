@@ -50,6 +50,10 @@ func runReplay(cmd *cobra.Command, args []string) error {
 	if len(f.namespaces) > 0 && f.allNamespaces {
 		return fmt.Errorf("--namespace and --all-namespaces are mutually exclusive")
 	}
+	ignoreProtocols, err := validateIgnoreProtocols(f.ignoreProtocols)
+	if err != nil {
+		return err
+	}
 
 	path := args[0]
 	source, err := flowsource.NewFileSource(path, logger)
@@ -111,6 +115,8 @@ func runReplay(cmd *cobra.Command, args []string) error {
 		// L7Enabled is plumbed through but is a no-op for codegen in v1.2 Phase 7.
 		// cpg replay NEVER invokes L7 pre-flight (offline path) regardless of --l7.
 		L7Enabled: f.l7,
+
+		IgnoreProtocols: ignoreProtocols,
 	}
 
 	return hubble.RunPipelineWithSource(ctx, cfg, source)

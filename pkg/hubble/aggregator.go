@@ -20,6 +20,29 @@ type AggKey struct {
 	Workload  string
 }
 
+// validIgnoreProtocols is the single source of truth for the values accepted
+// by --ignore-protocol. Kept as a set so cmd/cpg validation can reuse it via
+// ValidIgnoreProtocols() without import cycles.
+var validIgnoreProtocols = map[string]struct{}{
+	"tcp":    {},
+	"udp":    {},
+	"icmpv4": {},
+	"icmpv6": {},
+	"sctp":   {},
+}
+
+// ValidIgnoreProtocols returns the sorted list of L4 protocol names accepted
+// by Aggregator.SetIgnoreProtocols. Used by cmd/cpg to render validation
+// error messages with a deterministic allowlist.
+func ValidIgnoreProtocols() []string {
+	out := make([]string, 0, len(validIgnoreProtocols))
+	for k := range validIgnoreProtocols {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // Aggregator accumulates flows by (namespace, workload) and flushes them as
 // PolicyEvents on a configurable ticker interval. It also flushes remaining
 // flows when the input channel closes or the context is cancelled.
@@ -62,6 +85,16 @@ type Aggregator struct {
 	// during the session. Surfaced sorted via ObservedWorkloads() to populate
 	// the VIS-01 warning's `workloads` field.
 	seenWorkloads map[string]struct{}
+
+	// ignoreProtocols is the lowercase set of L4 protocol names whose flows
+	// must be dropped before bucketing. Empty/nil = no filtering. Populated
+	// via SetIgnoreProtocols (PA5).
+	ignoreProtocols map[string]struct{}
+
+	// ignoredByProtocol counts flows dropped via --ignore-protocol per
+	// protocol name (lowercase). Surfaced via IgnoredByProtocol() and logged
+	// in the session summary.
+	ignoredByProtocol map[string]uint64
 }
 
 // NewAggregator creates a new Aggregator with the given flush interval.
@@ -69,12 +102,65 @@ type Aggregator struct {
 // aggregator can depend on behavior rather than the concrete UnhandledTracker.
 func NewAggregator(interval time.Duration, logger *zap.Logger, tracker flushingTracker) *Aggregator {
 	return &Aggregator{
-		interval:       interval,
-		logger:         logger,
-		warnedReserved: make(map[string]struct{}),
-		tracker:        tracker,
-		seenWorkloads:  make(map[string]struct{}),
+		interval:          interval,
+		logger:            logger,
+		warnedReserved:    make(map[string]struct{}),
+		tracker:           tracker,
+		seenWorkloads:     make(map[string]struct{}),
+		ignoredByProtocol: make(map[string]uint64),
 	}
+}
+
+// SetIgnoreProtocols configures the lowercase set of L4 protocol names that
+// must be dropped before bucketing. nil/empty disables filtering. Defensive:
+// inputs are lowercased again even though cmd/cpg already normalizes.
+func (a *Aggregator) SetIgnoreProtocols(protos []string) {
+	if len(protos) == 0 {
+		a.ignoreProtocols = nil
+		return
+	}
+	set := make(map[string]struct{}, len(protos))
+	for _, p := range protos {
+		set[strings.ToLower(p)] = struct{}{}
+	}
+	a.ignoreProtocols = set
+}
+
+// IgnoredByProtocol returns a copy of the per-protocol drop counter populated
+// during Run(). Map iteration order is not stable; sort at the call site for
+// deterministic output.
+func (a *Aggregator) IgnoredByProtocol() map[string]uint64 {
+	out := make(map[string]uint64, len(a.ignoredByProtocol))
+	for k, v := range a.ignoredByProtocol {
+		out[k] = v
+	}
+	return out
+}
+
+// flowL4ProtoName returns the lowercase protocol name encoded in a flow's L4
+// oneof. Returns "" when L4 is nil or carries an unknown protocol — the
+// ignore-protocol filter never matches "" so unknown flows fall through to
+// the existing nil-L4 / unknown-protocol tracker paths.
+func flowL4ProtoName(f *flowpb.Flow) string {
+	if f.L4 == nil {
+		return ""
+	}
+	if f.L4.GetTCP() != nil {
+		return "tcp"
+	}
+	if f.L4.GetUDP() != nil {
+		return "udp"
+	}
+	if f.L4.GetICMPv4() != nil {
+		return "icmpv4"
+	}
+	if f.L4.GetICMPv6() != nil {
+		return "icmpv6"
+	}
+	if f.L4.GetSCTP() != nil {
+		return "sctp"
+	}
+	return ""
 }
 
 // SetL7Enabled toggles the HTTP L7 codegen branch in BuildPolicy. Safe to
@@ -149,6 +235,17 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan *flowpb.Flow, out chan<-
 			}
 			if f.GetL7().GetDns() != nil {
 				a.l7DNSCount++
+			}
+			// PA5: drop ignored protocols BEFORE bucketing so flowsSeen and
+			// the unhandled tracker remain consistent — these flows are
+			// intentionally excluded, not "unhandled".
+			if len(a.ignoreProtocols) > 0 {
+				if name := flowL4ProtoName(f); name != "" {
+					if _, drop := a.ignoreProtocols[name]; drop {
+						a.ignoredByProtocol[name]++
+						continue
+					}
+				}
 			}
 			key, skip := a.keyFromFlow(f)
 			if skip {

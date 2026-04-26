@@ -146,6 +146,10 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 	if err := f.validate(); err != nil {
 		return err
 	}
+	ignoreProtocols, err := validateIgnoreProtocols(f.ignoreProtocols)
+	if err != nil {
+		return err
+	}
 
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -237,6 +241,8 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 		CPGVersion:    version,
 
 		L7Enabled: f.l7,
+
+		IgnoreProtocols: ignoreProtocols,
 	})
 }
 

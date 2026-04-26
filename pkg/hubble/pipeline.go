@@ -47,6 +47,11 @@ type PipelineConfig struct {
 
 	// L7Enabled: no-op in v1.2 Phase 7; Phase 8 (HTTP) and Phase 9 (DNS) light up codegen.
 	L7Enabled bool
+
+	// IgnoreProtocols is the lowercase, already-validated set of L4 protocol
+	// names whose flows must be dropped before bucketing (PA5). Caller
+	// (cmd/cpg) is responsible for normalization + allowlist validation.
+	IgnoreProtocols []string
 }
 
 // SessionStats tracks pipeline metrics for the session summary.
@@ -64,7 +69,11 @@ type SessionStats struct {
 	// L7DNSCount mirrors L7HTTPCount for DNS records. Phase 8 leaves this at
 	// 0; Phase 9 wires the increment.
 	L7DNSCount uint64
-	OutputDir  string
+	// IgnoredByProtocol is the per-protocol drop counter populated by the
+	// aggregator when --ignore-protocol is set (PA5). Logged via zap.Any in
+	// the session summary; map iteration order is not pinned.
+	IgnoredByProtocol map[string]uint64
+	OutputDir         string
 }
 
 // Log outputs the session summary to the logger.
@@ -79,6 +88,7 @@ func (s *SessionStats) Log(logger *zap.Logger) {
 		zap.Uint64("lost_events", s.LostEvents),
 		zap.Uint64("l7_http_count", s.L7HTTPCount),
 		zap.Uint64("l7_dns_count", s.L7DNSCount),
+		zap.Any("ignored_by_protocol", s.IgnoredByProtocol),
 		zap.String("output_dir", s.OutputDir),
 	)
 }
@@ -110,6 +120,7 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 	tracker := NewUnhandledTracker(cfg.Logger)
 	agg := NewAggregator(cfg.FlushInterval, cfg.Logger, tracker)
 	agg.SetL7Enabled(cfg.L7Enabled)
+	agg.SetIgnoreProtocols(cfg.IgnoreProtocols)
 	if cfg.EvidenceEnabled {
 		agg.SetMaxSamples(cfg.EvidenceCaps.MaxSamples)
 	}
@@ -190,6 +201,7 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 	stats.FlowsSeen = agg.FlowsSeen()
 	stats.L7HTTPCount = agg.L7HTTPCount()
 	stats.L7DNSCount = agg.L7DNSCount()
+	stats.IgnoredByProtocol = agg.IgnoredByProtocol()
 
 	// VIS-01: passive empty-L7-records detection. Single warning per pipeline
 	// run, fired only when --l7 was requested AND at least one flow was
