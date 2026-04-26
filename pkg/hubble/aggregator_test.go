@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap/zaptest"
 	"go.uber.org/zap/zaptest/observer"
 
+	"github.com/SoulKyu/cpg/pkg/dropclass"
 	"github.com/SoulKyu/cpg/pkg/policy"
 	"github.com/SoulKyu/cpg/pkg/policy/testdata"
 )
@@ -546,4 +547,270 @@ func drainEvents(ch <-chan policy.PolicyEvent) []policy.PolicyEvent {
 		events = append(events, ev)
 	}
 	return events
+}
+
+// makeInfraFlow builds a dropped EGRESS flow with the given DropReasonDesc.
+// Source endpoint is in namespace "test" with k8s:app=worker label.
+// NodeName is set to "node-1" for healthCh assertions.
+func makeInfraFlow(reason flowpb.DropReason) *flowpb.Flow {
+	return &flowpb.Flow{
+		TrafficDirection: flowpb.TrafficDirection_EGRESS,
+		Verdict:          flowpb.Verdict_DROPPED,
+		DropReasonDesc:   reason,
+		NodeName:         "node-1",
+		Source: &flowpb.Endpoint{
+			Labels:    []string{"k8s:app=worker"},
+			Namespace: "test",
+		},
+		Destination: &flowpb.Endpoint{
+			Labels:    []string{"k8s:app=backend"},
+			Namespace: "test",
+		},
+		L4: &flowpb.Layer4{
+			Protocol: &flowpb.Layer4_TCP{
+				TCP: &flowpb.TCP{DestinationPort: 8080},
+			},
+		},
+	}
+}
+
+// makePolicyFlow builds a dropped EGRESS POLICY_DENIED flow with namespace "test".
+func makePolicyFlow() *flowpb.Flow {
+	f := testdata.EgressUDPFlow(
+		[]string{"k8s:app=client"},
+		[]string{"k8s:app=server"},
+		"test",
+		8080,
+	)
+	f.Verdict = flowpb.Verdict_DROPPED
+	f.DropReasonDesc = flowpb.DropReason_POLICY_DENIED
+	return f
+}
+
+// TestAggregatorClassificationSuppression verifies that a CT_MAP_INSERTION_FAILED
+// flow is suppressed from CNP generation but counted in flowsSeen and infraDrops.
+func TestAggregatorClassificationSuppression(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+
+	in <- makeInfraFlow(flowpb.DropReason_CT_MAP_INSERTION_FAILED)
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out, nil))
+
+	events := drainEvents(out)
+	assert.Empty(t, events, "infra flow must not produce PolicyEvent")
+	assert.Equal(t, uint64(1), agg.FlowsSeen(), "infra flow must count toward flowsSeen")
+	assert.Equal(t, uint64(1), agg.InfraDropTotal(), "infraDrops must be 1")
+	drops := agg.InfraDrops()
+	assert.Equal(t, uint64(1), drops[flowpb.DropReason_CT_MAP_INSERTION_FAILED])
+}
+
+// TestAggregatorPolicyFlowPassthrough verifies that a POLICY_DENIED flow is bucketed
+// and produces a PolicyEvent.
+func TestAggregatorPolicyFlowPassthrough(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+
+	in <- makePolicyFlow()
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out, nil))
+
+	events := drainEvents(out)
+	assert.Len(t, events, 1, "policy flow must produce exactly one PolicyEvent")
+	assert.Equal(t, uint64(1), agg.FlowsSeen())
+	assert.Equal(t, uint64(0), agg.InfraDropTotal())
+}
+
+// TestAggregatorFlowsSeenInvariant verifies Pitfall 6: 5 policy + 3 infra flows
+// yields flowsSeen=8, infraDrops=3, and exactly 5 CNP buckets.
+func TestAggregatorFlowsSeenInvariant(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+
+	in := make(chan *flowpb.Flow, 20)
+	out := make(chan policy.PolicyEvent, 20)
+
+	for i := 0; i < 5; i++ {
+		in <- makePolicyFlow()
+	}
+	for i := 0; i < 3; i++ {
+		in <- makeInfraFlow(flowpb.DropReason_CT_MAP_INSERTION_FAILED)
+	}
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out, nil))
+
+	drainEvents(out) // consume so the channel drains
+	assert.Equal(t, uint64(8), agg.FlowsSeen(), "flowsSeen must include infra flows (Pitfall 6)")
+	assert.Equal(t, uint64(3), agg.InfraDropTotal(), "infraDrops must be 3")
+}
+
+// TestAggregatorNoiseDiscarded verifies that NAT_NOT_NEEDED flows are silently
+// discarded — no bucket, flowsSeen=0, infraDrops=0.
+func TestAggregatorNoiseDiscarded(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+
+	in <- makeInfraFlow(flowpb.DropReason_NAT_NOT_NEEDED)
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out, nil))
+
+	events := drainEvents(out)
+	assert.Empty(t, events)
+	assert.Equal(t, uint64(0), agg.FlowsSeen(), "noise flow must NOT count toward flowsSeen")
+	assert.Equal(t, uint64(0), agg.InfraDropTotal(), "noise flow must NOT count toward infraDrops")
+}
+
+// TestAggregatorTransientCounted verifies that a STALE_OR_UNROUTABLE_IP flow
+// is counted in flowsSeen and infraDrops but produces no CNP bucket.
+func TestAggregatorTransientCounted(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+
+	in <- makeInfraFlow(flowpb.DropReason_STALE_OR_UNROUTABLE_IP)
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out, nil))
+
+	events := drainEvents(out)
+	assert.Empty(t, events)
+	assert.Equal(t, uint64(1), agg.FlowsSeen())
+	assert.Equal(t, uint64(1), agg.InfraDropTotal())
+}
+
+// TestAggregatorHealthChReceivesDropEvent verifies that an infra flow sends a
+// DropEvent on a non-nil healthCh with correct fields.
+func TestAggregatorHealthChReceivesDropEvent(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+	healthCh := make(chan DropEvent, 10)
+
+	in <- makeInfraFlow(flowpb.DropReason_CT_MAP_INSERTION_FAILED)
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out, healthCh))
+
+	close(healthCh)
+	var events []DropEvent
+	for ev := range healthCh {
+		events = append(events, ev)
+	}
+	require.Len(t, events, 1)
+	assert.Equal(t, flowpb.DropReason_CT_MAP_INSERTION_FAILED, events[0].Reason)
+	assert.Equal(t, dropclass.DropClassInfra, events[0].Class)
+	assert.Equal(t, "node-1", events[0].NodeName)
+	assert.Equal(t, "test", events[0].Namespace)
+}
+
+// TestAggregatorHealthChNilSafe verifies that passing nil as healthCh does not
+// panic when infra flows are processed.
+func TestAggregatorHealthChNilSafe(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+
+	in <- makeInfraFlow(flowpb.DropReason_CT_MAP_INSERTION_FAILED)
+	close(in)
+
+	// Must not panic
+	require.NoError(t, agg.Run(context.Background(), in, out, nil))
+}
+
+// TestAggregatorFilterPrecedence verifies that --ignore-protocol fires before the
+// classification gate: an ICMPv4 flow that would be classified as Infra/Transient
+// is counted in ignoredByProtocol, NOT in infraDrops.
+func TestAggregatorFilterPrecedence(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+	agg.SetIgnoreProtocols([]string{"icmpv4"})
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+
+	// ICMPv4 flow with an infra drop reason — proto filter must fire first
+	f := makeInfraFlow(flowpb.DropReason_CT_MAP_INSERTION_FAILED)
+	f.L4 = &flowpb.Layer4{
+		Protocol: &flowpb.Layer4_ICMPv4{
+			ICMPv4: &flowpb.ICMPv4{Type: 8},
+		},
+	}
+	in <- f
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out, nil))
+
+	assert.Equal(t, uint64(1), agg.IgnoredByProtocol()["icmpv4"], "proto filter must fire")
+	assert.Equal(t, uint64(0), agg.InfraDropTotal(), "classification gate must NOT fire for proto-filtered flows")
+	assert.Equal(t, uint64(0), agg.FlowsSeen(), "proto-filtered flows must not count toward flowsSeen")
+}
+
+// TestInfraDropTotal verifies the convenience sum accessor.
+func TestInfraDropTotal(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+
+	in <- makeInfraFlow(flowpb.DropReason_CT_MAP_INSERTION_FAILED)
+	in <- makeInfraFlow(flowpb.DropReason_CT_MAP_INSERTION_FAILED)
+	in <- makeInfraFlow(flowpb.DropReason_STALE_OR_UNROUTABLE_IP)
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out, nil))
+
+	drainEvents(out)
+	assert.Equal(t, uint64(3), agg.InfraDropTotal())
+}
+
+// TestInfraDropsCopy verifies that InfraDrops() returns an independent copy.
+func TestInfraDropsCopy(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+
+	in <- makeInfraFlow(flowpb.DropReason_CT_MAP_INSERTION_FAILED)
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out, nil))
+
+	drainEvents(out)
+	copy1 := agg.InfraDrops()
+	copy1[flowpb.DropReason_CT_MAP_INSERTION_FAILED] = 999
+
+	copy2 := agg.InfraDrops()
+	assert.Equal(t, uint64(1), copy2[flowpb.DropReason_CT_MAP_INSERTION_FAILED],
+		"modifying the returned map must not affect the internal counter")
 }
