@@ -1,11 +1,11 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.3
-milestone_name: awaiting-scope
-status: between_milestones
-stopped_at: v1.2 archived 2026-04-25; next milestone awaits /gsd:new-milestone
-last_updated: "2026-04-25T11:00:00.000Z"
-last_activity: 2026-04-25 -- Archived v1.2 L7 Policies milestone
+milestone_name: cluster-health-surfacing
+status: defining_requirements
+stopped_at: v1.3 scoping in progress -- requirements next
+last_updated: "2026-04-26T19:00:00.000Z"
+last_activity: 2026-04-26 -- Started milestone v1.3 Cluster Health Surfacing
 progress:
   total_phases: 0
   completed_phases: 0
@@ -21,15 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-25)
 
 **Core value:** Automatically generate correct CiliumNetworkPolicies from observed Hubble denials so that SREs spend zero time manually writing network policies in default-deny environments.
-**Current focus:** Between milestones — v1.0 + v1.1 + v1.2 archived, v1.3 awaiting scoping.
+**Current focus:** v1.3 Cluster Health Surfacing — classify Hubble drop_reason, suppress policy generation for non-policy drops, surface infra-level drops separately.
 
 ## Current Position
 
-Status: Between milestones — v1.2 L7 Policies shipped 2026-04-25.
-Last activity: 2026-04-25 -- Archived v1.2 L7 Policies milestone
-Next: `/gsd:new-milestone` to scope v1.3.
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-04-26 -- Milestone v1.3 started
 
-Progress: v1.0 ✅ · v1.1 ✅ · v1.2 ✅ · v1.3 📋 (not started)
+Progress: v1.0 ✅ · v1.1 ✅ · v1.2 ✅ · v1.3 📋 (defining requirements)
 
 ## Performance Metrics
 
@@ -70,6 +71,6 @@ None open. v1.3 deferred items (L7-FUT-01, DNS-FUT-02, etc.) tracked in PROJECT.
 
 ## Session Continuity
 
-Last session: 2026-04-26T16:30:00Z
-Stopped at: Quick task 260426-pa5 (--ignore-protocol flag) shipped on master.
-Resume: Run `/gsd:new-milestone` to scope v1.3, or `/gsd:quick` for next ad-hoc task.
+Last session: 2026-04-26T19:00:00Z
+Stopped at: v1.3 Cluster Health Surfacing scoped — PROJECT.md + STATE.md updated, requirements next.
+Resume: Continue `/gsd:new-milestone` flow → REQUIREMENTS.md → ROADMAP.md.

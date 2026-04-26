@@ -39,9 +39,14 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 
 ### Active
 
-<!-- Awaiting v1.3 scoping via /gsd:new-milestone. -->
+<!-- v1.3 — Cluster Health Surfacing. Scoped 2026-04-26 via /gsd:new-milestone. -->
 
-- _(defined during `/gsd:new-milestone`)_
+- [ ] Drop-reason classification taxonomy (policy / infra / transient) — v1.3
+- [ ] Suppress policy generation for non-policy drops — v1.3
+- [ ] `cluster-health.json` output: counters by reason × node × workload + remediation hints — v1.3
+- [ ] Session summary block listing infra-level drops with severity — v1.3
+- [ ] `--ignore-drop-reason` flag (repeatable, comma-separated, parity with `--ignore-protocol`) — v1.3
+- [ ] Opt-in `--fail-on-infra-drops` exit code for CI/cron — v1.3
 
 ### Planned
 
@@ -129,19 +134,26 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 
 **Codebase:** 9 packages (`pkg/{labels,policy,output,hubble,k8s,dedup,flowsource,evidence,diff}` + `cmd/`) with new files in `pkg/policy/{l7.go, companion_dns.go}` + `pkg/k8s/preflight.go`. **319 tests passing** across 9 packages (up from 180 at v1.1 close, +77%). Release-please continues to handle product SemVer tagging.
 
-**Next milestone:** v1.3 — awaiting scoping. See Planned section above for candidates.
+**Current milestone:** v1.3 — Cluster Health Surfacing (scoping started 2026-04-26).
 
-## Next Milestone: v1.3 (to be scoped)
+## Current Milestone: v1.3 Cluster Health Surfacing
 
-Candidate themes carried over from v1.2 deferrals — subject to revision during `/gsd:new-milestone`:
-- `cpg apply` command with dry-run-by-default + `--force`
-- Policy consolidation across overlapping rules
-- Prometheus metrics for long-running deployments
-- HTTP path / FQDN auto-collapse heuristics
-- ToFQDNs from IP→name correlation
-- kube-dns selector autodetection across CNI distributions
-- `--include-l7-forwarded` for DNS REFUSED denials
-- `--min-flows-per-l7-rule N` low-confidence gate
+**Goal:** Distinguish policy drops from infrastructure-level Hubble drops (CT map full, BPF errors, transient datapath failures) so cpg only generates CNPs for true policy denials and surfaces cluster-critical issues separately for SRE attention.
+
+**Target features:**
+- Drop-reason classification taxonomy (policy / infra / transient) embedded in code, override-friendly
+- Suppress policy generation for non-policy drops (no more bogus `cpg-*` CNP for `CT_MAP_INSERTION_FAILED` & co)
+- `cluster-health.json` output: counters by reason × node × workload + remediation hint links
+- Session summary block listing infra-level drops with severity
+- `--ignore-drop-reason` flag (repeatable, comma-separated, parity with `--ignore-protocol`)
+- Opt-in `--fail-on-infra-drops` exit code (CI/cron hook)
+
+**Out of scope (this milestone):**
+- OpenMetrics/Prometheus export (deferred — gather field feedback first)
+- Semantic policy intersection ("would existing CNP already allow this?")
+- Other v1.3 candidates (`cpg apply`, policy consolidation, L7-FUT-*) — deferred to v1.4+
+
+**Trigger:** Real prod observation 2026-04-26 — `mmtro-adserver` ingress drop with reason `CT_MAP_INSERTION_FAILED` (Cilium conntrack map full, infra issue) generated a useless `cpg-mmtro-adserver` CNP. Class of bug: cpg trusts every Hubble DROP as a policy-fixable event.
 
 ---
-*Last updated: 2026-04-25 — v1.2 L7 Policies milestone shipped (12 plans, 22 REQs, 319 tests).*
+*Last updated: 2026-04-26 — v1.3 Cluster Health Surfacing scoped via /gsd:new-milestone.*
