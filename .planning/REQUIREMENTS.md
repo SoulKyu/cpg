@@ -10,9 +10,9 @@
 
 ### CLASSIFY — Drop-reason taxonomy
 
-- [ ] **CLASSIFY-01**: User sees Hubble drops classified into one of {policy, infra, transient, unknown} based on a static taxonomy covering all known Cilium ≥1.14 `DropReason` enum values
+- [x] **CLASSIFY-01**: User sees Hubble drops classified into one of {policy, infra, transient, unknown} based on a static taxonomy covering all known Cilium ≥1.14 `DropReason` enum values
 - [ ] **CLASSIFY-02**: Unknown / unrecognized `DropReason` values default to the `unknown` bucket (never `policy`) and trigger a single deduplicated WARN log per unique value
-- [ ] **CLASSIFY-03**: User can read a stable `classifierVersion` constant (semver string) embedded in `cluster-health.json` for cross-release traceability
+- [x] **CLASSIFY-03**: User can read a stable `classifierVersion` constant (semver string) embedded in `cluster-health.json` for cross-release traceability
 
 ### HEALTH — Suppression + reporting
 

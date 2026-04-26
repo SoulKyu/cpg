@@ -1,17 +1,16 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.3
-milestone_name: cluster-health-surfacing
-status: ready_to_plan
-stopped_at: roadmap created — 4 phases (10-13), ready for /gsd:plan-phase 10
-last_updated: "2026-04-26T19:30:00.000Z"
-last_activity: 2026-04-26 -- Roadmap v1.3 created (phases 10-13), requirements traced
+milestone_name: Cluster Health Surfacing
+status: executing
+stopped_at: Completed 10-01-taxonomy-and-hints-PLAN.md
+last_updated: "2026-04-26T20:14:13.731Z"
+last_activity: 2026-04-26
 progress:
   total_phases: 4
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_plans: 2
+  completed_plans: 1
 ---
 
 # Project State
@@ -21,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-26)
 
 **Core value:** Automatically generate correct CiliumNetworkPolicies from observed Hubble denials so that SREs spend zero time manually writing network policies in default-deny environments.
-**Current focus:** v1.3 Cluster Health Surfacing — Phase 10: Classifier Core (`pkg/dropclass/` taxonomy, CLASSIFY-01..03)
+**Current focus:** Phase 10 — classifier-core
 
 ## Current Position
 
-Phase: 10 of 13 (Classifier Core)
-Plan: — (not yet planned)
-Status: Ready to plan
-Last activity: 2026-04-26 — Roadmap created, 4 phases (10-13), 13 requirements traced
+Phase: 10 (classifier-core) — EXECUTING
+Plan: 2 of 2
+Status: Ready to execute
+Last activity: 2026-04-26
 
 Progress: v1.0 ✅ · v1.1 ✅ · v1.2 ✅ · v1.3 🗺 (roadmap ready)
 
@@ -56,12 +55,15 @@ Phase 13 [          ] 0%   Flags + Exit Code
 | v1.3 | 10-13 | TBD | — |
 
 *Updated after each plan completion.*
+| Phase 10-classifier-core P01 | 4 | 2 tasks | 5 files |
 
 ## Accumulated Context
 
 ### Decisions
 
 Decisions logged in PROJECT.md Key Decisions table.
+
+- [Phase 10-classifier-core]: O(1) map[flowpb.DropReason]DropClass lookup (not switch) for Classify(); fallback DropClassUnknown NEVER Policy
 
 ### Pending Todos
 
@@ -79,6 +81,6 @@ None open. v1.3 deferred items (L7-FUT-01, DNS-FUT-02, etc.) tracked in PROJECT.
 
 ## Session Continuity
 
-Last session: 2026-04-26T19:30:00Z
-Stopped at: Roadmap v1.3 created — 4 phases (10-13), 13 requirements traced, STATE.md + REQUIREMENTS.md updated.
+Last session: 2026-04-26T20:14:13.726Z
+Stopped at: Completed 10-01-taxonomy-and-hints-PLAN.md
 Resume: `/gsd:plan-phase 10` — Classifier Core (CLASSIFY-01, CLASSIFY-02, CLASSIFY-03)
