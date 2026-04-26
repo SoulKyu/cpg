@@ -40,7 +40,7 @@ func TestAggregator_FlushOnTicker(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- agg.Run(ctx, in, out)
+		done <- agg.Run(ctx, in, out, nil)
 	}()
 
 	// Wait for ticker to flush
@@ -82,7 +82,7 @@ func TestAggregator_KeyFromFlow_Ingress(t *testing.T) {
 	in <- f
 	close(in) // triggers flush of remaining
 
-	err := agg.Run(context.Background(), in, out)
+	err := agg.Run(context.Background(), in, out, nil)
 	require.NoError(t, err)
 
 	events := drainEvents(out)
@@ -109,7 +109,7 @@ func TestAggregator_KeyFromFlow_Egress(t *testing.T) {
 	in <- f
 	close(in)
 
-	err := agg.Run(context.Background(), in, out)
+	err := agg.Run(context.Background(), in, out, nil)
 	require.NoError(t, err)
 
 	events := drainEvents(out)
@@ -131,7 +131,7 @@ func TestAggregator_FlushOnChannelClose(t *testing.T) {
 	in <- testdata.IngressTCPFlow([]string{"k8s:app=b"}, []string{"k8s:app=s2"}, "ns2", 443)
 	close(in)
 
-	err := agg.Run(context.Background(), in, out)
+	err := agg.Run(context.Background(), in, out, nil)
 	require.NoError(t, err)
 
 	events := drainEvents(out)
@@ -152,7 +152,7 @@ func TestAggregator_FlushOnContextCancel(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- agg.Run(ctx, in, out)
+		done <- agg.Run(ctx, in, out, nil)
 	}()
 
 	// Deterministic: wait until the aggregator has consumed the buffered flow.
@@ -199,7 +199,7 @@ func TestAggregator_SkipEmptyNamespace(t *testing.T) {
 	in <- f
 	close(in)
 
-	err := agg.Run(context.Background(), in, out)
+	err := agg.Run(context.Background(), in, out, nil)
 	require.NoError(t, err)
 
 	events := drainEvents(out)
@@ -328,7 +328,7 @@ func TestAggregator_L7DNSCount_Increments(t *testing.T) {
 	in <- dnsFlow
 	close(in)
 
-	require.NoError(t, agg.Run(context.Background(), in, out))
+	require.NoError(t, agg.Run(context.Background(), in, out, nil))
 	_ = drainEvents(out)
 
 	assert.Equal(t, uint64(2), agg.L7DNSCount(), "two DNS-bearing flows → L7DNSCount==2")
@@ -355,7 +355,7 @@ func TestAggregator_L7DNSCount_IndependentOfL7Enabled(t *testing.T) {
 	in <- f
 	close(in)
 
-	require.NoError(t, agg.Run(context.Background(), in, out))
+	require.NoError(t, agg.Run(context.Background(), in, out, nil))
 	_ = drainEvents(out)
 
 	assert.Equal(t, uint64(1), agg.L7DNSCount(), "counter is diagnostic, not gated by L7Enabled")
@@ -382,7 +382,7 @@ func TestAggregator_TracksNilEndpoint(t *testing.T) {
 	in <- f
 	close(in)
 
-	err := agg.Run(context.Background(), in, out)
+	err := agg.Run(context.Background(), in, out, nil)
 	require.NoError(t, err)
 
 	events := drainEvents(out)
@@ -421,7 +421,7 @@ func TestAggregator_TracksEmptyNamespace(t *testing.T) {
 	in <- f
 	close(in)
 
-	err := agg.Run(context.Background(), in, out)
+	err := agg.Run(context.Background(), in, out, nil)
 	require.NoError(t, err)
 
 	events := drainEvents(out)
@@ -451,7 +451,7 @@ func TestAggregator_IgnoreProtocols_DropsICMPv4(t *testing.T) {
 	)
 	close(in)
 
-	require.NoError(t, agg.Run(context.Background(), in, out))
+	require.NoError(t, agg.Run(context.Background(), in, out, nil))
 
 	events := drainEvents(out)
 	assert.Empty(t, events, "ignored protocol must not produce PolicyEvent")
@@ -474,7 +474,7 @@ func TestAggregator_IgnoreProtocols_TCPPassthrough(t *testing.T) {
 	in <- testdata.EgressICMPv4Flow([]string{"k8s:app=c"}, "production", []string{"k8s:app=x"}, "10.0.0.1", 8)
 	close(in)
 
-	require.NoError(t, agg.Run(context.Background(), in, out))
+	require.NoError(t, agg.Run(context.Background(), in, out, nil))
 
 	events := drainEvents(out)
 	assert.Len(t, events, 1, "TCP flow must produce one PolicyEvent")
@@ -498,7 +498,7 @@ func TestAggregator_IgnoreProtocols_MultipleProtocols(t *testing.T) {
 	in <- testdata.EgressICMPv4Flow([]string{"k8s:app=c"}, "production", []string{"k8s:app=x"}, "10.0.0.1", 8)
 	close(in)
 
-	require.NoError(t, agg.Run(context.Background(), in, out))
+	require.NoError(t, agg.Run(context.Background(), in, out, nil))
 
 	events := drainEvents(out)
 	assert.Len(t, events, 1, "only the ICMPv4 flow survives bucketing")
@@ -523,7 +523,7 @@ func TestAggregator_IgnoreProtocols_EmptyIsNoOp(t *testing.T) {
 	in <- testdata.IngressTCPFlow([]string{"k8s:app=c"}, []string{"k8s:app=s"}, "production", 80)
 	close(in)
 
-	require.NoError(t, agg.Run(context.Background(), in, out))
+	require.NoError(t, agg.Run(context.Background(), in, out, nil))
 
 	events := drainEvents(out)
 	assert.Len(t, events, 1)

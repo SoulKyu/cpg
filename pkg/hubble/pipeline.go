@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	flowpb "github.com/cilium/cilium/api/v1/flow"
 	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -73,7 +74,14 @@ type SessionStats struct {
 	// aggregator when --ignore-protocol is set (PA5). Logged via zap.Any in
 	// the session summary; map iteration order is not pinned.
 	IgnoredByProtocol map[string]uint64
-	OutputDir         string
+	// InfraDropTotal is the total number of flows suppressed by the
+	// classification gate (Infra + Transient). Populated from
+	// agg.InfraDropTotal() after g.Wait(). Zero when no infra drops observed.
+	InfraDropTotal uint64
+	// InfraDropsByReason is the per-reason breakdown of suppressed flows.
+	// Populated from agg.InfraDrops() after g.Wait().
+	InfraDropsByReason map[flowpb.DropReason]uint64
+	OutputDir          string
 }
 
 // Log outputs the session summary to the logger.
@@ -89,6 +97,8 @@ func (s *SessionStats) Log(logger *zap.Logger) {
 		zap.Uint64("l7_http_count", s.L7HTTPCount),
 		zap.Uint64("l7_dns_count", s.L7DNSCount),
 		zap.Any("ignored_by_protocol", s.IgnoredByProtocol),
+		zap.Uint64("infra_drop_total", s.InfraDropTotal),
+		zap.Any("infra_drops_by_reason", s.InfraDropsByReason),
 		zap.String("output_dir", s.OutputDir),
 	)
 }
@@ -148,8 +158,9 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 	g, gctx := errgroup.WithContext(ctx)
 
 	// Stage 1: Aggregate flows and build policies.
+	// healthCh is nil until plan 11-02 creates the real health writer channel.
 	g.Go(func() error {
-		return agg.Run(gctx, flows, policies)
+		return agg.Run(gctx, flows, policies, nil)
 	})
 
 	// Stage 1b: Fan out PolicyEvent to the policy writer and evidence writer.
@@ -202,6 +213,8 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 	stats.L7HTTPCount = agg.L7HTTPCount()
 	stats.L7DNSCount = agg.L7DNSCount()
 	stats.IgnoredByProtocol = agg.IgnoredByProtocol()
+	stats.InfraDropTotal = agg.InfraDropTotal()
+	stats.InfraDropsByReason = agg.InfraDrops()
 
 	// VIS-01: passive empty-L7-records detection. Single warning per pipeline
 	// run, fired only when --l7 was requested AND at least one flow was

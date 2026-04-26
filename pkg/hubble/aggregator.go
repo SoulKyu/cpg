@@ -10,9 +10,20 @@ import (
 	flowpb "github.com/cilium/cilium/api/v1/flow"
 	"go.uber.org/zap"
 
+	"github.com/SoulKyu/cpg/pkg/dropclass"
 	"github.com/SoulKyu/cpg/pkg/labels"
 	"github.com/SoulKyu/cpg/pkg/policy"
 )
+
+// DropEvent is the minimal record for a flow suppressed by the classification gate.
+// Consumed by healthWriter (phase 11-02) to accumulate cluster-health.json counters.
+type DropEvent struct {
+	Reason    flowpb.DropReason
+	Class     dropclass.DropClass
+	Namespace string
+	Workload  string // formatted as labels.WorkloadName(ep.Labels); "_unknown" if nil
+	NodeName  string // f.NodeName; "_unknown" if empty
+}
 
 // AggKey identifies a flow aggregation bucket by namespace and workload.
 type AggKey struct {
@@ -95,12 +106,20 @@ type Aggregator struct {
 	// protocol name (lowercase). Surfaced via IgnoredByProtocol() and logged
 	// in the session summary.
 	ignoredByProtocol map[string]uint64
+
+	// infraDrops accumulates per-reason counts for flows suppressed by the
+	// classification gate (Infra and Transient classes). Surfaced via
+	// InfraDrops() + InfraDropTotal() for SessionStats and --fail-on-infra-drops (phase 13).
+	infraDrops map[flowpb.DropReason]uint64
 }
 
 // NewAggregator creates a new Aggregator with the given flush interval.
 // tracker is accepted as an interface so tests can substitute a stub and the
 // aggregator can depend on behavior rather than the concrete UnhandledTracker.
 func NewAggregator(interval time.Duration, logger *zap.Logger, tracker flushingTracker) *Aggregator {
+	// Wire the warn logger once per process so Classify() can emit deduplicated
+	// WARN logs for unrecognized DropReason values (phase 10 CLASSIFY-02).
+	dropclass.SetWarnLogger(logger)
 	return &Aggregator{
 		interval:          interval,
 		logger:            logger,
@@ -108,6 +127,7 @@ func NewAggregator(interval time.Duration, logger *zap.Logger, tracker flushingT
 		tracker:           tracker,
 		seenWorkloads:     make(map[string]struct{}),
 		ignoredByProtocol: make(map[string]uint64),
+		infraDrops:        make(map[flowpb.DropReason]uint64),
 	}
 }
 
@@ -135,6 +155,64 @@ func (a *Aggregator) IgnoredByProtocol() map[string]uint64 {
 		out[k] = v
 	}
 	return out
+}
+
+// InfraDrops returns a copy of the per-reason infra/transient drop counter
+// populated during Run(). Map iteration order is not stable; sort at the call
+// site for deterministic output.
+func (a *Aggregator) InfraDrops() map[flowpb.DropReason]uint64 {
+	out := make(map[flowpb.DropReason]uint64, len(a.infraDrops))
+	for k, v := range a.infraDrops {
+		out[k] = v
+	}
+	return out
+}
+
+// InfraDropTotal returns the total number of flows suppressed by the
+// classification gate (sum of all infraDrops values).
+func (a *Aggregator) InfraDropTotal() uint64 {
+	var total uint64
+	for _, v := range a.infraDrops {
+		total += v
+	}
+	return total
+}
+
+// buildDropEvent constructs a DropEvent for a suppressed Infra/Transient flow.
+func buildDropEvent(f *flowpb.Flow, class dropclass.DropClass) DropEvent {
+	ns, workload := "_unknown", "_unknown"
+	if ep := effectiveEndpoint(f); ep != nil {
+		if ep.Namespace != "" {
+			ns = ep.Namespace
+		}
+		if len(ep.Labels) > 0 {
+			workload = labels.WorkloadName(ep.Labels)
+		}
+	}
+	node := f.GetNodeName()
+	if node == "" {
+		node = "_unknown"
+	}
+	return DropEvent{
+		Reason:    f.GetDropReasonDesc(),
+		Class:     class,
+		Namespace: ns,
+		Workload:  workload,
+		NodeName:  node,
+	}
+}
+
+// effectiveEndpoint returns the policy-target endpoint for health event labeling.
+// Mirrors keyFromFlow direction logic; returns nil if direction is unknown.
+func effectiveEndpoint(f *flowpb.Flow) *flowpb.Endpoint {
+	switch f.TrafficDirection {
+	case flowpb.TrafficDirection_INGRESS:
+		return f.Destination
+	case flowpb.TrafficDirection_EGRESS:
+		return f.Source
+	default:
+		return nil
+	}
 }
 
 // flowL4ProtoName returns the lowercase protocol name encoded in a flow's L4
@@ -210,7 +288,16 @@ func (a *Aggregator) SetMaxSamples(n int) {
 // Run reads flows from in, accumulates them by AggKey, and sends PolicyEvents
 // to out on each ticker flush, channel close, or context cancellation.
 // It closes the out channel when it returns.
-func (a *Aggregator) Run(ctx context.Context, in <-chan *flowpb.Flow, out chan<- policy.PolicyEvent) error {
+//
+// healthCh receives a DropEvent for every Infra or Transient flow suppressed
+// by the classification gate. Pass nil to disable health reporting (no-op).
+//
+// Counter semantics (Pitfall 6 invariant):
+//   - flowsSeen: every flow that reaches the classification gate, regardless of class
+//     (except Noise and --ignore-protocol drops which are truly excluded)
+//   - ignoredByProtocol: flows dropped BEFORE flowsSeen (intentionally excluded by --ignore-protocol)
+//   - infraDrops: Infra/Transient flows counted within flowsSeen but suppressed from CNP generation
+func (a *Aggregator) Run(ctx context.Context, in <-chan *flowpb.Flow, out chan<- policy.PolicyEvent, healthCh chan<- DropEvent) error {
 	defer close(out)
 
 	buckets := make(map[AggKey][]*flowpb.Flow)
@@ -245,6 +332,26 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan *flowpb.Flow, out chan<-
 						a.ignoredByProtocol[name]++
 						continue
 					}
+				}
+			}
+			// HEALTH-01/05: Classification gate — applies only to flows with an
+			// explicit DROPPED verdict and a non-zero drop reason. Zero-value
+			// DropReasonDesc on non-DROPPED flows (e.g. forwarded/unknown) must
+			// pass through unmodified (PITFALLS Integration Gotchas: always check
+			// Verdict == DROPPED before classifying).
+			if f.Verdict == flowpb.Verdict_DROPPED && f.GetDropReasonDesc() != flowpb.DropReason_DROP_REASON_UNKNOWN {
+				class := dropclass.Classify(f.GetDropReasonDesc())
+				switch class {
+				case dropclass.DropClassInfra, dropclass.DropClassTransient:
+					a.flowsSeen++
+					a.infraDrops[f.GetDropReasonDesc()]++
+					if healthCh != nil {
+						healthCh <- buildDropEvent(f, class)
+					}
+					continue
+				case dropclass.DropClassNoise:
+					continue
+				// DropClassPolicy and DropClassUnknown fall through to keyFromFlow.
 				}
 			}
 			key, skip := a.keyFromFlow(f)
