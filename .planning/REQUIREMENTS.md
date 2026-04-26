@@ -57,12 +57,23 @@
 
 ## Traceability
 
-<!-- Filled by gsd-roadmapper after roadmap creation. Each REQ → Phase mapping. -->
-
 | REQ | Phase | Notes |
 |-----|-------|-------|
-| _(filled by roadmapper)_ | | |
+| CLASSIFY-01 | Phase 10 | Core taxonomy in `pkg/dropclass/` |
+| CLASSIFY-02 | Phase 10 | Unknown-reason fallback + dedup WARN |
+| CLASSIFY-03 | Phase 10 | `classifierVersion` semver in output |
+| HEALTH-01 | Phase 11 | Aggregator suppression gate |
+| HEALTH-02 | Phase 11 | `cluster-health.json` atomic write |
+| HEALTH-04 | Phase 11 | `--dry-run` parity for health file |
+| HEALTH-05 | Phase 11 | `flowsSeen` counter still incremented |
+| HEALTH-03 | Phase 12 | Session summary block + severity sort |
+| FILTER-01 | Phase 13 | `--ignore-drop-reason` flag |
+| FILTER-02 | Phase 13 | Unknown-reason validation at parse time |
+| FILTER-03 | Phase 13 | WARN on redundant infra/transient filter |
+| EXIT-01 | Phase 13 | `--fail-on-infra-drops` exit code |
+| EXIT-02 | Phase 13 | README CI/cron documentation |
 
 ---
 
 *Created: 2026-04-26 — v1.3 Cluster Health Surfacing scoped via /gsd:new-milestone*
+*Traceability filled: 2026-04-26 — roadmap phases 10-13 assigned*
