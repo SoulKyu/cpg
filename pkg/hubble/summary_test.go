@@ -14,6 +14,17 @@ import (
 	"github.com/SoulKyu/cpg/pkg/dropclass"
 )
 
+// realTransientReason is a real Transient-class reason (M6 fixture guard).
+// Using STALE_OR_UNROUTABLE_IP instead of POLICY_DENIED which is DropClassPolicy.
+// The init check below catches future taxonomy drift.
+func init() {
+	if dropclass.Classify(flowpb.DropReason_STALE_OR_UNROUTABLE_IP) != dropclass.DropClassTransient {
+		panic("summary_test fixture guard: STALE_OR_UNROUTABLE_IP is no longer DropClassTransient — update M6 fixtures")
+	}
+}
+
+const realTransientReason = flowpb.DropReason_STALE_OR_UNROUTABLE_IP
+
 // makeHealthWriter builds a synthetic *healthWriter for summary tests.
 func makeHealthWriter(t *testing.T, drops map[flowpb.DropReason]*healthDropEntry) *healthWriter {
 	t.Helper()
@@ -48,8 +59,8 @@ func TestPrintClusterHealthSummaryFullBlock(t *testing.T) {
 			map[string]uint64{"node-a-1": 32, "node-b-2": 12, "node-c-3": 3},
 			map[string]uint64{"team-trading/mmtro-adserver": 28, "team-data/x": 15, "team-foo/y": 4},
 		),
-		flowpb.DropReason_POLICY_DENIED: makeEntry(
-			flowpb.DropReason_POLICY_DENIED,
+		realTransientReason: makeEntry(
+			realTransientReason,
 			dropclass.DropClassTransient,
 			5,
 			map[string]uint64{"node-a-1": 5},
@@ -74,8 +85,8 @@ func TestPrintClusterHealthSummaryFullBlock(t *testing.T) {
 	assert.Contains(t, out, "47 flows")
 	// Top nodes
 	assert.Contains(t, out, "node-a-1")
-	// Transient entry present
-	assert.Contains(t, out, "POLICY_DENIED")
+	// Transient entry present (using real Transient-class reason per M6)
+	assert.Contains(t, out, "STALE_OR_UNROUTABLE_IP")
 	assert.Contains(t, out, "[transient]")
 	assert.Contains(t, out, "5 flows")
 	// Remediation hint for CT_MAP_INSERTION_FAILED
@@ -168,10 +179,10 @@ func TestPrintClusterHealthSummaryDryRun(t *testing.T) {
 
 // TestPrintClusterHealthSummaryNoRemediationHint verifies no "Hint:" for reasons with no hint.
 func TestPrintClusterHealthSummaryNoRemediationHint(t *testing.T) {
-	// POLICY_DENIED is a transient/policy reason — no hint in RemediationHint map.
+	// STALE_OR_UNROUTABLE_IP is a real Transient reason — no deep-link hint after M1.
 	hw := makeHealthWriter(t, map[flowpb.DropReason]*healthDropEntry{
-		flowpb.DropReason_POLICY_DENIED: makeEntry(
-			flowpb.DropReason_POLICY_DENIED,
+		realTransientReason: makeEntry(
+			realTransientReason,
 			dropclass.DropClassTransient,
 			3,
 			map[string]uint64{"node-1": 3},
@@ -190,8 +201,8 @@ func TestPrintClusterHealthSummaryNoRemediationHint(t *testing.T) {
 // even when infra count is lower than transient count.
 func TestPrintClusterHealthSummarySeveritySort(t *testing.T) {
 	hw := makeHealthWriter(t, map[flowpb.DropReason]*healthDropEntry{
-		flowpb.DropReason_POLICY_DENIED: makeEntry(
-			flowpb.DropReason_POLICY_DENIED,
+		realTransientReason: makeEntry(
+			realTransientReason,
 			dropclass.DropClassTransient,
 			100, // higher count
 			map[string]uint64{"node-1": 100},
@@ -212,9 +223,9 @@ func TestPrintClusterHealthSummarySeveritySort(t *testing.T) {
 	out := buf.String()
 
 	infraIdx := strings.Index(out, "CT_MAP_INSERTION_FAILED")
-	transientIdx := strings.Index(out, "POLICY_DENIED")
+	transientIdx := strings.Index(out, "STALE_OR_UNROUTABLE_IP")
 	require.True(t, infraIdx >= 0, "CT_MAP_INSERTION_FAILED must appear in output")
-	require.True(t, transientIdx >= 0, "POLICY_DENIED must appear in output")
+	require.True(t, transientIdx >= 0, "STALE_OR_UNROUTABLE_IP must appear in output")
 	assert.Less(t, infraIdx, transientIdx, "infra entry must be printed before transient entry")
 }
 
@@ -286,6 +297,94 @@ func TestPrintClusterHealthSummaryWrittenPathLine(t *testing.T) {
 	assert.Contains(t, out, realPath, "real path must appear in written state")
 	assert.NotContains(t, out, "dry-run", "no dry-run suffix in written state")
 	assert.NotContains(t, out, "evidence disabled", "no evidence-off wording in written state")
+}
+
+// TestTop3TieBoundary verifies I8: top3 includes ALL entries tied at the boundary.
+// {a:10, b:5, c:5, d:5} → all 4 entries, no "+N more".
+func TestTop3TieBoundary(t *testing.T) {
+	m := map[string]uint64{"a": 10, "b": 5, "c": 5, "d": 5}
+	result := top3(m)
+	assert.Contains(t, result, "a (10)", "top entry must appear")
+	assert.Contains(t, result, "b (5)", "tied 2nd must appear")
+	assert.Contains(t, result, "c (5)", "tied 3rd must appear")
+	assert.Contains(t, result, "d (5)", "tied 4th must appear (tie boundary inclusion)")
+	assert.NotContains(t, result, "(+", "no hidden entries when all ties are shown")
+}
+
+// TestTop3StrictTop3 verifies that with no tie at boundary, exactly 3 entries show + remainder.
+// {a:10, b:9, c:8, d:1} → 3 entries + "(+1 more)".
+func TestTop3StrictTop3(t *testing.T) {
+	m := map[string]uint64{"a": 10, "b": 9, "c": 8, "d": 1}
+	result := top3(m)
+	assert.Contains(t, result, "a (10)")
+	assert.Contains(t, result, "b (9)")
+	assert.Contains(t, result, "c (8)")
+	assert.Contains(t, result, "(+1 more)", "exactly 1 entry hidden since d:1 does not tie c:8")
+}
+
+// TestTop3AllTied verifies that when all entries are tied, all are shown with no "+N more".
+// {a:10, b:10, c:10, d:10, e:10} → all 5 shown.
+func TestTop3AllTied(t *testing.T) {
+	m := map[string]uint64{"a": 10, "b": 10, "c": 10, "d": 10, "e": 10}
+	result := top3(m)
+	for _, name := range []string{"a", "b", "c", "d", "e"} {
+		assert.Contains(t, result, name+" (10)", "all tied entries must appear: %s", name)
+	}
+	assert.NotContains(t, result, "(+", "no hidden entries when all are tied")
+}
+
+// TestPrintClusterHealthSummaryAdaptiveWidth verifies M5: long DropReason names
+// render without truncation and the frame width expands accordingly.
+func TestPrintClusterHealthSummaryAdaptiveWidth(t *testing.T) {
+	// NO_CONFIGURATION_AVAILABLE_TO_PERFORM_POLICY_DECISION is 52 chars — longer than the old summaryWidth.
+	longReason := flowpb.DropReason_NO_CONFIGURATION_AVAILABLE_TO_PERFORM_POLICY_DECISION
+	require.Equal(t, dropclass.DropClassTransient, dropclass.Classify(longReason),
+		"fixture guard: reason must still be Transient")
+
+	longReasonName := "NO_CONFIGURATION_AVAILABLE_TO_PERFORM_POLICY_DECISION"
+	require.Equal(t, 53, len(longReasonName), "sanity: long reason is %d chars", len(longReasonName))
+
+	hw := makeHealthWriter(t, map[flowpb.DropReason]*healthDropEntry{
+		longReason: makeEntry(longReason, dropclass.DropClassTransient, 7,
+			map[string]uint64{"node-1": 7},
+			map[string]uint64{"prod/svc": 7},
+		),
+	})
+	snaps := hw.Snapshot()
+
+	var buf bytes.Buffer
+	PrintClusterHealthSummary(&buf, snaps, makeStats(7, 7), "/path.json", SummaryPathWritten)
+	out := buf.String()
+
+	assert.Contains(t, out, longReasonName, "long reason name must appear without truncation")
+	assert.NotContains(t, out, "...", "no truncation marker must appear")
+}
+
+// TestPrintClusterHealthSummaryShortNameNoWiden verifies M5: short reason names
+// do not cause the frame to widen beyond minReasonNameWidth.
+func TestPrintClusterHealthSummaryShortNameNoWiden(t *testing.T) {
+	hw := makeHealthWriter(t, map[flowpb.DropReason]*healthDropEntry{
+		flowpb.DropReason_CT_MAP_INSERTION_FAILED: makeEntry(
+			flowpb.DropReason_CT_MAP_INSERTION_FAILED,
+			dropclass.DropClassInfra,
+			5,
+			map[string]uint64{"node-1": 5},
+			map[string]uint64{"prod/svc": 5},
+		),
+	})
+	snaps := hw.Snapshot()
+
+	var buf bytes.Buffer
+	PrintClusterHealthSummary(&buf, snaps, makeStats(5, 5), "/path.json", SummaryPathWritten)
+	out := buf.String()
+
+	// The frame line is the first line; its length must equal minReasonNameWidth+28.
+	lines := strings.Split(out, "\n")
+	require.Greater(t, len(lines), 0)
+	frameLine := lines[0]
+	// CT_MAP_INSERTION_FAILED is 22 chars < 38 (minReasonNameWidth), so frame = 38+28 = 66.
+	assert.LessOrEqual(t, len([]rune(frameLine)), minReasonNameWidth+28+4,
+		"frame must not widen for short reason names")
 }
 
 // TestPrintClusterHealthSummaryWithinClassSortByCount verifies descending count sort

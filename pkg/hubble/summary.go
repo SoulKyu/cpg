@@ -11,7 +11,10 @@ import (
 	"github.com/SoulKyu/cpg/pkg/dropclass"
 )
 
-const summaryWidth = 52
+const (
+	minReasonNameWidth = 38 // historical baseline — short names fit within this
+	maxReasonNameWidth = 60 // safety cap to prevent runaway wide output
+)
 
 // SummaryPathState describes how cluster-health.json was handled in this run.
 // Passed to PrintClusterHealthSummary so the path line renders the correct suffix.
@@ -46,7 +49,20 @@ func PrintClusterHealthSummary(out io.Writer, snapshots []HealthDropSnapshot, st
 		return snapshots[i].Count > snapshots[j].Count
 	})
 
-	frame := strings.Repeat("━", summaryWidth)
+	// M5: compute adaptive frame width based on the longest DropReason name.
+	// Keeps short-reason summaries compact while preventing truncation for long names.
+	reasonW := minReasonNameWidth
+	for _, s := range snapshots {
+		if name := flowpb.DropReason_name[int32(s.Reason)]; len(name) > reasonW {
+			reasonW = len(name)
+		}
+	}
+	if reasonW > maxReasonNameWidth {
+		reasonW = maxReasonNameWidth
+	}
+	// Frame width: reason column + space + "[label]" (max 11 chars) + 2 spaces + count column (~14) ≈ reasonW + 28
+	frameWidth := reasonW + 28
+	frame := strings.Repeat("━", frameWidth)
 	fmt.Fprintln(out, frame)
 	fmt.Fprintln(out, "! Cluster-critical drops detected (NOT a policy issue)")
 	fmt.Fprintln(out, frame)
@@ -54,7 +70,7 @@ func PrintClusterHealthSummary(out io.Writer, snapshots []HealthDropSnapshot, st
 	for _, s := range snapshots {
 		name := flowpb.DropReason_name[int32(s.Reason)]
 		class := s.Class.String()
-		fmt.Fprintf(out, "  %-38s [%s]  %d flows\n", name, class, s.Count)
+		fmt.Fprintf(out, "  %-*s [%s]  %d flows\n", reasonW, name, class, s.Count)
 		fmt.Fprintf(out, "    Top nodes:     %s\n", top3(s.ByNode))
 		fmt.Fprintf(out, "    Top workloads: %s\n", top3(s.ByWorkload))
 		if hint := dropclass.RemediationHint(s.Reason); hint != "" {
@@ -74,8 +90,9 @@ func PrintClusterHealthSummary(out io.Writer, snapshots []HealthDropSnapshot, st
 	fmt.Fprintln(out, frame)
 }
 
-// top3 formats up to the top-3 contributors from a name->count map.
-// Format: "name-a (32), name-b (12), name-c (3) (+N more)"
+// top3 formats the top contributors from a name->count map.
+// Shows the top 3 entries and ALL entries tied at the boundary (I8: no hidden entries
+// at the tie boundary). Format: "name-a (32), name-b (12), name-c (3) (+N more)"
 // Returns "(none)" when map is empty.
 func top3(m map[string]uint64) string {
 	if len(m) == 0 {
@@ -100,6 +117,15 @@ func top3(m map[string]uint64) string {
 	limit := 3
 	if len(items) < limit {
 		limit = len(items)
+	}
+	// I8: extend limit to include all entries tied at the boundary count.
+	// This prevents silently hiding entries that share the same count as the
+	// 3rd-place entry.
+	if limit > 0 {
+		boundaryCount := items[limit-1].n
+		for limit < len(items) && items[limit].n == boundaryCount {
+			limit++
+		}
 	}
 
 	parts := make([]string, limit)
