@@ -204,6 +204,11 @@ func TestValidateIgnoreDropReasonsLevenshtein(t *testing.T) {
 	}
 }
 
+// I-1: this test invokes PreRunE directly to test validation in isolation.
+// In production, cobra calls PersistentPreRunE first (initializes logger),
+// then PreRunE. validateCommonFlags handles nil logger gracefully so the
+// direct call is safe; do not remove the nil-logger guard in commonflags.go.
+
 // TestPreRunE_RejectsInvalidDropReason verifies I2: PreRunE on generate rejects
 // an invalid --ignore-drop-reason before any pipeline construction.
 func TestPreRunE_RejectsInvalidDropReason(t *testing.T) {
@@ -216,6 +221,11 @@ func TestPreRunE_RejectsInvalidDropReason(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown drop reason")
 }
 
+// I-1: this test invokes PreRunE directly to test validation in isolation.
+// In production, cobra calls PersistentPreRunE first (initializes logger),
+// then PreRunE. validateCommonFlags handles nil logger gracefully so the
+// direct call is safe; do not remove the nil-logger guard in commonflags.go.
+
 // TestPreRunE_RejectsInvalidProtocol verifies I2: PreRunE rejects an invalid
 // --ignore-protocol before any pipeline construction.
 func TestPreRunE_RejectsInvalidProtocol(t *testing.T) {
@@ -226,6 +236,11 @@ func TestPreRunE_RejectsInvalidProtocol(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown protocol")
 }
+
+// I-1: this test invokes PreRunE directly to test validation in isolation.
+// In production, cobra calls PersistentPreRunE first (initializes logger),
+// then PreRunE. validateCommonFlags handles nil logger gracefully so the
+// direct call is safe; do not remove the nil-logger guard in commonflags.go.
 
 // TestPreRunE_ValidFlagsPass verifies I2: PreRunE returns nil for valid flags.
 func TestPreRunE_ValidFlagsPass(t *testing.T) {

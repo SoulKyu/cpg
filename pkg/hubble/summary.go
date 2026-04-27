@@ -60,7 +60,14 @@ func PrintClusterHealthSummary(out io.Writer, snapshots []HealthDropSnapshot, st
 	if reasonW > maxReasonNameWidth {
 		reasonW = maxReasonNameWidth
 	}
-	// Frame width: reason column + space + "[label]" (max 11 chars) + 2 spaces + count column (~14) ≈ reasonW + 28
+	// M-1: frameWidth = reasonW (padded reason name) + 28 chars accounting for
+	//   2 ("  " leading indent before reason) +
+	//   1 (" "  space after reason) +
+	//   11 ([transient] is the widest class label, brackets included) +
+	//   2 ("  " spaces after label) +
+	//   6 (count column up to 999999) +
+	//   6 (" flows" trailing label including leading space)
+	//   = 28. Adjust if the rendering format string changes.
 	frameWidth := reasonW + 28
 	frame := strings.Repeat("━", frameWidth)
 	fmt.Fprintln(out, frame)

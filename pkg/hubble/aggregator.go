@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
@@ -110,13 +111,20 @@ type Aggregator struct {
 	// infraDrops accumulates per-reason counts for flows suppressed by the
 	// classification gate (Infra and Transient classes). Surfaced via
 	// InfraDrops() + InfraDropTotal() for SessionStats and --fail-on-infra-drops (phase 13).
+	//
+	// M-3: single-goroutine ownership during Run() (the aggregator goroutine).
+	// All read accessors (InfraDrops, InfraDropTotal) MUST be called only after
+	// errgroup g.Wait() returns — same contract as healthWriter.Snapshot().
+	// No mutex needed; concurrent access from outside Run() is a caller bug.
 	infraDrops map[flowpb.DropReason]uint64
 
 	// healthChDrops counts DropEvents that could not be sent on healthCh
 	// because the channel was full (back-pressure). Non-zero means the consumer
 	// (Stage 2c) is slower than the aggregation rate; consider increasing the
 	// channel buffer or the flush interval.
-	healthChDrops uint64
+	// M-3: atomic.Uint64 so the race detector stays clean if HealthChDrops()
+	// is called concurrently with Run() (e.g. in tests or diagnostics).
+	healthChDrops atomic.Uint64
 
 	// ignoreDropReasons is the uppercase set of DropReason name strings whose
 	// flows must be dropped before the protocol filter and classification gate.
@@ -214,7 +222,7 @@ func (a *Aggregator) InfraDrops() map[flowpb.DropReason]uint64 {
 // HealthChDrops returns the number of DropEvents dropped due to a full
 // healthCh channel (back-pressure). Zero when no back-pressure was observed.
 func (a *Aggregator) HealthChDrops() uint64 {
-	return a.healthChDrops
+	return a.healthChDrops.Load()
 }
 
 // InfraDropTotal returns the total number of flows suppressed by the
@@ -424,7 +432,7 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan *flowpb.Flow, out chan<-
 							return nil
 						default:
 							// Consumer is slow; count the drop and keep going.
-							a.healthChDrops++
+							a.healthChDrops.Add(1)
 						}
 					}
 					continue
