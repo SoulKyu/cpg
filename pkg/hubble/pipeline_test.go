@@ -383,6 +383,58 @@ func TestPipelineConfig_L7EnabledFieldExists(t *testing.T) {
 	assert.False(t, zero.L7Enabled, "zero value must default to false")
 }
 
+// TestRunPipeline_DryRunWithoutEvidenceRendersEvidenceOff is a regression guard
+// for C-1 (operator-precedence cleanup). With EvidenceEnabled=false AND DryRun=true,
+// the summary path line must read "evidence disabled" — NOT "(dry-run, not written)".
+//
+// The buggy compound expression `!cfg.EvidenceEnabled || cfg.DryRun && !cfg.EvidenceEnabled`
+// evaluates identically to `!cfg.EvidenceEnabled` due to Go operator precedence
+// (&& binds tighter than ||), so the test passes with the current code. The refactor
+// to the explicit clean form preserves that intent and this test pins the documented
+// behaviour so a future one-character edit cannot silently flip it.
+func TestRunPipeline_DryRunWithoutEvidenceRendersEvidenceOff(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := zaptest.NewLogger(t)
+
+	// An infra drop flow so the summary block is triggered.
+	infraFlow := &flowpb.Flow{
+		TrafficDirection: flowpb.TrafficDirection_EGRESS,
+		Verdict:          flowpb.Verdict_DROPPED,
+		DropReasonDesc:   flowpb.DropReason_CT_MAP_INSERTION_FAILED,
+		NodeName:         "node-1",
+		Source: &flowpb.Endpoint{
+			Labels:    []string{"k8s:app=worker"},
+			Namespace: "production",
+		},
+		Destination: &flowpb.Endpoint{
+			Labels:    []string{"k8s:app=backend"},
+			Namespace: "production",
+		},
+		L4: &flowpb.Layer4{
+			Protocol: &flowpb.Layer4_TCP{TCP: &flowpb.TCP{DestinationPort: 8080}},
+		},
+	}
+
+	source := &mockFlowSource{flows: []*flowpb.Flow{infraFlow}}
+
+	var stdout bytes.Buffer
+	cfg := PipelineConfig{
+		FlushInterval:   10 * time.Millisecond,
+		OutputDir:       tmpDir,
+		Logger:          logger,
+		EvidenceEnabled: false,
+		DryRun:          true,
+		Stdout:          &stdout,
+	}
+
+	err := RunPipelineWithSource(context.Background(), cfg, source)
+	require.NoError(t, err)
+
+	out := stdout.String()
+	assert.Contains(t, out, "evidence disabled", "path line must say 'evidence disabled' when EvidenceEnabled=false, even if DryRun=true")
+	assert.NotContains(t, out, "(dry-run, not written)", "DryRun path must NOT appear when EvidenceEnabled=false")
+}
+
 // TestRunPipeline_FallbackSnapshotNoEvidence verifies C2: when EvidenceEnabled=false
 // and infra drops are observed, the cluster-health summary IS printed to
 // PipelineConfig.Stdout with the per-reason counts visible.
