@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
@@ -25,13 +26,16 @@ type healthDropEntry struct {
 
 // healthWriter accumulates DropEvents from the healthCh channel and writes
 // cluster-health.json atomically when finalize() is called.
-// Owned by a single goroutine (Stage 2c) — no mutex required.
+// Owned by a single goroutine (Stage 2c) — no mutex required for drops.
+// finalized and cachedSnapshot make Snapshot() idempotent after g.Wait().
 type healthWriter struct {
-	evidenceDir string
-	outputHash  string
-	logger      *zap.Logger
-	drops       map[flowpb.DropReason]*healthDropEntry
-	startedAt   time.Time
+	evidenceDir     string
+	outputHash      string
+	logger          *zap.Logger
+	drops           map[flowpb.DropReason]*healthDropEntry
+	startedAt       time.Time
+	finalized       atomic.Bool
+	cachedSnapshot  []HealthDropSnapshot
 }
 
 // newHealthWriter constructs a healthWriter.
@@ -104,7 +108,7 @@ func (hw *healthWriter) finalize(stats *SessionStats) error {
 	for _, e := range entries {
 		dropsJSON = append(dropsJSON, healthDropJSON{
 			Reason:      flowpb.DropReason_name[int32(e.reason)],
-			Class:       dropClassString(e.class),
+			Class:       e.class.String(),
 			Count:       e.count,
 			Remediation: dropclass.RemediationHint(e.reason),
 			ByNode:      e.byNode,
@@ -174,12 +178,19 @@ type HealthDropSnapshot struct {
 	ByWorkload map[string]uint64 // shallow copy
 }
 
-// Snapshot returns a copy of the accumulated drop entries.
+// Snapshot returns the accumulated drop entries. MUST be called only after
+// the consumer goroutine that calls accumulate() has exited (i.e. after
+// errgroup g.Wait() returns). The first call captures the snapshot; all
+// subsequent calls return the cached result, even from concurrent goroutines.
 // Returns nil when hw is nil (dry-run / evidence disabled).
 func (hw *healthWriter) Snapshot() []HealthDropSnapshot {
 	if hw == nil {
 		return nil
 	}
+	if hw.finalized.Load() {
+		return hw.cachedSnapshot
+	}
+	// First call: build snapshot, cache, mark finalized.
 	result := make([]HealthDropSnapshot, 0, len(hw.drops))
 	for _, e := range hw.drops {
 		result = append(result, HealthDropSnapshot{
@@ -190,6 +201,8 @@ func (hw *healthWriter) Snapshot() []HealthDropSnapshot {
 			ByWorkload: shallowCopyMap(e.byWorkload),
 		})
 	}
+	hw.cachedSnapshot = result
+	hw.finalized.Store(true)
 	return result
 }
 
@@ -200,23 +213,6 @@ func shallowCopyMap(m map[string]uint64) map[string]uint64 {
 		out[k] = v
 	}
 	return out
-}
-
-// dropClassString converts a DropClass to its lowercase string representation
-// for JSON output. Fallback to "unknown" for unrecognized values.
-func dropClassString(c dropclass.DropClass) string {
-	switch c {
-	case dropclass.DropClassPolicy:
-		return "policy"
-	case dropclass.DropClassInfra:
-		return "infra"
-	case dropclass.DropClassTransient:
-		return "transient"
-	case dropclass.DropClassNoise:
-		return "noise"
-	default:
-		return "unknown"
-	}
 }
 
 // JSON output structs — unexported, used only for marshaling.
@@ -239,7 +235,7 @@ type healthDropJSON struct {
 	Reason      string            `json:"reason"`
 	Class       string            `json:"class"`
 	Count       uint64            `json:"count"`
-	Remediation string            `json:"remediation"`
+	Remediation string            `json:"remediation,omitempty"`
 	ByNode      map[string]uint64 `json:"by_node"`
 	ByWorkload  map[string]uint64 `json:"by_workload"`
 }

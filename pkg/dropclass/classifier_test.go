@@ -250,6 +250,28 @@ func TestClassifyKnownNoWarn(t *testing.T) {
 	}
 }
 
+// TestDropClassString verifies I5: DropClass.String() returns the correct
+// lowercase label for all 5 defined values and "unknown" for unrecognized numeric values.
+func TestDropClassString(t *testing.T) {
+	cases := []struct {
+		c    dropclass.DropClass
+		want string
+	}{
+		{dropclass.DropClassPolicy, "policy"},
+		{dropclass.DropClassInfra, "infra"},
+		{dropclass.DropClassTransient, "transient"},
+		{dropclass.DropClassNoise, "noise"},
+		{dropclass.DropClassUnknown, "unknown"},
+		{dropclass.DropClass(99), "unknown"}, // unrecognized numeric value
+	}
+	for _, tc := range cases {
+		got := tc.c.String()
+		if got != tc.want {
+			t.Errorf("DropClass(%d).String() = %q, want %q", tc.c, got, tc.want)
+		}
+	}
+}
+
 // TestClassifyNilLoggerSafe asserts that calling Classify with nil logger does
 // not panic and still returns DropClassUnknown.
 func TestClassifyNilLoggerSafe(t *testing.T) {

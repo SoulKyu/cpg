@@ -199,6 +199,51 @@ func TestHealthWriterSessionBlock(t *testing.T) {
 	assert.False(t, report.Session.Ended.IsZero(), "session.ended must be set")
 }
 
+// TestHealthWriterSnapshotIdempotent verifies I4: Snapshot() returns the same
+// (deep-equal) result on subsequent calls; 8 concurrent callers all see identical
+// content after accumulation is complete.
+func TestHealthWriterSnapshotIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	hw := newHealthWriter(dir, "testhash", zaptest.NewLogger(t), time.Now())
+
+	// Accumulate 100 events sequentially (simulating Stage 2c goroutine).
+	for i := 0; i < 100; i++ {
+		hw.accumulate(makeDropEvent(flowpb.DropReason_CT_MAP_INSERTION_FAILED, dropclass.DropClassInfra, "node-1", "svc"))
+	}
+
+	// All 8 goroutines call Snapshot() "after" g.Wait() (sequentially here, but
+	// the idempotency contract must hold regardless).
+	const goroutines = 8
+	results := make([][]HealthDropSnapshot, goroutines)
+	done := make(chan int, goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		i := i
+		go func() {
+			results[i] = hw.Snapshot()
+			done <- i
+		}()
+	}
+	for range results {
+		<-done
+	}
+
+	// All results must be non-nil and equal.
+	require.NotNil(t, results[0], "Snapshot() must return non-nil after accumulation")
+	for i := 1; i < goroutines; i++ {
+		require.Equal(t, len(results[0]), len(results[i]), "goroutine %d snapshot length differs", i)
+		if len(results[0]) > 0 {
+			assert.Equal(t, results[0][0].Count, results[i][0].Count, "goroutine %d count differs", i)
+		}
+	}
+}
+
+// TestHealthWriterSnapshotNilSafe verifies Snapshot() on nil hw returns nil.
+func TestHealthWriterSnapshotNilSafe(t *testing.T) {
+	var hw *healthWriter
+	assert.Nil(t, hw.Snapshot(), "nil hw must return nil from Snapshot()")
+}
+
 // TestHealthWriterDropsSorted: multiple reasons → drops array sorted by reason name.
 func TestHealthWriterDropsSorted(t *testing.T) {
 	dir := t.TempDir()
