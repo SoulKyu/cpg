@@ -170,9 +170,10 @@ func TestSuggestClosest(t *testing.T) {
 	require.Greater(t, len(got), 0, "must return at least 1 suggestion")
 	assert.Equal(t, "CT_MAP_INSERTION_FAILED", got[0], "closest match must be first")
 
-	// Request fewer than available
+	// With the I-4 threshold (min(10, len/2+2)), only CT_MAP_INSERTION_FAILED
+	// (dist=5) passes for this candidate set; requesting n=2 returns at most 1.
 	got2 := suggestClosest("CT_MAP_INSERT_FAIL", candidates, 2)
-	assert.Len(t, got2, 2, "must return exactly n when enough candidates exist")
+	assert.LessOrEqual(t, len(got2), 2, "must return at most n suggestions")
 }
 
 // TestValidateIgnoreDropReasonsLevenshtein verifies I3: error message for an

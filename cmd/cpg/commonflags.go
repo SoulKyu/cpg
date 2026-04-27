@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -113,8 +114,12 @@ func parseCommonFlags(cmd *cobra.Command) commonFlags {
 
 // levenshtein computes the edit distance between strings a and b using the
 // standard 2-row DP algorithm. O(len(a)*len(b)) time, O(len(b)) space.
+// I-3: operates on []rune so multi-byte Unicode characters count as 1 edit,
+// not as their byte length.
 func levenshtein(a, b string) int {
-	la, lb := len(a), len(b)
+	ar := []rune(a)
+	br := []rune(b)
+	la, lb := len(ar), len(br)
 	if la == 0 {
 		return lb
 	}
@@ -130,54 +135,48 @@ func levenshtein(a, b string) int {
 		curr[0] = i
 		for j := 1; j <= lb; j++ {
 			cost := 1
-			if a[i-1] == b[j-1] {
+			if ar[i-1] == br[j-1] {
 				cost = 0
 			}
-			curr[j] = min3(prev[j]+1, curr[j-1]+1, prev[j-1]+cost)
+			curr[j] = min(prev[j]+1, min(curr[j-1]+1, prev[j-1]+cost))
 		}
 		prev, curr = curr, prev
 	}
 	return prev[lb]
 }
 
-func min3(a, b, c int) int {
-	if a < b {
-		if a < c {
-			return a
-		}
-		return c
-	}
-	if b < c {
-		return b
-	}
-	return c
-}
-
 // suggestClosest returns up to n candidates from candidates that are closest
-// (by Levenshtein distance) to input. Ties broken lexicographically for
-// deterministic output.
+// (by Levenshtein distance) to input, filtered by a distance threshold.
+// Ties broken lexicographically for deterministic output.
 func suggestClosest(input string, candidates []string, n int) []string {
 	type scored struct {
 		name string
 		dist int
 	}
-	scored_ := make([]scored, 0, len(candidates))
+	// I-4: distance threshold filters out garbage inputs that have no
+	// meaningful match. Threshold scales with input length so short typos
+	// still get help, but completely unrelated strings get no suggestions.
+	threshold := min(10, len(input)/2+2)
+	scores := make([]scored, 0, len(candidates))
 	for _, c := range candidates {
-		scored_ = append(scored_, scored{name: c, dist: levenshtein(input, c)})
-	}
-	// Stable sort: ascending distance, then lexicographic on name.
-	for i := 1; i < len(scored_); i++ {
-		for j := i; j > 0 && (scored_[j].dist < scored_[j-1].dist ||
-			(scored_[j].dist == scored_[j-1].dist && scored_[j].name < scored_[j-1].name)); j-- {
-			scored_[j], scored_[j-1] = scored_[j-1], scored_[j]
+		d := levenshtein(input, c)
+		if d > threshold {
+			continue
 		}
+		scores = append(scores, scored{name: c, dist: d})
 	}
-	if n > len(scored_) {
-		n = len(scored_)
+	sort.Slice(scores, func(i, j int) bool {
+		if scores[i].dist != scores[j].dist {
+			return scores[i].dist < scores[j].dist
+		}
+		return scores[i].name < scores[j].name
+	})
+	if n > len(scores) {
+		n = len(scores)
 	}
 	out := make([]string, n)
 	for i := range out {
-		out[i] = scored_[i].name
+		out[i] = scores[i].name
 	}
 	return out
 }
@@ -218,6 +217,12 @@ func validateIgnoreDropReasons(in []string, logger *zap.Logger) ([]string, error
 		v := strings.ToUpper(raw)
 		if _, ok := allow[v]; !ok {
 			suggestions := suggestClosest(v, all, 5)
+			if len(suggestions) == 0 {
+				return nil, fmt.Errorf(
+					"unknown drop reason %q: see https://docs.cilium.io/en/stable/observability/hubble/#dropreason for the full list",
+					raw,
+				)
+			}
 			return nil, fmt.Errorf(
 				"unknown drop reason %q: did you mean any of: %s? See https://docs.cilium.io/en/stable/observability/hubble/#dropreason for the full list",
 				raw, strings.Join(suggestions, ", "),
