@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.9.0](https://github.com/SoulKyu/cpg/compare/v1.8.0...v1.9.0) (2026-04-27)
+
+
+### Features
+
+* **10-01:** implement drop-reason classifier, hints map, version ([10bf710](https://github.com/SoulKyu/cpg/commit/10bf71035c4a6719f3f12f291a44ca3541d75ac5))
+* **10-02:** add SetWarnLogger + dedup WARN for unrecognized drop reasons ([b1ab014](https://github.com/SoulKyu/cpg/commit/b1ab01456a2d0a119093c48a1b8561d1069b0f36))
+* **11-01:** implement classification gate in Aggregator.Run() ([3def91e](https://github.com/SoulKyu/cpg/commit/3def91e4f042285225f9e95dceb50c37f5a082e8))
+* **11-02:** implement healthWriter + wire healthCh in pipeline (GREEN) ([5a2b838](https://github.com/SoulKyu/cpg/commit/5a2b83852cb3f05322348e54dbd61a88aca4e1ed))
+* **12-01:** implement PrintClusterHealthSummary + healthWriter.Snapshot() ([5fd943e](https://github.com/SoulKyu/cpg/commit/5fd943e83f3c85ae5d5274d2847e9b9c3d3ace81))
+* **13-01:** add ignore-drop-reason filter to aggregator ([5c96669](https://github.com/SoulKyu/cpg/commit/5c9666958ad787a380ececa179f50b4fe9177e1f))
+* **13-02:** wire --ignore-drop-reason and --fail-on-infra-drops flags ([c29233a](https://github.com/SoulKyu/cpg/commit/c29233ac157ff0dc87b07c615958bcd93af62bec))
+* **13-03:** ExitCodeError + --fail-on-infra-drops exit logic ([296a851](https://github.com/SoulKyu/cpg/commit/296a8516ff01e27f41af5c2bef2b8a7e07723755))
+* **quick-260427-aml:** PreRunE validation + Levenshtein top-5 suggestions + ,ok lookup (I2+I3+I7) ([1e5f398](https://github.com/SoulKyu/cpg/commit/1e5f3984fee4f95cefff80ef5800daf53ff93eba))
+
+
+### Bug Fixes
+
+* **quick-260427-aml:** non-blocking healthCh send + fallback snapshot under --no-evidence (C1+C2) ([3ef8573](https://github.com/SoulKyu/cpg/commit/3ef8573898baa123b5e0626a7b1da1349403a8ad))
+* **quick-260427-aml:** omit generic-URL hints + README timeout --preserve-status (M1+M2) ([281f685](https://github.com/SoulKyu/cpg/commit/281f6853ec0929a36228008ad4f606b3edeefe26))
+* **quick-260427-aml:** summary topN tie boundary + adaptive width + Transient fixture (I8+M5+M6) ([4107d25](https://github.com/SoulKyu/cpg/commit/4107d25f17ae3a3f1e2964a135503fb6b9d4a660))
+* **quick-260427-aml:** SummaryPathState enum + DropClass.String() source of truth (C3+I1+I5 partial) ([71c1b50](https://github.com/SoulKyu/cpg/commit/71c1b5002948e0cfebcf4e90cc58e25f3acf6cfd))
+* **quick-bp7:** Levenshtein hardening — runes + threshold + sort.Slice + conditional suggestions (I-2/I-3/I-4/I-5) ([960d3cd](https://github.com/SoulKyu/cpg/commit/960d3cded7e688949b398df1c3aa0fd875cb8db0))
+* **quick-bp7:** Snapshot returns deep-independent copies + Remediation omitempty doc (C-2/I-9) ([d76a2e6](https://github.com/SoulKyu/cpg/commit/d76a2e684e60a7df209e99320f9d42f39d49181b))
+
 ## [1.8.0](https://github.com/SoulKyu/cpg/compare/v1.7.0...v1.8.0) (2026-04-26)
 
 
