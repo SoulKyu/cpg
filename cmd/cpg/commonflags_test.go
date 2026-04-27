@@ -235,6 +235,33 @@ func TestPreRunE_ValidFlagsPass(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestValidateIgnoreDropReasons_NoSuggestionsForGarbage verifies I-4/I-5: when
+// the input is so far from all known DropReason names that no candidate passes
+// the distance threshold, the error omits the "did you mean" clause entirely.
+// "ZZZZZ" has length 5 → threshold = min(10, 5/2+2) = min(10, 4) = 4.
+// All real DropReason names (e.g. CT_MAP_INSERTION_FAILED) are far more than 4
+// edits away from "ZZZZZ", so suggestions is empty.
+func TestValidateIgnoreDropReasons_NoSuggestionsForGarbage(t *testing.T) {
+	logger, _ := newWarnObserver()
+
+	_, err := validateIgnoreDropReasons([]string{"ZZZZZ"}, logger)
+	require.Error(t, err)
+	errMsg := err.Error()
+
+	assert.Contains(t, errMsg, "unknown drop reason", "error must contain 'unknown drop reason'")
+	assert.Contains(t, errMsg, "https://docs.cilium.io", "error must contain the docs URL")
+	assert.NotContains(t, errMsg, "did you mean", "garbage input must produce no suggestions clause")
+}
+
+// TestLevenshtein_Unicode verifies I-3: the levenshtein helper counts runes, not
+// bytes, so a single multi-byte character substitution costs 1 (not 2+).
+func TestLevenshtein_Unicode(t *testing.T) {
+	// "é" is 2 bytes (U+00E9) — byte-based impl would return ≥ 2.
+	assert.Equal(t, 1, levenshtein("café", "cafe"), "single-rune substitution must cost 1")
+	assert.Equal(t, 0, levenshtein("café", "café"), "identity must cost 0")
+	assert.Equal(t, 1, levenshtein("naïve", "naive"), "single-rune substitution (ï→i) must cost 1")
+}
+
 // TestFailOnInfraDropsFlagParses confirms the --fail-on-infra-drops flag is
 // registered on both generate and replay subcommands.
 func TestFailOnInfraDropsFlagParses(t *testing.T) {
