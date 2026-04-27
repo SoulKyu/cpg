@@ -339,10 +339,12 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 			})
 		}
 	}
-	// C3: compute the correct SummaryPathState from config.
+	// C-1: clean form. !EvidenceEnabled wins regardless of DryRun (cluster-health.json
+	// is never managed when evidence is off), so the explicit "evidence disabled" path
+	// line is correct; DryRun only matters when evidence IS enabled.
 	pathState := SummaryPathWritten
 	switch {
-	case !cfg.EvidenceEnabled || cfg.DryRun && !cfg.EvidenceEnabled:
+	case !cfg.EvidenceEnabled:
 		pathState = SummaryPathEvidenceOff
 	case cfg.DryRun:
 		pathState = SummaryPathDryRun
