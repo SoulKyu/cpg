@@ -97,9 +97,10 @@ None open. v1.3 deferred items (L7-FUT-01, DNS-FUT-02, etc.) tracked in PROJECT.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260426-pa5 | ignore-protocol flag (cpg generate + replay) | 2026-04-26 | 8f33122 | [260426-pa5-ignore-protocol-flag-cpg-generate-replay](./quick/260426-pa5-ignore-protocol-flag-cpg-generate-replay/) |
+| 260427-aml | v1.3 code-review fixes (16 fixes, C1-C3, I1-I8, M1-M7) | 2026-04-27 | e3b3e77 | [260427-aml-v1-3-code-review-fixes](./quick/260427-aml-v1-3-code-review-fixes/) |
 
 ## Session Continuity
 
-Last session: 2026-04-26T21:08:15.338Z
-Stopped at: Completed 13-03-exit-code-and-readme-PLAN.md
+Last session: 2026-04-27
+Stopped at: Completed quick task 260427-aml-v1-3-code-review-fixes
 Resume: `/gsd:plan-phase 10` — Classifier Core (CLASSIFY-01, CLASSIFY-02, CLASSIFY-03)
