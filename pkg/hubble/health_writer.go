@@ -183,24 +183,24 @@ type HealthDropSnapshot struct {
 
 // Snapshot returns the accumulated drop entries. MUST be called only after
 // the consumer goroutine that calls accumulate() has exited (i.e. after
-// errgroup g.Wait() returns). The first call captures the snapshot; all
-// subsequent calls return the cached result, even from concurrent goroutines.
+// errgroup g.Wait() returns).
+//
+// The first call builds the cache once via sync.Once; every call returns
+// independent copies — a new outer slice with new ByNode and ByWorkload
+// maps per entry. Returned slice and inner maps are safe to mutate or pass
+// to other goroutines without affecting subsequent Snapshot() calls or the
+// healthWriter's internal state.
+//
 // Returns nil when hw is nil (dry-run / evidence disabled).
 func (hw *healthWriter) Snapshot() []HealthDropSnapshot {
 	if hw == nil {
 		return nil
 	}
-	// Fast path: already finalized (no alloc).
-	if hw.finalized.Load() {
-		return hw.cachedSnapshot
-	}
-	// First call (or concurrent first calls): sync.Once ensures a single writer;
-	// subsequent callers block until the winner completes and then see the cache
-	// via the finalized.Load() fast path on the next iteration.
+	// Build the canonical cache once (sync.Once is race-safe for concurrent callers).
 	hw.snapshotOnce.Do(func() {
-		result := make([]HealthDropSnapshot, 0, len(hw.drops))
+		cache := make([]HealthDropSnapshot, 0, len(hw.drops))
 		for _, e := range hw.drops {
-			result = append(result, HealthDropSnapshot{
+			cache = append(cache, HealthDropSnapshot{
 				Reason:     e.reason,
 				Class:      e.class,
 				Count:      e.count,
@@ -208,10 +208,24 @@ func (hw *healthWriter) Snapshot() []HealthDropSnapshot {
 				ByWorkload: shallowCopyMap(e.byWorkload),
 			})
 		}
-		hw.cachedSnapshot = result
+		hw.cachedSnapshot = cache
 		hw.finalized.Store(true)
 	})
-	return hw.cachedSnapshot
+	// C-2: deep-copy on every call. Cache holds canonical entries; each
+	// returned slice + inner maps are fresh allocations so callers cannot
+	// leak mutations into subsequent snapshots or the writer's internal
+	// state.
+	out := make([]HealthDropSnapshot, len(hw.cachedSnapshot))
+	for i, e := range hw.cachedSnapshot {
+		out[i] = HealthDropSnapshot{
+			Reason:     e.Reason,
+			Class:      e.Class,
+			Count:      e.Count,
+			ByNode:     shallowCopyMap(e.ByNode),
+			ByWorkload: shallowCopyMap(e.ByWorkload),
+		}
+	}
+	return out
 }
 
 // shallowCopyMap returns a shallow copy of a string->uint64 map.
@@ -243,7 +257,12 @@ type healthDropJSON struct {
 	Reason      string            `json:"reason"`
 	Class       string            `json:"class"`
 	Count       uint64            `json:"count"`
-	Remediation string            `json:"remediation,omitempty"`
+	// Remediation is omitted (omitempty) when no deep-link Cilium docs URL is
+	// available — see pkg/dropclass/hints.go. Keeping it omitempty avoids
+	// surfacing the bare troubleshooting page URL, which adds no actionable
+	// value for the operator (M-1 from the prior patch enforces this in the
+	// hints map; this tag enforces it in the JSON schema).
+	Remediation string `json:"remediation,omitempty"`
 	ByNode      map[string]uint64 `json:"by_node"`
 	ByWorkload  map[string]uint64 `json:"by_workload"`
 }
