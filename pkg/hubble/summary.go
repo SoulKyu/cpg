@@ -13,11 +13,27 @@ import (
 
 const summaryWidth = 52
 
+// SummaryPathState describes how cluster-health.json was handled in this run.
+// Passed to PrintClusterHealthSummary so the path line renders the correct suffix.
+type SummaryPathState int
+
+const (
+	// SummaryPathWritten: evidence enabled and not dry-run; file was written.
+	SummaryPathWritten SummaryPathState = iota
+	// SummaryPathDryRun: dry-run mode; file would have been written but was not.
+	SummaryPathDryRun
+	// SummaryPathEvidenceOff: --no-evidence; file was never managed by this run.
+	// Printing the file path would mislead the operator into looking for a file
+	// that does not exist.
+	SummaryPathEvidenceOff
+)
+
 // PrintClusterHealthSummary writes the end-of-run cluster-health block to out.
 // No-op when snapshots is nil or empty (zero infra/transient drops).
-// healthPath is the absolute path to cluster-health.json.
-// dryRun appends "(dry-run, not written)" to the path line.
-func PrintClusterHealthSummary(out io.Writer, snapshots []HealthDropSnapshot, stats *SessionStats, healthPath string, dryRun bool) {
+// healthPath is the absolute path to cluster-health.json; used by SummaryPathWritten
+// and SummaryPathDryRun states.
+// state controls the path line rendering (see SummaryPathState).
+func PrintClusterHealthSummary(out io.Writer, snapshots []HealthDropSnapshot, stats *SessionStats, healthPath string, state SummaryPathState) {
 	if len(snapshots) == 0 {
 		return
 	}
@@ -37,7 +53,7 @@ func PrintClusterHealthSummary(out io.Writer, snapshots []HealthDropSnapshot, st
 
 	for _, s := range snapshots {
 		name := flowpb.DropReason_name[int32(s.Reason)]
-		class := dropClassString(s.Class)
+		class := s.Class.String()
 		fmt.Fprintf(out, "  %-38s [%s]  %d flows\n", name, class, s.Count)
 		fmt.Fprintf(out, "    Top nodes:     %s\n", top3(s.ByNode))
 		fmt.Fprintf(out, "    Top workloads: %s\n", top3(s.ByWorkload))
@@ -47,11 +63,14 @@ func PrintClusterHealthSummary(out io.Writer, snapshots []HealthDropSnapshot, st
 		fmt.Fprintln(out)
 	}
 
-	pathLine := healthPath
-	if dryRun {
-		pathLine += " (dry-run, not written)"
+	switch state {
+	case SummaryPathDryRun:
+		fmt.Fprintf(out, "cluster-health.json: %s (dry-run, not written)\n", healthPath)
+	case SummaryPathEvidenceOff:
+		fmt.Fprintln(out, "cluster-health.json: (evidence disabled — file not written)")
+	default: // SummaryPathWritten
+		fmt.Fprintf(out, "cluster-health.json: %s\n", healthPath)
 	}
-	fmt.Fprintf(out, "cluster-health.json: %s\n", pathLine)
 	fmt.Fprintln(out, frame)
 }
 

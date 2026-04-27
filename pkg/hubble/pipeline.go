@@ -334,7 +334,15 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 			})
 		}
 	}
-	PrintClusterHealthSummary(stdout, snapshots, stats, healthPath, cfg.DryRun)
+	// C3: compute the correct SummaryPathState from config.
+	pathState := SummaryPathWritten
+	switch {
+	case !cfg.EvidenceEnabled || cfg.DryRun && !cfg.EvidenceEnabled:
+		pathState = SummaryPathEvidenceOff
+	case cfg.DryRun:
+		pathState = SummaryPathDryRun
+	}
+	PrintClusterHealthSummary(stdout, snapshots, stats, healthPath, pathState)
 
 	stats.Log(cfg.Logger)
 	// EXIT-01: --fail-on-infra-drops opt-in exit code.

@@ -250,9 +250,33 @@ var (
 	warnedUnknown sync.Map // key: int32(reason), value: struct{}
 )
 
-// SetWarnLogger sets the logger used to emit a single WARN per unique
-// unrecognized DropReason value. Safe to call before or after Classify.
-// Pass nil to disable warn logging (zero-value safe).
+// String returns the lowercase label for a DropClass value: "policy",
+// "infra", "transient", "noise", or "unknown" (also for any unrecognized
+// numeric value). Implements the fmt.Stringer interface; the single source of
+// truth for DropClass labels — no other package should duplicate this mapping.
+func (c DropClass) String() string {
+	switch c {
+	case DropClassPolicy:
+		return "policy"
+	case DropClassInfra:
+		return "infra"
+	case DropClassTransient:
+		return "transient"
+	case DropClassNoise:
+		return "noise"
+	default:
+		return "unknown"
+	}
+}
+
+// SetWarnLogger configures the package-global logger used to emit deduplicated
+// WARN messages for unrecognized DropReason values. Process-global state:
+// last writer wins. The dedup map (warnedUnknown) is also process-global.
+//
+// Intended for single-pipeline binaries (cpg generate / cpg replay).
+// Concurrent pipelines in the same process will race on the logger pointer
+// and share the dedup map — document as a constraint, not a bug. Pass nil
+// to disable warn logging.
 func SetWarnLogger(l *zap.Logger) {
 	warnLoggerMu.Lock()
 	warnLogger = l

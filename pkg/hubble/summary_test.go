@@ -62,7 +62,7 @@ func TestPrintClusterHealthSummaryFullBlock(t *testing.T) {
 	stats := makeStats(100, 52)
 	var buf bytes.Buffer
 	healthPath := "/home/gule/.cache/cpg/evidence/abc123/cluster-health.json"
-	PrintClusterHealthSummary(&buf, snaps, stats, healthPath, false)
+	PrintClusterHealthSummary(&buf, snaps, stats, healthPath, SummaryPathWritten)
 
 	out := buf.String()
 	// Header frame and title
@@ -91,14 +91,14 @@ func TestPrintClusterHealthSummaryZeroDrops(t *testing.T) {
 	snaps := hw.Snapshot()
 
 	var buf bytes.Buffer
-	PrintClusterHealthSummary(&buf, snaps, makeStats(0, 0), "/some/path.json", false)
+	PrintClusterHealthSummary(&buf, snaps, makeStats(0, 0), "/some/path.json", SummaryPathWritten)
 	assert.Equal(t, "", buf.String(), "no output when zero drops")
 }
 
 // TestPrintClusterHealthSummaryNilSnapshots verifies no output when snapshots is nil.
 func TestPrintClusterHealthSummaryNilSnapshots(t *testing.T) {
 	var buf bytes.Buffer
-	PrintClusterHealthSummary(&buf, nil, makeStats(0, 0), "/some/path.json", false)
+	PrintClusterHealthSummary(&buf, nil, makeStats(0, 0), "/some/path.json", SummaryPathWritten)
 	assert.Equal(t, "", buf.String(), "no output when snapshots is nil")
 }
 
@@ -117,7 +117,7 @@ func TestPrintClusterHealthSummarySingleContributor(t *testing.T) {
 	snaps := hw.Snapshot()
 
 	var buf bytes.Buffer
-	PrintClusterHealthSummary(&buf, snaps, makeStats(10, 10), "/path.json", false)
+	PrintClusterHealthSummary(&buf, snaps, makeStats(10, 10), "/path.json", SummaryPathWritten)
 	out := buf.String()
 	assert.NotContains(t, out, "(+", "no truncation suffix when <=3 contributors")
 }
@@ -142,7 +142,7 @@ func TestPrintClusterHealthSummaryMoreThanThree(t *testing.T) {
 	snaps := hw.Snapshot()
 
 	var buf bytes.Buffer
-	PrintClusterHealthSummary(&buf, snaps, makeStats(50, 50), "/path.json", false)
+	PrintClusterHealthSummary(&buf, snaps, makeStats(50, 50), "/path.json", SummaryPathWritten)
 	out := buf.String()
 	assert.Contains(t, out, "(+2 more)", "5 nodes → +2 more suffix")
 }
@@ -161,7 +161,7 @@ func TestPrintClusterHealthSummaryDryRun(t *testing.T) {
 	snaps := hw.Snapshot()
 
 	var buf bytes.Buffer
-	PrintClusterHealthSummary(&buf, snaps, makeStats(5, 5), "/evidence/abc/cluster-health.json", true)
+	PrintClusterHealthSummary(&buf, snaps, makeStats(5, 5), "/evidence/abc/cluster-health.json", SummaryPathDryRun)
 	out := buf.String()
 	assert.Contains(t, out, "(dry-run, not written)", "dry-run appends suffix to path line")
 }
@@ -181,7 +181,7 @@ func TestPrintClusterHealthSummaryNoRemediationHint(t *testing.T) {
 	snaps := hw.Snapshot()
 
 	var buf bytes.Buffer
-	PrintClusterHealthSummary(&buf, snaps, makeStats(3, 0), "/path.json", false)
+	PrintClusterHealthSummary(&buf, snaps, makeStats(3, 0), "/path.json", SummaryPathWritten)
 	out := buf.String()
 	assert.NotContains(t, out, "Hint:", "no Hint: line when RemediationHint is empty")
 }
@@ -208,7 +208,7 @@ func TestPrintClusterHealthSummarySeveritySort(t *testing.T) {
 	snaps := hw.Snapshot()
 
 	var buf bytes.Buffer
-	PrintClusterHealthSummary(&buf, snaps, makeStats(105, 5), "/path.json", false)
+	PrintClusterHealthSummary(&buf, snaps, makeStats(105, 5), "/path.json", SummaryPathWritten)
 	out := buf.String()
 
 	infraIdx := strings.Index(out, "CT_MAP_INSERTION_FAILED")
@@ -216,6 +216,76 @@ func TestPrintClusterHealthSummarySeveritySort(t *testing.T) {
 	require.True(t, infraIdx >= 0, "CT_MAP_INSERTION_FAILED must appear in output")
 	require.True(t, transientIdx >= 0, "POLICY_DENIED must appear in output")
 	assert.Less(t, infraIdx, transientIdx, "infra entry must be printed before transient entry")
+}
+
+// TestPrintClusterHealthSummaryEvidenceOff verifies C3: SummaryPathEvidenceOff prints
+// "(evidence disabled — file not written)" and does NOT print the healthPath.
+func TestPrintClusterHealthSummaryEvidenceOff(t *testing.T) {
+	hw := makeHealthWriter(t, map[flowpb.DropReason]*healthDropEntry{
+		flowpb.DropReason_CT_MAP_INSERTION_FAILED: makeEntry(
+			flowpb.DropReason_CT_MAP_INSERTION_FAILED,
+			dropclass.DropClassInfra,
+			3,
+			map[string]uint64{"node-1": 3},
+			map[string]uint64{"prod/svc": 3},
+		),
+	})
+	snaps := hw.Snapshot()
+
+	const realPath = "/evidence/abc/cluster-health.json"
+	var buf bytes.Buffer
+	PrintClusterHealthSummary(&buf, snaps, makeStats(3, 3), realPath, SummaryPathEvidenceOff)
+	out := buf.String()
+	assert.Contains(t, out, "evidence disabled", "evidence-off state must say evidence disabled")
+	assert.Contains(t, out, "file not written", "evidence-off state must say file not written")
+	assert.NotContains(t, out, realPath, "real path must NOT appear when evidence is off")
+	assert.NotContains(t, out, "dry-run", "dry-run wording must not appear in evidence-off state")
+}
+
+// TestPrintClusterHealthSummaryDryRunPathLine verifies C3: SummaryPathDryRun appends
+// "(dry-run, not written)" to the real path — operator can see where the file WOULD be.
+func TestPrintClusterHealthSummaryDryRunPathLine(t *testing.T) {
+	hw := makeHealthWriter(t, map[flowpb.DropReason]*healthDropEntry{
+		flowpb.DropReason_CT_MAP_INSERTION_FAILED: makeEntry(
+			flowpb.DropReason_CT_MAP_INSERTION_FAILED,
+			dropclass.DropClassInfra,
+			2,
+			map[string]uint64{"node-1": 2},
+			map[string]uint64{"prod/svc": 2},
+		),
+	})
+	snaps := hw.Snapshot()
+
+	const realPath = "/evidence/abc/cluster-health.json"
+	var buf bytes.Buffer
+	PrintClusterHealthSummary(&buf, snaps, makeStats(2, 2), realPath, SummaryPathDryRun)
+	out := buf.String()
+	assert.Contains(t, out, realPath, "real path must appear in dry-run state")
+	assert.Contains(t, out, "(dry-run, not written)", "dry-run suffix must appear")
+	assert.NotContains(t, out, "evidence disabled", "evidence-off wording must not appear in dry-run state")
+}
+
+// TestPrintClusterHealthSummaryWrittenPathLine verifies C3: SummaryPathWritten
+// prints the bare path with no suffix.
+func TestPrintClusterHealthSummaryWrittenPathLine(t *testing.T) {
+	hw := makeHealthWriter(t, map[flowpb.DropReason]*healthDropEntry{
+		flowpb.DropReason_CT_MAP_INSERTION_FAILED: makeEntry(
+			flowpb.DropReason_CT_MAP_INSERTION_FAILED,
+			dropclass.DropClassInfra,
+			1,
+			map[string]uint64{"node-1": 1},
+			map[string]uint64{"prod/svc": 1},
+		),
+	})
+	snaps := hw.Snapshot()
+
+	const realPath = "/evidence/abc/cluster-health.json"
+	var buf bytes.Buffer
+	PrintClusterHealthSummary(&buf, snaps, makeStats(1, 1), realPath, SummaryPathWritten)
+	out := buf.String()
+	assert.Contains(t, out, realPath, "real path must appear in written state")
+	assert.NotContains(t, out, "dry-run", "no dry-run suffix in written state")
+	assert.NotContains(t, out, "evidence disabled", "no evidence-off wording in written state")
 }
 
 // TestPrintClusterHealthSummaryWithinClassSortByCount verifies descending count sort
@@ -240,7 +310,7 @@ func TestPrintClusterHealthSummaryWithinClassSortByCount(t *testing.T) {
 	snaps := hw.Snapshot()
 
 	var buf bytes.Buffer
-	PrintClusterHealthSummary(&buf, snaps, makeStats(53, 53), "/path.json", false)
+	PrintClusterHealthSummary(&buf, snaps, makeStats(53, 53), "/path.json", SummaryPathWritten)
 	out := buf.String()
 
 	ctIdx := strings.Index(out, "CT_MAP_INSERTION_FAILED")
