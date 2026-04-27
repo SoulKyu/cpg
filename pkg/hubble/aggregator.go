@@ -227,10 +227,27 @@ func (a *Aggregator) InfraDropTotal() uint64 {
 	return total
 }
 
+// policyTargetEndpoint returns the endpoint that policy decisions target for a
+// given flow direction: INGRESS targets the destination, EGRESS targets the
+// source. Returns nil for unknown or unset directions.
+//
+// This is the single source of truth for the INGRESS/EGRESS direction switch —
+// both buildDropEvent and keyFromFlow delegate to this helper (M3 dedup).
+func policyTargetEndpoint(f *flowpb.Flow) *flowpb.Endpoint {
+	switch f.GetTrafficDirection() {
+	case flowpb.TrafficDirection_INGRESS:
+		return f.GetDestination()
+	case flowpb.TrafficDirection_EGRESS:
+		return f.GetSource()
+	default:
+		return nil
+	}
+}
+
 // buildDropEvent constructs a DropEvent for a suppressed Infra/Transient flow.
 func buildDropEvent(f *flowpb.Flow, class dropclass.DropClass) DropEvent {
 	ns, workload := "_unknown", "_unknown"
-	if ep := effectiveEndpoint(f); ep != nil {
+	if ep := policyTargetEndpoint(f); ep != nil {
 		if ep.Namespace != "" {
 			ns = ep.Namespace
 		}
@@ -248,19 +265,6 @@ func buildDropEvent(f *flowpb.Flow, class dropclass.DropClass) DropEvent {
 		Namespace: ns,
 		Workload:  workload,
 		NodeName:  node,
-	}
-}
-
-// effectiveEndpoint returns the policy-target endpoint for health event labeling.
-// Mirrors keyFromFlow direction logic; returns nil if direction is unknown.
-func effectiveEndpoint(f *flowpb.Flow) *flowpb.Endpoint {
-	switch f.TrafficDirection {
-	case flowpb.TrafficDirection_INGRESS:
-		return f.Destination
-	case flowpb.TrafficDirection_EGRESS:
-		return f.Source
-	default:
-		return nil
 	}
 }
 
@@ -452,19 +456,16 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan *flowpb.Flow, out chan<-
 // For EGRESS flows, the source endpoint is the policy target.
 // Returns skip=true if the target endpoint has an empty namespace.
 func (a *Aggregator) keyFromFlow(f *flowpb.Flow) (key AggKey, skip bool) {
-	var ep *flowpb.Endpoint
-	switch f.TrafficDirection {
-	case flowpb.TrafficDirection_INGRESS:
-		ep = f.Destination
-	case flowpb.TrafficDirection_EGRESS:
-		ep = f.Source
-	default:
-		a.tracker.Track(f, policy.ReasonUnknownDir)
-		return AggKey{}, true
-	}
-
+	// policyTargetEndpoint returns nil for both "unknown direction" and
+	// "nil endpoint" cases. Re-check direction to preserve distinct tracker
+	// reason codes (ReasonUnknownDir vs ReasonNilEndpoint).
+	ep := policyTargetEndpoint(f)
 	if ep == nil {
-		a.tracker.Track(f, policy.ReasonNilEndpoint)
+		if f.TrafficDirection != flowpb.TrafficDirection_INGRESS && f.TrafficDirection != flowpb.TrafficDirection_EGRESS {
+			a.tracker.Track(f, policy.ReasonUnknownDir)
+		} else {
+			a.tracker.Track(f, policy.ReasonNilEndpoint)
+		}
 		return AggKey{}, true
 	}
 

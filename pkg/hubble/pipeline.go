@@ -212,14 +212,19 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 	// healthCh is closed here because agg.Run closes its out (policies) channel;
 	// when policies drains, we are done forwarding and must close healthCh so
 	// Stage 2c exits cleanly.
+	//
+	// M7: explicit close ordering (NOT defer) makes the LIFO semantics visible.
+	// policyCh and evidenceCh must close before healthCh so Stage 2 / 2b
+	// consumers exit before the health drainer (Stage 2c) unblocks. Using defer
+	// would reverse the order if the function grows additional defers in future.
 	g.Go(func() error {
-		defer close(policyCh)
-		defer close(evidenceCh)
-		defer close(healthCh)
 		for pe := range policies {
 			policyCh <- pe
 			evidenceCh <- pe
 		}
+		close(policyCh)
+		close(evidenceCh)
+		close(healthCh)
 		return nil
 	})
 

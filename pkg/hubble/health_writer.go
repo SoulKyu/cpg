@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -27,15 +28,17 @@ type healthDropEntry struct {
 // healthWriter accumulates DropEvents from the healthCh channel and writes
 // cluster-health.json atomically when finalize() is called.
 // Owned by a single goroutine (Stage 2c) — no mutex required for drops.
-// finalized and cachedSnapshot make Snapshot() idempotent after g.Wait().
+// snapshotOnce makes Snapshot() idempotent and race-safe for concurrent callers
+// after g.Wait() (the first call wins; all callers receive the same slice).
 type healthWriter struct {
-	evidenceDir     string
-	outputHash      string
-	logger          *zap.Logger
-	drops           map[flowpb.DropReason]*healthDropEntry
-	startedAt       time.Time
-	finalized       atomic.Bool
-	cachedSnapshot  []HealthDropSnapshot
+	evidenceDir    string
+	outputHash     string
+	logger         *zap.Logger
+	drops          map[flowpb.DropReason]*healthDropEntry
+	startedAt      time.Time
+	finalized      atomic.Bool
+	snapshotOnce   sync.Once
+	cachedSnapshot []HealthDropSnapshot
 }
 
 // newHealthWriter constructs a healthWriter.
@@ -187,23 +190,28 @@ func (hw *healthWriter) Snapshot() []HealthDropSnapshot {
 	if hw == nil {
 		return nil
 	}
+	// Fast path: already finalized (no alloc).
 	if hw.finalized.Load() {
 		return hw.cachedSnapshot
 	}
-	// First call: build snapshot, cache, mark finalized.
-	result := make([]HealthDropSnapshot, 0, len(hw.drops))
-	for _, e := range hw.drops {
-		result = append(result, HealthDropSnapshot{
-			Reason:     e.reason,
-			Class:      e.class,
-			Count:      e.count,
-			ByNode:     shallowCopyMap(e.byNode),
-			ByWorkload: shallowCopyMap(e.byWorkload),
-		})
-	}
-	hw.cachedSnapshot = result
-	hw.finalized.Store(true)
-	return result
+	// First call (or concurrent first calls): sync.Once ensures a single writer;
+	// subsequent callers block until the winner completes and then see the cache
+	// via the finalized.Load() fast path on the next iteration.
+	hw.snapshotOnce.Do(func() {
+		result := make([]HealthDropSnapshot, 0, len(hw.drops))
+		for _, e := range hw.drops {
+			result = append(result, HealthDropSnapshot{
+				Reason:     e.reason,
+				Class:      e.class,
+				Count:      e.count,
+				ByNode:     shallowCopyMap(e.byNode),
+				ByWorkload: shallowCopyMap(e.byWorkload),
+			})
+		}
+		hw.cachedSnapshot = result
+		hw.finalized.Store(true)
+	})
+	return hw.cachedSnapshot
 }
 
 // shallowCopyMap returns a shallow copy of a string->uint64 map.

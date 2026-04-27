@@ -941,6 +941,52 @@ func TestIgnoredByDropReasonCopy(t *testing.T) {
 		"modifying the returned map must not affect the internal counter")
 }
 
+// TestPolicyTargetEndpoint verifies M3: the extracted helper covers all direction cases.
+func TestPolicyTargetEndpoint(t *testing.T) {
+	src := &flowpb.Endpoint{Namespace: "src-ns", Labels: []string{"k8s:app=src"}}
+	dst := &flowpb.Endpoint{Namespace: "dst-ns", Labels: []string{"k8s:app=dst"}}
+
+	// INGRESS: policy targets destination.
+	ingress := &flowpb.Flow{
+		TrafficDirection: flowpb.TrafficDirection_INGRESS,
+		Source:           src,
+		Destination:      dst,
+	}
+	assert.Equal(t, dst, policyTargetEndpoint(ingress), "INGRESS → destination")
+
+	// EGRESS: policy targets source.
+	egress := &flowpb.Flow{
+		TrafficDirection: flowpb.TrafficDirection_EGRESS,
+		Source:           src,
+		Destination:      dst,
+	}
+	assert.Equal(t, src, policyTargetEndpoint(egress), "EGRESS → source")
+
+	// Unknown direction: nil.
+	unknown := &flowpb.Flow{
+		TrafficDirection: flowpb.TrafficDirection_TRAFFIC_DIRECTION_UNKNOWN,
+		Source:           src,
+		Destination:      dst,
+	}
+	assert.Nil(t, policyTargetEndpoint(unknown), "unknown direction → nil")
+
+	// INGRESS with nil destination: nil (nil source/destination is valid proto).
+	ingressNilDst := &flowpb.Flow{
+		TrafficDirection: flowpb.TrafficDirection_INGRESS,
+		Source:           src,
+		Destination:      nil,
+	}
+	assert.Nil(t, policyTargetEndpoint(ingressNilDst), "INGRESS + nil destination → nil")
+
+	// EGRESS with nil source: nil.
+	egressNilSrc := &flowpb.Flow{
+		TrafficDirection: flowpb.TrafficDirection_EGRESS,
+		Source:           nil,
+		Destination:      dst,
+	}
+	assert.Nil(t, policyTargetEndpoint(egressNilSrc), "EGRESS + nil source → nil")
+}
+
 // TestAggregatorHealthChDrops_BackPressure verifies C1: with a size-1 buffered
 // healthCh and no consumer, sending N=10 infra flows increments healthChDrops
 // by N-1 (first send fills the buffer; remaining 9 take the default branch).
