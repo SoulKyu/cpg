@@ -19,8 +19,9 @@ import (
 
 func newReplayCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "replay <file.jsonl|->",
-		Short: "Generate policies from a captured Hubble jsonpb dump",
+		Use:     "replay <file.jsonl|->",
+		PreRunE: validateCommonFlags,
+		Short:   "Generate policies from a captured Hubble jsonpb dump",
 		Long: `Replay a Hubble jsonpb capture through the same pipeline as the live stream,
 generating (or updating) policies on disk. Use this for deterministic iteration
 on policy logic without having to reproduce traffic.

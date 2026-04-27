@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -138,6 +139,100 @@ func TestIgnoreDropReasonFlagParses(t *testing.T) {
 		f := parseCommonFlags(cmd)
 		assert.Equal(t, []string{"POLICY_DENIED"}, f.ignoreDropReasons)
 	})
+}
+
+// TestLevenshtein verifies the edit distance helper with known pairs.
+func TestLevenshtein(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"", "", 0},
+		{"abc", "", 3},
+		{"", "abc", 3},
+		{"abc", "abc", 0},
+		{"kitten", "sitting", 3},
+		{"CT_MAP_INSERT_FAIL", "CT_MAP_INSERTION_FAILED", 5},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, levenshtein(tc.a, tc.b), "levenshtein(%q, %q)", tc.a, tc.b)
+	}
+}
+
+// TestSuggestClosest verifies that suggestClosest returns at most n candidates
+// in ascending distance order, with ties broken lexicographically.
+func TestSuggestClosest(t *testing.T) {
+	candidates := []string{"CT_MAP_INSERTION_FAILED", "POLICY_DENIED", "STALE_OR_UNROUTABLE_IP", "CT_NO_MAP_FOUND", "SERVICE_BACKEND_NOT_FOUND"}
+
+	// CT_MAP_INSERT_FAIL is closest to CT_MAP_INSERTION_FAILED
+	got := suggestClosest("CT_MAP_INSERT_FAIL", candidates, 5)
+	require.LessOrEqual(t, len(got), 5, "must return at most n suggestions")
+	require.Greater(t, len(got), 0, "must return at least 1 suggestion")
+	assert.Equal(t, "CT_MAP_INSERTION_FAILED", got[0], "closest match must be first")
+
+	// Request fewer than available
+	got2 := suggestClosest("CT_MAP_INSERT_FAIL", candidates, 2)
+	assert.Len(t, got2, 2, "must return exactly n when enough candidates exist")
+}
+
+// TestValidateIgnoreDropReasonsLevenshtein verifies I3: error message for an
+// unknown reason name lists up to 5 fuzzy-matched suggestions (not all 76+).
+func TestValidateIgnoreDropReasonsLevenshtein(t *testing.T) {
+	logger, _ := newWarnObserver()
+
+	_, err := validateIgnoreDropReasons([]string{"CT_MAP_INSERT_FAIL"}, logger)
+	require.Error(t, err)
+	errMsg := err.Error()
+
+	// Must contain Levenshtein suggestion text.
+	assert.Contains(t, errMsg, "did you mean any of:", "error must list suggestions")
+	assert.Contains(t, errMsg, "CT_MAP_INSERTION_FAILED", "closest match must appear in suggestions")
+
+	// Error message must be bounded (not listing all 76+ reasons).
+	assert.Less(t, len(errMsg), 500, "error message must be bounded (<500 chars)")
+
+	// Extract suggestions: text between "did you mean any of: " and "?"
+	start := strings.Index(errMsg, "did you mean any of: ")
+	if start >= 0 {
+		rest := errMsg[start+len("did you mean any of: "):]
+		end := strings.Index(rest, "?")
+		if end >= 0 {
+			suggList := strings.Split(rest[:end], ", ")
+			assert.LessOrEqual(t, len(suggList), 5, "at most 5 suggestions must be listed")
+		}
+	}
+}
+
+// TestPreRunE_RejectsInvalidDropReason verifies I2: PreRunE on generate rejects
+// an invalid --ignore-drop-reason before any pipeline construction.
+func TestPreRunE_RejectsInvalidDropReason(t *testing.T) {
+	cmd := newGenerateCmd()
+	require.NoError(t, cmd.Flags().Set("ignore-drop-reason", "TYPO_REASON"))
+	// Call PreRunE directly (RunE is not invoked).
+	require.NotNil(t, cmd.PreRunE, "generate cmd must have PreRunE wired")
+	err := cmd.PreRunE(cmd, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown drop reason")
+}
+
+// TestPreRunE_RejectsInvalidProtocol verifies I2: PreRunE rejects an invalid
+// --ignore-protocol before any pipeline construction.
+func TestPreRunE_RejectsInvalidProtocol(t *testing.T) {
+	cmd := newReplayCmd()
+	require.NoError(t, cmd.Flags().Set("ignore-protocol", "tcpp"))
+	require.NotNil(t, cmd.PreRunE, "replay cmd must have PreRunE wired")
+	err := cmd.PreRunE(cmd, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown protocol")
+}
+
+// TestPreRunE_ValidFlagsPass verifies I2: PreRunE returns nil for valid flags.
+func TestPreRunE_ValidFlagsPass(t *testing.T) {
+	cmd := newGenerateCmd()
+	require.NoError(t, cmd.Flags().Set("ignore-drop-reason", "POLICY_DENIED"))
+	require.NotNil(t, cmd.PreRunE, "generate cmd must have PreRunE wired")
+	err := cmd.PreRunE(cmd, nil)
+	require.NoError(t, err)
 }
 
 // TestFailOnInfraDropsFlagParses confirms the --fail-on-infra-drops flag is

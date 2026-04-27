@@ -62,8 +62,9 @@ func newGenerateCmd() *cobra.Command {
 	}
 
 	cmd := &cobra.Command{
-		Use:   "generate",
-		Short: "Generate CiliumNetworkPolicies from Hubble flow observations",
+		Use:     "generate",
+		PreRunE: validateCommonFlags,
+		Short:   "Generate CiliumNetworkPolicies from Hubble flow observations",
 		Long: fmt.Sprintf(`Connect to Hubble Relay via gRPC, stream dropped flows, and generate
 CiliumNetworkPolicy YAML files organized by namespace and workload.
 

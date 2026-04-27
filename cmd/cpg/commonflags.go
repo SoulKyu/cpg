@@ -111,6 +111,92 @@ func parseCommonFlags(cmd *cobra.Command) commonFlags {
 	return out
 }
 
+// levenshtein computes the edit distance between strings a and b using the
+// standard 2-row DP algorithm. O(len(a)*len(b)) time, O(len(b)) space.
+func levenshtein(a, b string) int {
+	la, lb := len(a), len(b)
+	if la == 0 {
+		return lb
+	}
+	if lb == 0 {
+		return la
+	}
+	prev := make([]int, lb+1)
+	curr := make([]int, lb+1)
+	for j := 0; j <= lb; j++ {
+		prev[j] = j
+	}
+	for i := 1; i <= la; i++ {
+		curr[0] = i
+		for j := 1; j <= lb; j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			curr[j] = min3(prev[j]+1, curr[j-1]+1, prev[j-1]+cost)
+		}
+		prev, curr = curr, prev
+	}
+	return prev[lb]
+}
+
+func min3(a, b, c int) int {
+	if a < b {
+		if a < c {
+			return a
+		}
+		return c
+	}
+	if b < c {
+		return b
+	}
+	return c
+}
+
+// suggestClosest returns up to n candidates from candidates that are closest
+// (by Levenshtein distance) to input. Ties broken lexicographically for
+// deterministic output.
+func suggestClosest(input string, candidates []string, n int) []string {
+	type scored struct {
+		name string
+		dist int
+	}
+	scored_ := make([]scored, 0, len(candidates))
+	for _, c := range candidates {
+		scored_ = append(scored_, scored{name: c, dist: levenshtein(input, c)})
+	}
+	// Stable sort: ascending distance, then lexicographic on name.
+	for i := 1; i < len(scored_); i++ {
+		for j := i; j > 0 && (scored_[j].dist < scored_[j-1].dist ||
+			(scored_[j].dist == scored_[j-1].dist && scored_[j].name < scored_[j-1].name)); j-- {
+			scored_[j], scored_[j-1] = scored_[j-1], scored_[j]
+		}
+	}
+	if n > len(scored_) {
+		n = len(scored_)
+	}
+	out := make([]string, n)
+	for i := range out {
+		out[i] = scored_[i].name
+	}
+	return out
+}
+
+// validateCommonFlags is the cobra PreRunE handler shared by generate and replay.
+// Runs BEFORE RunE so flag errors abort before kubeconfig load / port-forward.
+// logger may be nil during PreRunE if main() hasn't initialized it yet;
+// validateIgnoreDropReasons handles nil logger gracefully.
+func validateCommonFlags(cmd *cobra.Command, _ []string) error {
+	f := parseCommonFlags(cmd)
+	if _, err := validateIgnoreProtocols(f.ignoreProtocols); err != nil {
+		return err
+	}
+	if _, err := validateIgnoreDropReasons(f.ignoreDropReasons, logger); err != nil {
+		return err
+	}
+	return nil
+}
+
 // validateIgnoreDropReasons normalizes --ignore-drop-reason input (uppercase),
 // rejects unknown reason names (FILTER-02), and warns when a name is already
 // classified Infra/Transient by default suppression (FILTER-03).
@@ -131,8 +217,11 @@ func validateIgnoreDropReasons(in []string, logger *zap.Logger) ([]string, error
 	for _, raw := range in {
 		v := strings.ToUpper(raw)
 		if _, ok := allow[v]; !ok {
-			return nil, fmt.Errorf("unknown drop reason %q: valid values are %s",
-				raw, strings.Join(all, ", "))
+			suggestions := suggestClosest(v, all, 5)
+			return nil, fmt.Errorf(
+				"unknown drop reason %q: did you mean any of: %s? See https://docs.cilium.io/en/stable/observability/hubble/#dropreason for the full list",
+				raw, strings.Join(suggestions, ", "),
+			)
 		}
 		// FILTER-03: warn when reason is already suppressed by default.
 		if reasonVal, exists := flowpb.DropReason_value[v]; exists {
@@ -141,7 +230,7 @@ func validateIgnoreDropReasons(in []string, logger *zap.Logger) ([]string, error
 				if logger != nil {
 					logger.Warn("--ignore-drop-reason is redundant: reason is already classified and suppressed by default",
 						zap.String("reason", v),
-						zap.String("class", dropClassLabel(class)),
+						zap.String("class", class.String()),
 					)
 				}
 			}
@@ -151,19 +240,3 @@ func validateIgnoreDropReasons(in []string, logger *zap.Logger) ([]string, error
 	return out, nil
 }
 
-// dropClassLabel returns a human-readable label for a DropClass value.
-// Local helper — avoids exporting a String() method from pkg/dropclass.
-func dropClassLabel(c dropclass.DropClass) string {
-	switch c {
-	case dropclass.DropClassInfra:
-		return "infra"
-	case dropclass.DropClassTransient:
-		return "transient"
-	case dropclass.DropClassPolicy:
-		return "policy"
-	case dropclass.DropClassNoise:
-		return "noise"
-	default:
-		return "unknown"
-	}
-}
