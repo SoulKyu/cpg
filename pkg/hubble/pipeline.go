@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/SoulKyu/cpg/pkg/dropclass"
 	"github.com/SoulKyu/cpg/pkg/evidence"
 	"github.com/SoulKyu/cpg/pkg/flowsource"
 	"github.com/SoulKyu/cpg/pkg/output"
@@ -312,7 +313,28 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 		stdout = os.Stdout
 	}
 	healthPath := filepath.Join(cfg.EvidenceDir, cfg.OutputHash, "cluster-health.json")
-	PrintClusterHealthSummary(stdout, hw.Snapshot(), stats, healthPath, cfg.DryRun)
+
+	// C2: build snapshots even when hw==nil (--no-evidence or dry-run).
+	// When hw is nil, construct minimal snapshots from aggregator counters so
+	// the summary block still prints when infra drops > 0. No node/workload
+	// attribution is available in this path (by_node and by_workload will be
+	// empty maps).
+	var snapshots []HealthDropSnapshot
+	if hw != nil {
+		snapshots = hw.Snapshot()
+	} else if stats.InfraDropTotal > 0 {
+		snapshots = make([]HealthDropSnapshot, 0, len(stats.InfraDropsByReason))
+		for reason, count := range stats.InfraDropsByReason {
+			snapshots = append(snapshots, HealthDropSnapshot{
+				Reason:     reason,
+				Class:      dropclass.Classify(reason),
+				Count:      count,
+				ByNode:     map[string]uint64{},
+				ByWorkload: map[string]uint64{},
+			})
+		}
+	}
+	PrintClusterHealthSummary(stdout, snapshots, stats, healthPath, cfg.DryRun)
 
 	stats.Log(cfg.Logger)
 	// EXIT-01: --fail-on-infra-drops opt-in exit code.

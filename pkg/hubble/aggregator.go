@@ -112,6 +112,12 @@ type Aggregator struct {
 	// InfraDrops() + InfraDropTotal() for SessionStats and --fail-on-infra-drops (phase 13).
 	infraDrops map[flowpb.DropReason]uint64
 
+	// healthChDrops counts DropEvents that could not be sent on healthCh
+	// because the channel was full (back-pressure). Non-zero means the consumer
+	// (Stage 2c) is slower than the aggregation rate; consider increasing the
+	// channel buffer or the flush interval.
+	healthChDrops uint64
+
 	// ignoreDropReasons is the uppercase set of DropReason name strings whose
 	// flows must be dropped before the protocol filter and classification gate.
 	// Populated via SetIgnoreDropReasons (phase 13 FILTER-01).
@@ -203,6 +209,12 @@ func (a *Aggregator) InfraDrops() map[flowpb.DropReason]uint64 {
 		out[k] = v
 	}
 	return out
+}
+
+// HealthChDrops returns the number of DropEvents dropped due to a full
+// healthCh channel (back-pressure). Zero when no back-pressure was observed.
+func (a *Aggregator) HealthChDrops() uint64 {
+	return a.healthChDrops
 }
 
 // InfraDropTotal returns the total number of flows suppressed by the
@@ -364,9 +376,10 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan *flowpb.Flow, out chan<-
 			// protocol filter and classification gate. User-explicit exclusion
 			// takes precedence. These flows do NOT increment flowsSeen,
 			// infraDrops, or reach healthCh.
+			// I7: use the `, ok` form so a future enum value with int32(99999)
+			// does not match the "" zero-value key in ignoreDropReasons.
 			if len(a.ignoreDropReasons) > 0 {
-				name := flowpb.DropReason_name[int32(f.GetDropReasonDesc())]
-				if name != "" {
+				if name, ok := flowpb.DropReason_name[int32(f.GetDropReasonDesc())]; ok && name != "" {
 					if _, drop := a.ignoreDropReasons[name]; drop {
 						a.ignoredByDropReason[name]++
 						continue
@@ -396,7 +409,19 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan *flowpb.Flow, out chan<-
 					a.flowsSeen++
 					a.infraDrops[f.GetDropReasonDesc()]++
 					if healthCh != nil {
-						healthCh <- buildDropEvent(f, class)
+						ev := buildDropEvent(f, class)
+						select {
+						case healthCh <- ev:
+						case <-ctx.Done():
+							// Context cancelled while trying to send; drain remaining
+							// buckets then return to honour the existing ctx.Done flush
+							// contract (returns nil, not ctx.Err()).
+							a.flush(buckets, out)
+							return nil
+						default:
+							// Consumer is slow; count the drop and keep going.
+							a.healthChDrops++
+						}
 					}
 					continue
 				case dropclass.DropClassNoise:

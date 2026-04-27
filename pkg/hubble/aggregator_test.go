@@ -941,6 +941,61 @@ func TestIgnoredByDropReasonCopy(t *testing.T) {
 		"modifying the returned map must not affect the internal counter")
 }
 
+// TestAggregatorHealthChDrops_BackPressure verifies C1: with a size-1 buffered
+// healthCh and no consumer, sending N=10 infra flows increments healthChDrops
+// by N-1 (first send fills the buffer; remaining 9 take the default branch).
+// Run() must complete within 200ms (never blocks on the full channel).
+func TestAggregatorHealthChDrops_BackPressure(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+
+	const n = 10
+	in := make(chan *flowpb.Flow, n)
+	out := make(chan policy.PolicyEvent, n)
+	healthCh := make(chan DropEvent, 1) // size-1; will fill after first send
+
+	for i := 0; i < n; i++ {
+		in <- makeInfraFlow(flowpb.DropReason_CT_MAP_INSERTION_FAILED)
+	}
+	close(in)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- agg.Run(context.Background(), in, out, healthCh)
+	}()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("Run() blocked on full healthCh — non-blocking send not implemented")
+	}
+
+	// First send fills the buffer; next 9 take the default branch.
+	assert.Equal(t, uint64(n-1), agg.HealthChDrops(), "9 of 10 sends must take the default (drop) branch")
+	assert.Equal(t, uint64(n), agg.InfraDropTotal(), "all 10 infra flows must still be counted")
+}
+
+// TestAggregatorHealthChDrops_ZeroWhenNoDrops verifies HealthChDrops() returns
+// zero when the consumer keeps up with the producer.
+func TestAggregatorHealthChDrops_ZeroWhenNoDrops(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+
+	in := make(chan *flowpb.Flow, 5)
+	out := make(chan policy.PolicyEvent, 5)
+	healthCh := make(chan DropEvent, 10) // large enough to never block
+
+	in <- makeInfraFlow(flowpb.DropReason_CT_MAP_INSERTION_FAILED)
+	in <- makeInfraFlow(flowpb.DropReason_CT_MAP_INSERTION_FAILED)
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out, healthCh))
+	assert.Equal(t, uint64(0), agg.HealthChDrops(), "no drops when channel has space")
+}
+
 // TestInfraDropsCopy verifies that InfraDrops() returns an independent copy.
 func TestInfraDropsCopy(t *testing.T) {
 	logger := zaptest.NewLogger(t)

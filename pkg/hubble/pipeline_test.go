@@ -1,6 +1,7 @@
 package hubble
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -380,4 +381,54 @@ func TestPipelineConfig_L7EnabledFieldExists(t *testing.T) {
 	assert.True(t, cfg.L7Enabled)
 	zero := PipelineConfig{}
 	assert.False(t, zero.L7Enabled, "zero value must default to false")
+}
+
+// TestRunPipeline_FallbackSnapshotNoEvidence verifies C2: when EvidenceEnabled=false
+// and infra drops are observed, the cluster-health summary IS printed to
+// PipelineConfig.Stdout with the per-reason counts visible.
+// Top nodes/workloads show "(none)" since hw==nil never accumulated them.
+func TestRunPipeline_FallbackSnapshotNoEvidence(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := zaptest.NewLogger(t)
+
+	// An infra drop flow: CT_MAP_INSERTION_FAILED, DROPPED verdict.
+	infraFlow := &flowpb.Flow{
+		TrafficDirection: flowpb.TrafficDirection_EGRESS,
+		Verdict:          flowpb.Verdict_DROPPED,
+		DropReasonDesc:   flowpb.DropReason_CT_MAP_INSERTION_FAILED,
+		NodeName:         "node-1",
+		Source: &flowpb.Endpoint{
+			Labels:    []string{"k8s:app=worker"},
+			Namespace: "production",
+		},
+		Destination: &flowpb.Endpoint{
+			Labels:    []string{"k8s:app=backend"},
+			Namespace: "production",
+		},
+		L4: &flowpb.Layer4{
+			Protocol: &flowpb.Layer4_TCP{TCP: &flowpb.TCP{DestinationPort: 8080}},
+		},
+	}
+
+	source := &mockFlowSource{flows: []*flowpb.Flow{infraFlow}}
+
+	var stdout bytes.Buffer
+	cfg := PipelineConfig{
+		FlushInterval:   10 * time.Millisecond,
+		OutputDir:       tmpDir,
+		Logger:          logger,
+		EvidenceEnabled: false, // hw will be nil
+		Stdout:          &stdout,
+	}
+
+	err := RunPipelineWithSource(context.Background(), cfg, source)
+	require.NoError(t, err)
+
+	out := stdout.String()
+	// Summary block must be printed even though evidence is disabled.
+	assert.Contains(t, out, "Cluster-critical drops detected", "summary header must appear")
+	assert.Contains(t, out, "CT_MAP_INSERTION_FAILED", "infra reason must appear in summary")
+	assert.Contains(t, out, "1 flows", "count must appear")
+	// No node/workload attribution since hw==nil.
+	assert.Contains(t, out, "(none)", "node/workload attribution is (none) when hw==nil")
 }
