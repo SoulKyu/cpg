@@ -81,10 +81,14 @@ func writeRule(w io.Writer, c colorizer, r evidence.RuleEvidence, limit int) {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "  Sample flows:")
 		for _, s := range samples {
-			fmt.Fprintf(w, "    %s  %s → %s  %s/%d\n",
+			suffix := ""
+			if s.DropReason != "" {
+				suffix = "  drop=" + s.DropReason
+			}
+			fmt.Fprintf(w, "    %s  %s → %s  %s/%d%s\n",
 				s.Time.Format("15:04:05"),
 				fmtEndpoint(s.Src), fmtEndpoint(s.Dst),
-				s.Protocol, s.Port,
+				s.Protocol, s.Port, suffix,
 			)
 		}
 	}
