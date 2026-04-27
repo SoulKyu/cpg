@@ -603,8 +603,12 @@ cpg replay /tmp/last-hour.jsonl --fail-on-infra-drops \
 
 With `cpg generate` (live stream — run for a fixed window with timeout):
 
+> Note: `--preserve-status` ensures `timeout` propagates `cpg`'s exit code (0 vs 1) instead of
+> returning 124 when the deadline is reached. Without it, a CI job that hits the timeout would
+> mask whether infra drops were detected.
+
 ```bash
-timeout 300 cpg generate -n production --fail-on-infra-drops \
+timeout --preserve-status 300 cpg generate -n production --fail-on-infra-drops \
   || alert-team "infra drops in production — see cluster-health.json"
 ```
 
