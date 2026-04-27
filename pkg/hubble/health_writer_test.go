@@ -244,6 +244,38 @@ func TestHealthWriterSnapshotNilSafe(t *testing.T) {
 	assert.Nil(t, hw.Snapshot(), "nil hw must return nil from Snapshot()")
 }
 
+// TestHealthWriterSnapshot_DeepCopy verifies C-2: mutating a returned Snapshot
+// slice (or its inner maps) does NOT affect subsequent Snapshot() calls.
+// With the pre-fix implementation (returns hw.cachedSnapshot directly), the
+// injected key propagates into snap2 — this test catches the aliasing bug.
+func TestHealthWriterSnapshot_DeepCopy(t *testing.T) {
+	dir := t.TempDir()
+	hw := newHealthWriter(dir, "testhash", zaptest.NewLogger(t), time.Now())
+
+	hw.accumulate(makeDropEvent(flowpb.DropReason_CT_MAP_INSERTION_FAILED, dropclass.DropClassInfra, "node-1", "svc-a"))
+	hw.accumulate(makeDropEvent(flowpb.DropReason_CT_MAP_INSERTION_FAILED, dropclass.DropClassInfra, "node-2", "svc-b"))
+	hw.accumulate(makeDropEvent(flowpb.DropReason_SERVICE_BACKEND_NOT_FOUND, dropclass.DropClassInfra, "node-3", "svc-c"))
+
+	snap1 := hw.Snapshot()
+	require.GreaterOrEqual(t, len(snap1), 1, "Snapshot must return at least 1 entry")
+
+	// Inject a sentinel key into the returned maps.
+	snap1[0].ByNode["INJECTED_KEY_TASK2"] = 999
+	snap1[0].ByWorkload["INJECTED_KEY_TASK2"] = 999
+
+	snap2 := hw.Snapshot()
+	require.GreaterOrEqual(t, len(snap2), 1, "second Snapshot must still return entries")
+
+	// C-2: independent copies — injected keys must NOT appear in snap2.
+	_, byNodeLeaked := snap2[0].ByNode["INJECTED_KEY_TASK2"]
+	assert.False(t, byNodeLeaked, "ByNode mutation from snap1 must not leak into snap2")
+	_, byWorkloadLeaked := snap2[0].ByWorkload["INJECTED_KEY_TASK2"]
+	assert.False(t, byWorkloadLeaked, "ByWorkload mutation from snap1 must not leak into snap2")
+
+	// snap1 and snap2 must have different backing arrays.
+	assert.NotSame(t, &snap1[0], &snap2[0], "snap1 and snap2 must have independent backing arrays")
+}
+
 // TestHealthWriterDropsSorted: multiple reasons → drops array sorted by reason name.
 func TestHealthWriterDropsSorted(t *testing.T) {
 	dir := t.TempDir()
