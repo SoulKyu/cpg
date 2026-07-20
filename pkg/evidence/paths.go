@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // HashOutputDir derives a 12-char hex digest of the canonical output directory
@@ -39,4 +40,29 @@ func DefaultEvidenceDir() (string, error) {
 // ResolvePolicyPath returns the absolute JSON path for a policy's evidence file.
 func ResolvePolicyPath(evidenceDir, outputHash, namespace, workload string) string {
 	return filepath.Join(evidenceDir, outputHash, namespace, workload+".json")
+}
+
+// ValidatePolicyRef guards evidence path construction. namespace and workload
+// originate from Hubble flow labels and are expected to be k8s-constrained
+// (labels cannot contain '/'), but this defensively asserts they are non-empty
+// and free of path separators or directory-traversal segments before they are
+// joined into a filesystem path — an empty workload would otherwise yield a
+// hidden ".json" file.
+func ValidatePolicyRef(namespace, workload string) error {
+	if err := validatePathComponent("namespace", namespace); err != nil {
+		return err
+	}
+	return validatePathComponent("workload", workload)
+}
+
+func validatePathComponent(kind, value string) error {
+	switch {
+	case value == "":
+		return fmt.Errorf("evidence %s must not be empty", kind)
+	case value == "." || value == "..":
+		return fmt.Errorf("evidence %s must not be a directory-traversal segment: %q", kind, value)
+	case strings.ContainsRune(value, '/') || strings.ContainsRune(value, filepath.Separator):
+		return fmt.Errorf("evidence %s must not contain a path separator: %q", kind, value)
+	}
+	return nil
 }

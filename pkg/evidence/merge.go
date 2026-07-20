@@ -69,9 +69,29 @@ func mergeRule(a, b RuleEvidence, maxSamples int) RuleEvidence {
 	if b.LastSeen.After(out.LastSeen) {
 		out.LastSeen = b.LastSeen
 	}
-	out.ContributingSessions = append(out.ContributingSessions, b.ContributingSessions...)
+	// Deduplicate contributing session IDs. Live capture flushes the aggregator
+	// every interval, re-emitting the same session's ID on each flush; without
+	// dedup this list grows one duplicate entry per flush for the whole session.
+	out.ContributingSessions = mergeSessionIDs(a.ContributingSessions, b.ContributingSessions)
 	out.Samples = capSamples(append(append([]FlowSample{}, a.Samples...), b.Samples...), maxSamples)
 	return out
+}
+
+// mergeSessionIDs concatenates two session-ID lists preserving first-seen order
+// while dropping any ID already present.
+func mergeSessionIDs(a, b []string) []string {
+	seen := make(map[string]struct{}, len(a)+len(b))
+	merged := make([]string, 0, len(a)+len(b))
+	for _, ids := range [2][]string{a, b} {
+		for _, id := range ids {
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			merged = append(merged, id)
+		}
+	}
+	return merged
 }
 
 // capSamples sorts samples by time ascending and keeps the newest maxSamples.

@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
+	slim_metav1 "github.com/cilium/cilium/pkg/k8s/slim/k8s/apis/meta/v1"
+	"github.com/cilium/cilium/pkg/policy/api"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"sigs.k8s.io/yaml"
@@ -59,6 +61,67 @@ func TestAnnotateRules_NilSpec(t *testing.T) {
 	data := []byte("apiVersion: cilium.io/v2\nkind: CiliumNetworkPolicy\n")
 	result := annotateRules(data, nil)
 	assert.Equal(t, data, result)
+}
+
+func TestDescribePeer_Endpoints(t *testing.T) {
+	tests := []struct {
+		name      string
+		endpoints []api.EndpointSelector
+		want      string
+	}{
+		{
+			name: "single matchLabels",
+			endpoints: []api.EndpointSelector{
+				api.NewESFromMatchRequirements(map[string]string{"app": "x"}, nil),
+			},
+			want: "from app=x",
+		},
+		{
+			name: "multiple selectors all described",
+			endpoints: []api.EndpointSelector{
+				api.NewESFromMatchRequirements(map[string]string{"app": "x"}, nil),
+				api.NewESFromMatchRequirements(map[string]string{"app": "y"}, nil),
+			},
+			want: "from app=x or app=y",
+		},
+		{
+			name: "matchExpressions-only selector not reported as any",
+			endpoints: []api.EndpointSelector{
+				api.NewESFromMatchRequirements(nil, []slim_metav1.LabelSelectorRequirement{
+					{Key: "tier", Operator: slim_metav1.LabelSelectorOpIn, Values: []string{"frontend", "backend"}},
+				}),
+			},
+			want: "from tier in (frontend, backend)",
+		},
+		{
+			name: "matchLabels and matchExpressions combined",
+			endpoints: []api.EndpointSelector{
+				api.NewESFromMatchRequirements(map[string]string{"app": "x"}, []slim_metav1.LabelSelectorRequirement{
+					{Key: "env", Operator: slim_metav1.LabelSelectorOpExists},
+				}),
+			},
+			want: "from app=x, env exists",
+		},
+		{
+			name: "empty selector falls back to any",
+			endpoints: []api.EndpointSelector{
+				api.NewESFromMatchRequirements(nil, nil),
+			},
+			want: "from any",
+		},
+		{
+			name:      "no endpoints falls back to any",
+			endpoints: nil,
+			want:      "from any",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := describePeer(tt.endpoints, nil, nil, "from")
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func TestStripComments(t *testing.T) {

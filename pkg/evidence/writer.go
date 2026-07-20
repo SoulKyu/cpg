@@ -11,8 +11,12 @@ import (
 )
 
 // Writer loads existing evidence, folds in a new session, and persists the
-// result atomically (temp-file + rename). It is safe for concurrent use from a
-// single process only: cross-process concurrency is not expected for cpg.
+// result atomically (temp-file + rename). The temp-file + rename makes each
+// persist atomic, but the surrounding read-modify-write cycle is not
+// synchronized: callers must serialize Write calls targeting the same
+// namespace/workload file, otherwise two concurrent writers read the same
+// on-disk state and rename over each other, silently losing one update. cpg
+// drives Write from a single sequential consumer, so this holds today.
 type Writer struct {
 	evidenceDir string
 	outputHash  string
@@ -27,6 +31,9 @@ func NewWriter(evidenceDir, outputHash string, caps MergeCaps) *Writer {
 // Write merges the new session and rules into the on-disk evidence for the
 // named workload and persists the result.
 func (w *Writer) Write(ref PolicyRef, session SessionInfo, newRules []RuleEvidence) error {
+	if err := ValidatePolicyRef(ref.Namespace, ref.Workload); err != nil {
+		return fmt.Errorf("invalid evidence target: %w", err)
+	}
 	path := ResolvePolicyPath(w.evidenceDir, w.outputHash, ref.Namespace, ref.Workload)
 
 	var existing PolicyEvidence
