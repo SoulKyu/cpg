@@ -213,6 +213,13 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 	// return non-nil instead of draining to a clean exit 0. Only sources that
 	// expose a stream-error channel (the live Hubble Client) participate;
 	// offline/replay sources close cleanly and simply skip this stage.
+	//
+	// Invariant: errCh closes only when the stream goroutine exits, and that
+	// goroutine watches the OUTER ctx, not gctx. That is safe today because
+	// every other stage returns nil except on ctx cancellation — if a future
+	// stage ever returns its own error, gctx would cancel while the stream
+	// (and this range) keeps running, and g.Wait() would block until the relay
+	// closed the stream. Watch gctx here if that assumption ever changes.
 	if es, ok := source.(interface{ StreamErr() <-chan error }); ok {
 		if errCh := es.StreamErr(); errCh != nil {
 			g.Go(func() error {
