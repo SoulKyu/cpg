@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Audit Fable5
-status: planning
-last_updated: "2026-07-20T10:30:32.689Z"
-last_activity: 2026-07-20
+status: Awaiting next milestone
+last_updated: "2026-07-20T12:03:36.856Z"
+last_activity: 2026-07-20 — Milestone v1.4 completed and archived
 progress:
   total_phases: 2
   completed_phases: 0
@@ -17,24 +17,24 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-26)
+See: .planning/PROJECT.md (updated 2026-07-20)
 
 **Core value:** Automatically generate correct CiliumNetworkPolicies from observed Hubble denials so that SREs spend zero time manually writing network policies in default-deny environments.
-**Current focus:** Phase 14 — fix-verification-and-quality-gates
+**Current focus:** Awaiting v1.5 scoping (`/gsd-new-milestone`)
 
 ## Current Position
 
-Phase: 14 of 15 (Fix Verification + Quality Gates)
-Plan: — (not yet planned)
-Status: Ready to plan
-Last activity: 2026-07-20 — ROADMAP.md created for v1.4 (Phases 14-15, 5/5 requirements mapped)
+Phase: Milestone v1.4 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-07-20 — Milestone v1.4 completed and archived
 
 ## Performance Metrics
 
 **Velocity (cumulative):**
 
-- Total plans completed: 19 (across 9 phases, 3 milestones)
-- Total tests: 319 across 9 packages
+- Total plans completed: 30 (across 13 phases, 4 milestones; v1.4 executed via direct workflow, no plans)
+- Total tests: 484 across 10 packages
 
 **By Milestone:**
 
@@ -43,7 +43,8 @@ Last activity: 2026-07-20 — ROADMAP.md created for v1.4 (Phases 14-15, 5/5 req
 | v1.0 | 1-3 | 7 | ~80 |
 | v1.1 | 4-6 | 3 | 180 |
 | v1.2 | 7-9 | 12 | 319 |
-| v1.3 | 10-13 | TBD | — |
+| v1.3 | 10-13 | 8 | 418 |
+| v1.4 | 14-15 | 0 (direct workflow) | 484 |
 
 *Updated after each plan completion.*
 | Phase 10-classifier-core P01 | 4 | 2 tasks | 5 files |
@@ -90,8 +91,22 @@ None open. v1.3 deferred items (L7-FUT-01, DNS-FUT-02, etc.) tracked in PROJECT.
 | 260427-aml | v1.3 code-review fixes (16 fixes, C1-C3, I1-I8, M1-M7) | 2026-04-27 | e3b3e77 | [260427-aml-v1-3-code-review-fixes](./quick/260427-aml-v1-3-code-review-fixes/) |
 | 260427-bp7 | v1.3 second-pass review fixes (12 fixes, C1-C2, I1-I9, M1+M3) | 2026-04-27 | 42f0f57 | [260427-bp7-v1-3-second-pass-review-fixes](./quick/260427-bp7-v1-3-second-pass-review-fixes/) |
 
+## Deferred Items
+
+Items acknowledged and deferred at milestone close on 2026-07-20:
+
+| Category | Item | Status |
+|----------|------|--------|
+| quick_task | 260426-pa5-ignore-protocol-flag-cpg-generate-replay | work completed 2026-04-26 (commit 8f33122); artifact lacks closure marker |
+| quick_task | 260427-aml-v1-3-code-review-fixes | work completed 2026-04-27 (commit e3b3e77); artifact lacks closure marker |
+| quick_task | 260427-bp7-v1-3-second-pass-review-fixes | work completed 2026-04-27 (commit 42f0f57); artifact lacks closure marker |
+
 ## Session Continuity
 
 Last session: 2026-07-20
-Stopped at: ROADMAP.md created for v1.4 (Phases 14-15) — 5/5 requirements mapped, awaiting plan-phase
-Resume: `/gsd:plan-phase 14` — Fix Verification + Quality Gates (AUDIT-01, AUDIT-02, AUDIT-04)
+Stopped at: Milestone v1.4 Audit Fable5 completed and archived (PR #16 merged as be06b7b; CI 4/4 green)
+Resume: `/gsd-new-milestone` — scope v1.5 (candidates: lint debt zero, release hardening, replay exit parity, feature backlog in PROJECT.md Planned)
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone

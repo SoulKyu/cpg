@@ -8,18 +8,6 @@ A Go CLI tool that connects directly to Hubble Relay via gRPC, observes dropped/
 
 Automatically generate correct CiliumNetworkPolicies from observed Hubble denials so that SREs spend zero time manually writing network policies in default-deny environments.
 
-## Current Milestone: v1.4 Audit Fable5
-
-**Goal:** Every confirmed finding from the Fable 5 full-code review (2026-07-20, commit 427e047) is fixed with tests and delivered as a CI-green, reviewable PR.
-
-**Target features:**
-- All 29 confirmed review findings fixed on dedicated branch `fix/review-findings` (1 high, 7 medium, 11 low, 10 info)
-- CI pipeline actually running on `master` (trigger was `main`-only — pipeline never ran) with pinned actions/tools
-- Full gates green: `go build`, `go vet`, `go test -race`, `golangci-lint` (no new issues)
-- Branch pushed with atomic per-package conventional commits + PR open for review
-
-**Key context:** Review executed by a 27-agent workflow (9 section reviewers + 18 adversarial verifiers); 2 findings refuted as false positives. Report: `code-review-report.html` (repo root, untracked). Lint debt (17 errcheck + 13 staticcheck SA1019) deliberately descoped to keep this milestone tight.
-
 ## Requirements
 
 ### Validated
@@ -54,21 +42,25 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 - ✓ Session summary block to stdout listing infra drops by severity, top-3 nodes/workloads, and the absolute path to `cluster-health.json` — v1.3
 - ✓ `--ignore-drop-reason` flag (repeatable, comma-separated, case-insensitive) on `generate` and `replay` with WARN on redundant infra/transient names — v1.3
 - ✓ Opt-in `--fail-on-infra-drops` exit code (1) for CI/cron with default behavior unchanged — v1.3
+- ✓ All 29 confirmed Fable 5 review findings fixed with regression tests (PR #16, 13 commits, 484 tests) — v1.4
+- ✓ CI pipeline running green on `master` for the first time (trigger fix, SHA-pinned actions, pinned tools) — v1.4
+- ✓ Zero reachable vulnerabilities: cilium v1.19.4, x/net v0.55.0, `toolchain go1.25.12` (govulncheck clean in CI) — v1.4
+- ✓ Genuine stream failures exit non-zero; LostEvents/PoliciesFailed counted; `--timeout` actually applied — v1.4
+- ✓ Policy-ref validation (empty/traversal) on evidence and output writers — v1.4
 
 ### Active
 
-<!-- v1.4 Audit Fable5 — audit-driven hardening. -->
+<!-- Awaiting v1.5 scoping via /gsd-new-milestone. -->
 
-- [ ] AUDIT-01: Every confirmed high/medium review finding (1 high, 7 medium) fixed with a regression test proving the behavior change
-- [ ] AUDIT-02: Every confirmed low/info review finding (21) fixed (doc/comment-only findings exempt from new tests)
-- [ ] AUDIT-03: CI pipeline triggers on `master` (push + PR) with actions and tools pinned
-- [ ] AUDIT-04: Full gates green on the fix branch: build, vet, `go test -race`, golangci-lint with no new issues
-- [ ] AUDIT-05: `fix/review-findings` pushed with atomic per-package conventional commits and PR open for user review
+- _(defined during `/gsd-new-milestone`)_
 
 ### Planned
 
-<!-- v1.3 candidates carried over from v1.2 deferrals. -->
+<!-- v1.5 candidates: lint/release debt from the v1.4 audit + feature candidates carried over from earlier deferrals. -->
 
+- [ ] Lint debt zero: 16 errcheck + 10 staticcheck SA1019 + drop CI `only-new-issues` flag — v1.5 candidate (LINT-01..03, archived in milestones/v1.4-REQUIREMENTS.md)
+- [ ] Release hardening: `release.yml` minimal permissions review, govulncheck job pinning follow-through — v1.5 candidate (RELSEC-01..02)
+- [ ] `cpg replay` exit-code parity on truncated input (currently logs Error but exits 0; live stream exits non-zero) — v1.5 candidate (conscious call from PR #16 review)
 - [ ] `cpg apply` command (dry-run by default, `--force` to apply) — v1.3 candidate
 - [ ] Policy consolidation / merging into broader rules — v1.3 candidate
 - [ ] Prometheus metrics for long-running instances — v1.3 candidate
@@ -144,14 +136,19 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 | AggKey does NOT extend with L7 fields | L7 is a property of port-rule inside bucket, not of bucket; extending AggKey would shatter buckets | ✓ Good — pipeline structurally unchanged |
 | kube-dns companion selector hardcoded `k8s-app=kube-dns` | Auto-detection across CNI distributions adds complexity without v1.2 value | — Deferred to v1.3 (DNS-FUT-02) |
 | DROPPED-only verdict filter (kept) | REDIRECTED means Cilium PROXIED; new rules from already-policied traffic would be wrong | ✓ Good — REFUSED gap deferred to v1.3 (L7-FUT-01) |
+| CI lint gated `only-new-issues: true` until v1.5 debt cleanup | First-ever CI run exposed 30 pre-existing lint issues; blocking on them would couple the audit PR to a descoped cleanup | — Temporary; drop the flag when LINT-01..03 land (v1.5) |
+| `toolchain go1.25.12` directive in go.mod | `setup-go` + `go-version-file` resolves the module minimum (1.25.1) whose stdlib carried 24 fixed CVEs; toolchain directive patches CI and local builds without raising the module floor | ✓ Good — govulncheck green in CI (v1.4) |
+| GitHub Actions pinned to release-tag SHAs (verified via `git ls-remote`) | Mutable tags are a supply-chain risk; one agent-suggested pin pointed at an untagged branch commit — verification against real tags is part of the pin | ✓ Good — shipped v1.4 |
+| Stream failure ⇒ non-zero exit (behavior change) | Debug-logged clean exits hid mid-capture relay crashes; operators/CI must see failure | ✓ Good — shipped v1.4; replay truncation exit parity deferred (v1.5 candidate) |
+| Milestone executed via direct multi-agent workflow (no gsd plans) | Audit remediation with a complete findings inventory doesn't benefit from per-phase planning ceremony; review→verify→fix→PR pipeline replaces it | ✓ Good — v1.4 shipped same-day; keep gsd plans for feature milestones |
 
 ## Current State
 
-**Shipped:** v1.0 (2026-03-08), v1.1 (2026-04-24), v1.2 (2026-04-25), and v1.3 (2026-04-26).
+**Shipped:** v1.0 (2026-03-08), v1.1 (2026-04-24), v1.2 (2026-04-25), v1.3 (2026-04-26), and v1.4 (2026-07-20).
 
-**Codebase:** 10 packages (`pkg/{labels,policy,output,hubble,k8s,dedup,flowsource,evidence,diff,dropclass}` + `cmd/`). New in v1.3: `pkg/dropclass/` (classifier + hints + version) and `pkg/hubble/{health_writer,summary}.go`. **418 tests passing** across 10 packages (up from 319 at v1.2 close). Release-please continues to handle product SemVer tagging.
+**Codebase:** 10 packages (`pkg/{labels,policy,output,hubble,k8s,dedup,flowsource,evidence,diff,dropclass}` + `cmd/`). **484 tests passing with `-race`** across 10 packages (up from 418 at v1.3 close). CI green and operational for the first time (build + race tests + lint + govulncheck). Deps: cilium v1.19.4, toolchain go1.25.12. Known debt: 26 lint issues (16 errcheck + 10 SA1019) gated by `only-new-issues`, scoped to v1.5. Release-please continues to handle product SemVer tagging.
 
-**Next milestone:** v1.4 Audit Fable5 — in progress. Audit-driven hardening from the Fable 5 full-code review; feature candidates from v1.3 deferrals remain in Planned for v1.5.
+**Next milestone:** v1.5 — awaiting scoping. Candidates: lint debt zero, release hardening, replay exit parity, plus feature candidates in Planned.
 
 ## Evolution
 
@@ -171,4 +168,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-20 — v1.4 Audit Fable5 milestone started (full-code review: 29 confirmed findings to land).*
+*Last updated: 2026-07-20 after v1.4 Audit Fable5 milestone (29 findings landed via PR #16, first green CI, 484 tests).*

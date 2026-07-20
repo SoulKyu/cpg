@@ -4,6 +4,26 @@ Historical record of shipped milestones. Each entry links to its archived roadma
 
 ---
 
+## v1.4 — Audit Fable5 ✅
+
+**Shipped:** 2026-07-20
+**Phases:** 14 → 15 (2 phases, executed via direct multi-agent workflow — no gsd plans)
+**Tests:** 484 across 10 packages (up from 418 at v1.3 close)
+**Archives:** [roadmap](milestones/v1.4-ROADMAP.md) · [requirements](milestones/v1.4-REQUIREMENTS.md) · [audit](milestones/v1.4-MILESTONE-AUDIT.md)
+
+**Delivered:** Audit-driven hardening from a Fable 5 full-code review (9 section reviewers + 18 adversarial verifiers over ~17.3k lines): all 29 confirmed findings fixed with regression tests and merged as PR #16 (13 commits incl. merge, 44 files, +1163/−204). The repository's CI ran — and went green — for the first time ever: the workflow had always triggered on `main` while the default branch is `master`.
+
+**Highlights:**
+
+- CI bring-up chain: trigger fixed to `master`; actions pinned to release-tag SHAs; golangci-lint v2.12.2 / govulncheck v1.6.0 pinned; `only-new-issues: true` until the v1.5 lint cleanup; two reachable vulns fixed (cilium v1.19.1→v1.19.4 GO-2026-5914, x/net→v0.55.0 GO-2026-5026); `toolchain go1.25.12` for a patched stdlib (24 stdlib CVEs at 1.25.1).
+- Correctness: `MergePolicy` nil-Spec panic guard; content-aware dedup sort keys (order-independent `PoliciesEquivalent`); multi-entry ICMP merge; DNS-consumed flows no longer emit a redundant bare `ToCIDR:53` rule.
+- Failure visibility: genuine Hubble stream failures surface as non-zero exit (were debug-logged + exit 0); `LostEvents` populated; `PoliciesFailed` counter; truncated replay reported at Error; `--timeout` actually applied via gRPC readiness gate.
+- Robustness: policy-ref validation (empty/traversal) on both evidence and output writers; empty-`Direction` render guard; FILTER-03 warned once; `json:` tags where sigs.k8s.io/yaml requires them.
+- Process: adversarial verification refuted 2/31 findings pre-fix (incl. one placeholder emitted by a review agent); an independent Opus review of the PR caught `actions/checkout` pinned to an untagged branch-tip commit and one under-scoped fix — both corrected pre-merge. `ClassifierVersion` → `1.0.0-cilium1.19.4` (DropReason audit: no new values).
+- Known deferred items at close: 3 v1.3 quick-task artifacts acknowledged (see STATE.md Deferred Items); lint debt 16 errcheck + 10 SA1019 and release hardening scoped to v1.5.
+
+---
+
 ## v1.3 — Cluster Health Surfacing ✅
 
 **Shipped:** 2026-04-26
@@ -14,6 +34,7 @@ Historical record of shipped milestones. Each entry links to its archived roadma
 **Delivered:** cpg now distinguishes policy drops from infrastructure-level Hubble drops. Only true policy denials produce a CNP; infra/transient drops (CT_MAP_INSERTION_FAILED, BPF errors, etc.) are surfaced separately via `cluster-health.json` and a session summary block. New `--ignore-drop-reason` flag (parity with `--ignore-protocol`) and opt-in `--fail-on-infra-drops` exit code (1) for CI integration. Default exit behavior unchanged. Closes the v1.2 class-of-bug where `cpg-mmtro-adserver` CNPs were generated for conntrack-map-full drops.
 
 **Highlights:**
+
 - New `pkg/dropclass/` package: O(1) classifier (11.62 ns/op) for all 76 Cilium v1.19.1 `DropReason` values across 4 buckets (Policy / Infra / Transient / Noise) + Unknown fallback. ~94% of values are non-policy.
 - Pure-policy reasons (only generate CNPs for these): `POLICY_DENIED`, `POLICY_DENY`, `AUTH_REQUIRED` (with `needs_review` annotation), `DENIED_BY_LB_SRC_RANGE_CHECK`.
 - Unknown DropReason values default to `Unknown` (never `Policy`) + dedup WARN once per unique int32 via `sync.Map` — safe for future Cilium proto bumps.
