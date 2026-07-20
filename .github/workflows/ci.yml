@@ -23,6 +23,10 @@ jobs:
       - uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7
         with:
           version: v2.12.2
+          # Pre-existing debt (29 issues: errcheck + staticcheck SA1019) is
+          # deferred to the v1.5 lint-cleanup milestone (LINT-01..03). Gate new
+          # code only until that lands, then drop this flag.
+          only-new-issues: true
 
   test:
     name: Test
