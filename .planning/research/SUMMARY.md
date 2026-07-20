@@ -1,191 +1,226 @@
-# Project Research Summary — cpg v1.2 L7 Policies
+# Project Research Summary
 
-**Project:** cpg (Cilium Policy Generator)
-**Domain:** Go CLI — Hubble flow → CiliumNetworkPolicy YAML generation, extending L4 (shipped v1.0/v1.1) with L7 HTTP + DNS
-**Researched:** 2026-04-25
-**Confidence:** HIGH (Cilium API + codebase verified directly; workflow constraints confirmed in upstream docs)
+**Project:** CPG — Cilium Policy Generator
+**Domain:** MCP (Model Context Protocol) stdio server integration into an existing Go CLI (Kubernetes/Cilium network-policy observability)
+**Researched:** 2026-07-20
+**Confidence:** HIGH
 
 ## Executive Summary
 
-cpg v1.2 is a focused extension of an already-shipped, well-factored L4 policy generator. The L7 work is **integration, not stack expansion**: every required type already lives in the vendored `cilium/cilium v1.19.1` (`pkg/policy/api` for `L7Rules`/`PortRuleHTTP`/`PortRuleDNS`/`FQDNSelector` and `api/v1/flow` for `Layer7`/`HTTP`/`DNS`). No new Go module dependencies. The streaming pipeline (`hubble.client → aggregator → BuildPolicy → Writer/EvidenceWriter`) stays structurally unchanged — L7 enrichment lives inside per-port rule structures within `BuildPolicy` buckets.
+v1.5 adds a readonly `cpg mcp` stdio server on top of an already-shipping Go CLI (Hubble → CiliumNetworkPolicy generator). This is a **wrap, don't redesign** milestone: all four research files converge on the same posture. The official `github.com/modelcontextprotocol/go-sdk/mcp` (Tier 1, stable v1.6.1) is the correct SDK — zero toolchain change, stable semver, institutional backing — over the more popular but pre-1.0 `mark3labs/mcp-go`. The entire new surface is 7 tools (`start_session`/`get_status`/`stop_session` + 4 readonly query tools) built from one new package (`pkg/session`, wrapping the existing `hubble.RunPipeline` entrypoint completely unmodified), one promoted package (`pkg/explain`, a mechanical move mirroring the exact precedent already set once by `pkg/flowsource`'s v1.1 promotion), and small additive exports on `pkg/output`/`pkg/hubble`. Nothing in the core pipeline (`pkg/hubble`, `pkg/evidence`, `pkg/k8s`, `pkg/dropclass`) needs to change to make this work.
 
-The single dominant constraint is operational, not architectural: **Hubble only emits `Flow.L7` when traffic is proxied by Envoy / the DNS proxy**, which itself requires `enable-l7-proxy=true` AND a per-workload visibility trigger (an existing L7 CNP, or the legacy `policy.cilium.io/proxy-visibility` annotation). cpg cannot bootstrap visibility from L4-only flows; it must detect-and-warn when `--l7` is on but no L7 records arrive. Two-step workflow (deploy L4 → enable visibility → re-run cpg with `--l7`) is canonical and must be documented prominently.
+The recommended approach: session lifecycle wraps the existing blocking `RunPipeline` call in a goroutine against a **detached, cancellable context** (not the tool handler's request-scoped context, which gets cancelled the instant the call returns) — reusing the exact ctx-cancel shutdown path already exercised by Ctrl+C on `cpg generate` today. Query tools are pure filesystem readers scoped to the session tmpdir, never touching pipeline internals or the live cluster, with pagination (`limit`/`cursor`) mandatory on any tool that can return many records, and an explicit opaque `session_id` (SEP-2567) threaded through every session-scoped call. Every tool sets `readOnlyHint: true`, but — critically — this is backed by a structural fact (the composition root never imports a K8s write verb), not by the hint itself, which the spec explicitly calls advisory and untrusted.
 
-Three risks dominate the build order. (1) `mergePortRules` in `pkg/policy/merge.go` currently drops the `Rules` field — a latent bug today, silent L7 data loss the moment generation ships; must be fixed first. (2) The evidence schema must bump v1 → v2 (the v1.1 reader rejects unknown versions); a v1-compat read path is required so existing user caches survive. (3) HTTP `path` is RE2 regex (must `regexp.QuoteMeta` + anchor `^…$`) while DNS `matchPattern` is glob — different syntaxes in the same CRD; keep them apart at the type level. Mitigated by an explicit 3-phase split (infra-prep → HTTP gen → DNS gen + explain L7) totaling ~13 dev-days (~2.5 weeks).
+The chief risk is the stdio wire itself: cpg already has three existing `os.Stdout`-defaulting writer seams (`PipelineConfig.Stdout`, `policyWriter.diffOut`, cobra's usage-on-error path) that a naive integration trips on day one, invisible to a human eyeballing a terminal and only surfacing as silent JSON-RPC corruption in a real harness — this must be closed by explicit wiring plus an automated in-memory-transport stdout-purity test, not code review. Second, and requiring explicit product decisions rather than silent defaults: this research surfaced **four concrete tensions** between what FEATURES.md's tool contracts assume and what ARCHITECTURE.md's direct source-reading found actually exists on disk today (session-model shape, `list_dropped_flows`'s data source, `cluster-health.json`'s finalize-only timing, and a non-atomic writer creating a torn-read risk for the new query-tool consumers). These are reconciled explicitly below and must land in REQUIREMENTS.md, not be silently defaulted during build.
 
 ## Key Findings
 
 ### Recommended Stack
 
-Zero new module dependencies. All L7 types are already present via `github.com/cilium/cilium v1.19.1` (transitively in `go.mod`), and both target packages (`pkg/policy/api`, `api/v1/flow`) are already imported by the existing L4 codepaths. The work is wiring, not stack expansion. (See STACK.md.)
+Full detail: `.planning/research/STACK.md`
 
-**Core technologies (additions only):**
-- `github.com/cilium/cilium/pkg/policy/api` v1.19.1 — `L7Rules`, `PortRuleHTTP`, `PortRuleDNS` (type alias of `FQDNSelector`), `FQDNSelector`, `EgressRule.ToFQDNs`. Authoritative CRD types, already used for L4 in `pkg/policy/builder.go`.
-- `github.com/cilium/cilium/api/v1/flow` v1.19.1 — `Flow.L7` (`*Layer7`) with `GetHttp()`/`GetDns()` accessors and `HTTP`/`DNS` proto messages. Field already present on every flow; v1.2 stops ignoring it.
-- Go stdlib `regexp` — `regexp.QuoteMeta` for HTTP path escaping. Nothing else.
+The stack decision is narrow and low-risk: one real new dependency (the MCP SDK itself), everything else is either already vendored or arrives transitively. `go-sdk` was chosen over `mcp-go` primarily on **stability evidence, not popularity** — `mcp-go` (8,910 stars vs. go-sdk's 4,822) is pre-1.0 and its own docs describe real recent breaking changes (Sampling capability type, schema-tag rename), while `go-sdk` is a stable v1.x under semver and is the only Go SDK listed on modelcontextprotocol.io's official Tier-1 SDK page.
 
-**Verified via `go doc` against the vendored v1.19.1 source.** Notable correction vs prior research: `PortRuleDNS` is a *type alias* of `FQDNSelector`, not a parallel struct (matters for DeepEqual and dedup).
+**Core technologies:**
+- `github.com/modelcontextprotocol/go-sdk/mcp` v1.6.1 — MCP server runtime (session lifecycle, tool dispatch, schema inference, stdio JSON-RPC framing) — official Tier-1 SDK, stable semver, requires `go 1.25.0` (cpg is already on `1.25.1`, zero toolchain change)
+- `go.uber.org/zap/exp/zapslog` — bridges go-sdk's internal `*slog.Logger` hook into cpg's existing zap stderr pipeline — already bundled inside the pinned `zap v1.27.1`, import-only, no new go.mod line
+- `golang.org/x/sync/errgroup` — already a direct dependency, reused for the session's background-goroutine lifecycle exactly as `pkg/hubble/pipeline.go` already uses it
+- `github.com/google/jsonschema-go` — transitive via go-sdk; only import directly if a tool needs schema constraints beyond struct-tag inference (e.g., a `DropClass` enum)
+- **Rejected:** `mark3labs/mcp-go` (pre-1.0, documented breaking-change history); any HTTP/SSE transport or OAuth machinery (`golang.org/x/oauth2`, `golang-jwt`) — v1.5 is stdio-only, per milestone scope
+
+One version note worth carrying forward: `go mod tidy` will bump `golang.org/x/oauth2` transitively (SDK requires ≥v0.35.0, cpg pins v0.34.0 indirect today) — inert, since OAuth is an HTTP-transport-only concern and cpg is stdio-only; not a new attack surface to review, just a version-diff line reviewers should expect.
 
 ### Expected Features
 
-(See FEATURES.md. P1 estimate ~13 dev-days / ~2.5 weeks.)
+Full detail: `.planning/research/FEATURES.md`
 
 **Must have (table stakes):**
-- `--l7` opt-in flag — default OFF, preserves v1.1 behavior; on-flag wires HTTP/DNS extraction into `BuildPolicy`.
-- L7-empty detection + actionable warning — when `--l7` is on but zero L7 records arrive, emit a copy-pasteable remediation (annotation command or starter-CNP) and a non-zero exit on `--l7-only`.
-- HTTP method+path rules from `flow.L7.Http` — verbose, one rule per observation, no auto-regex.
-- DNS `matchName` rules from `flow.L7.Dns.Query` — literal queries → `MatchName`; wildcards deferred.
-- Mandatory companion DNS allow rule — every CNP carrying `toFQDNs` MUST also carry an egress rule allowing UDP+TCP/53 to `k8s-app=kube-dns` in `kube-system` with `rules.dns: [{matchPattern: "*"}]`. Atomic, auto-emitted.
-- Combined L4+L7 in same CNP — L7 attaches to existing `toPorts` entry by `(port, protocol)` key, not a sibling CNP.
-- Two-step workflow documented in README + `--help` — front-and-center.
-- `cpg explain` renders L7 attribution — evidence schema bump to v2 with `L7Ref{Type, HTTPMethod, HTTPPath, DNSPattern}`.
-- `cpg replay --l7` parity with `generate`.
-- `--dry-run` shows L7 diff (free from existing YAML diff; L4→L7 transition warrants an explicit banner).
+- snake_case verb_noun tool names, no `cpg_` prefix — hosts already auto-namespace (`mcp__cpg__start_session`)
+- Onboarding-depth tool descriptions that explicitly teach cpg's policy-actionable vs. infra/transient dropclass distinction inline — the single highest-leverage, lowest-cost differentiator, since a naive description risks the LLM proposing policies for infra noise (exactly what the classifier exists to prevent)
+- Tool annotations (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`), truthfully set on all 7 tools
+- `structuredContent` + `outputSchema` on every data-returning tool, `content` text block always included for back-compat
+- Mandatory `limit`/`cursor` pagination with `total_count`/`has_more` on any tool returning many records (`list_dropped_flows`, `get_evidence`) — MCP's protocol-level pagination only covers `tools/list`, never `tools/call`
+- `isError`-based tool execution errors with specific, actionable text (not generic failures)
+- Explicit opaque `session_id` handle per **SEP-2567** (Final, accepted 2026), required on every session-scoped call
 
-**Should have (competitive):**
-- Honest "one rule per observation" default — sells in PR review ("this rule allowed exactly these 17 paths we saw"); differentiator vs generators that hallucinate via auto-regex.
-- gRPC handled as HTTP — no special-casing; `POST /<service>/<method>` covers it.
-- L7-aware unhandled-flow categories (`l7_visibility_off`, `incomplete_l7_http`, `incomplete_l7_dns`, `unknown_http_method`).
+**Should have (differentiators):**
+- Dual preview + reference pattern: a small human-readable sample in `content`, full/paginated data in `structuredContent`
+- `list_policies` (cheap metadata) / `get_policy` (full YAML) split, mirroring AWS CloudWatch's and GitHub MCP's list/get convention
+- Reuse the existing `cpg explain --output json` renderer verbatim for `get_evidence` — near-zero new design work, keeps CLI and MCP surfaces from drifting apart
+- Plain absolute tmpdir paths instead of MCP Resources — Resources have a documented, real client-support gap (Claude Code only surfaces them via manual `@mention`), and cpg's stdio same-filesystem deployment makes a plain path strictly better for a model-driven loop
+- Passthrough of `cluster-health.json`'s existing Cilium-docs remediation URLs — free value from an already-shipped artifact
 
-**Defer (v1.3+):**
-- `--l7-collapse-paths` + `--l7-collapse-min N` — opt-in regex inference for noisy services.
-- `--l7-fqdn-wildcard-depth N` — opt-in FQDN suffix collapse.
-- `ToFQDNs` correlation from L4 → IP → cached DNS RESPONSE → FQDN — non-trivial multi-flow correlation; v1.2 stays with `PortRuleDNS` from direct DNS query observations and `toCIDR` for L4-to-external denials.
-- `cpg apply` — already deferred per PROJECT.md.
-
-**Anti-features (NEVER):** Header-based rules (leak Authorization/Cookie tokens), Host-header rules, Kafka L7 (deprecated upstream), gRPC-as-distinct (covered by POST), generic `L7Proto`, auto-on L7 (must be opt-in), auto-bootstrap of L7 visibility annotation by cpg.
+**Defer / reject:**
+- Mutating `apply_policy` tool — breaks the readonly guarantee outright; no `cpg apply` CLI exists yet to wrap
+- Elicitation, sampling, MCP prompts, progress notifications — all explicitly rejected for v1.5. Sampling in particular would just be a new transport for the AI-plausibility feature PROJECT.md already shelved on 2026-04-25; progress notifications have no blocking call to attach to given the start/poll/stop design
+- OAuth/authorization — not a rejected feature, simply out of scope: the spec scopes authorization to HTTP transports only, stdio servers get credentials from the environment
 
 ### Architecture Approach
 
-Extend, don't restructure. v1.1 codebase is layer-agnostic at the pipeline level; L7 lives inside `pkg/policy/builder.go` rule construction and a new `pkg/policy/l7.go`. Pipeline, hubble client, aggregator, output writer, and `cpg generate`/`replay` CLI surface remain unchanged. (See ARCHITECTURE.md.)
+Full detail: `.planning/research/ARCHITECTURE.md`
 
-**Major components touched:**
-1. `pkg/policy/l7.go` (NEW) — `extractHTTP`, `extractDNSQuery`, `extractPathFromURL` (regex-quote + anchor), `httpRuleKey`, `buildFQDNEgressRules` (separate code path because `ToFQDNs` is mutually exclusive with `ToEndpoints`/`ToCIDR` in a single EgressRule).
-2. `pkg/policy/builder.go` (MODIFY) — `peerRules` gains `httpRules`/`httpSeen`/`dnsRules`/`dnsSeen` maps keyed by `port/proto`; `groupFlows` calls extractors; `*RulesFrom` helpers attach `*api.L7Rules` to `PortRule`. `BuildPolicy` signature preserved.
-3. `pkg/policy/merge.go` + `pkg/policy/dedup.go` (MODIFY) — fix `mergePortRules` (preserve `Rules`, merge per port/proto); extend `normalizeRule` to sort `Rules.HTTP` (by method+path) and `Rules.DNS` (by matchName/matchPattern) for deterministic equivalence; preserve nil-vs-empty-list distinction.
-4. `pkg/evidence/{schema,writer,reader}.go` (MODIFY) — bump `SchemaVersion` to 2; `RuleKey` extends with optional L7 discriminator (otherwise two L7 rules on same `(direction, peer, port, proto)` collide); keep v1 read-only fallback for one minor cycle.
-5. `cmd/cpg/explain*.go` (MODIFY) — three new filter flags (`--http-method`, `--http-path`, `--dns-pattern`), exact-match in v1.2; render `L7Ref` line per rule in text/JSON/YAML.
+Purely additive: one new cobra subcommand, one new package, one promoted package, small additive exports — nothing in the existing pipeline changes. Query tools never share in-memory state with the pipeline; the filesystem (session tmpdir) is the only channel between the write side and the read side, which keeps the "no parallel in-memory path" constraint intact for free.
 
-**Critical decision: `AggKey` does NOT extend with L7.** L7 is a property of a *rule* inside a CNP, not of the policy itself. Adding port/L7 to `AggKey` would shatter buckets and produce one CNP per port — opposite of what we want. L7 keying lives one level deeper, inside `peerRules`.
+**Major components:**
+1. `cmd/cpg/mcp.go` (+ `mcp_tools.go`) — cobra command, MCP SDK transport wiring, translates JSON-RPC tool calls into Go calls into `pkg/session` and the readers
+2. `pkg/session` (new) — `SessionManager`: single active session (mutex-guarded), `os.MkdirTemp`, `context.WithCancel` wrapping `hubble.RunPipeline` in a goroutine — the highest-novelty, highest-concurrency-risk new code in the milestone
+3. `pkg/explain` (new, promoted) — mechanical move of already-decoupled filter+render logic out of `cmd/cpg`, shared by the CLI `cpg explain` and the new `get_evidence` tool; the render functions already take an `io.Writer` first parameter, so this is a package-boundary move, not a rewrite
+4. Query readers — additive exports (`pkg/output` policy-listing helper, `pkg/hubble.ReadClusterHealth`) plus the unmodified `pkg/evidence.Reader`
+
+One naming note worth preserving: the new domain package must not be called `pkg/mcp` — the SDK's own package is also named `mcp`, which would force an import alias everywhere; `pkg/session` sidesteps this for free, since only `cmd/cpg/mcp.go` (package `main`) ever imports the SDK.
 
 ### Critical Pitfalls
 
-(See PITFALLS.md for all 19 + integration gotchas.)
+Full detail: `.planning/research/PITFALLS.md`
 
-1. **L7 visibility chicken-and-egg (Pitfall 1)** — Hubble emits `Flow.L7` only when Envoy or DNS proxy intercepts. cpg cannot turn visibility on. Detect-and-warn (with copy-pasteable annotation command) and exit non-zero on `--l7-only` when zero L7 records observed. Hard requirement, not nice-to-have.
-2. **`mergePortRules` silent L7 drop (Pitfall 8 + Architecture risk)** — current code flattens into `result[0].Ports` and discards `Rules`. Harmless today, breaks the moment L7 generation ships. Fix MUST land before any L7 codegen.
-3. **HTTP path regex injection / under-anchoring (Pitfall 3)** — `rules.http[].path` is RE2, not glob, and not auto-anchored. `/api/v1.0/users` matches `/api/v1X0/users`; `/api/v1/users` matches `/evil/api/v1/users`. Security-impacting. Builder helper must `regexp.QuoteMeta` + `^…$` anchor; lint-before-write.
-4. **HTTP path vs DNS pattern syntax (Pitfall 6)** — `path` is RE2 regex, `matchPattern` is DNS glob. Two separate builder helpers with strong types (`HTTPPath`, `DNSPattern`); never share a "pattern" helper.
-5. **`toFQDNs` without DNS companion (Pitfall 5)** — without paired UDP+TCP/53 allow + `rules.dns: [{matchPattern: "*"}]` to kube-dns, the FQDN policy silently fails. Generator MUST emit both rules atomically in the same CNP. Hardcode `k8s-app=kube-dns` selector with a YAML comment in v1.2; runtime selector autodetect deferred to v1.3.
-6. **Evidence schema v1 → v2 mandatory** — v1.1 reader rejects unknown versions; need v2 writer + v1-compat reader path. `RuleKey` extends with L7 discriminator to avoid attribution collisions.
-7. **HTTP method casing (Pitfall 4)** — Cilium matcher is case-sensitive; some replay captures emit lowercase. `strings.ToUpper` at ingestion + whitelist (`GET POST PUT PATCH DELETE HEAD OPTIONS`).
-8. **Path explosion (Pitfall 2)** — REST IDs blow up rule count. Documented as a known v1.2 limitation; opt-in path templating deferred to v1.3 (default behavior in v1.2 is honest verbose output, one rule per observation).
+1. **stdout is the wire, and cpg already aims writers at it** — `PipelineConfig.Stdout` and `policyWriter.diffOut` both default to `os.Stdout` when `nil`, and cobra's usage-on-error path also targets stdout unless `SilenceUsage`/`SilenceErrors` are set. Fix: wire every seam explicitly (`io.Discard` or a captured buffer), set `Silence*`, and back it with an automated stdout-purity test (assert every line parses as JSON-RPC across a full session) rather than relying on code review to catch it forever.
+2. **Blocking a tool handler on the capture pipeline** — `RunPipeline` blocks until `ctx.Done()`; the `context.Context` MCP hands a tool handler is request-scoped and typically cancelled the instant the handler returns, so a naive `go RunPipeline(handlerCtx, ...)` gets killed before it starts. Fix: spawn on a **detached** context (`context.WithoutCancel`) wrapped in its own `context.WithCancel`, store the cancel func in the session, return immediately.
+3. **Client/harness death orphans the session** — documented against Claude Code itself (orphaned MCP processes, issues #22612/#39170). The spec's only portable shutdown signal is stdin EOF. Fix: treat the transport's `Run()` returning, for any reason, as the single root shutdown trigger and fan it out — cancel the session context, close the port-forward `stopCh`, `os.RemoveAll` the tmpdir — each with a bounded deadline so one wedged cleanup can't block process exit.
+4. **Unbounded query results blow the LLM's context window** — Claude Code hard-caps MCP tool output at 25,000 tokens by default. Fix: mandatory list/get split with pagination built into the *first* version of every "many-of-X" tool, never retrofitted after an oversized response ships.
+5. **Non-atomic policy writer creates a torn-read risk for the very tools this milestone adds** — `pkg/output/writer.go` uses direct `os.WriteFile` with no temp+rename, unlike the evidence and health writers, which already use that pattern. This has never mattered because `generate`/`replay` are single-consumer, run-to-completion CLI invocations; MCP query tools are the first *concurrent* reader this code will ever have. (See Cross-File Tension 4 below for the recommended fix and its sequencing.)
+6. **"Readonly" is a hint, not an enforcement mechanism** — the spec explicitly calls `readOnlyHint` advisory and untrusted. Cpg's readonly guarantee is real today only because zero K8s write verbs are reachable from any code path; the moment a future `cpg apply` command exists in the same binary, the guarantee becomes "did someone remember to exclude this tool" rather than "this binary cannot do it." Enforce structurally at the composition root (`cmd/cpg/mcp.go` only ever registers handlers that call read-only functions), re-verified on every new tool, not a one-time audit.
+
+## Cross-File Tensions & Reconciliation
+
+Four places where the four research files' recommendations don't trivially line up, surfaced explicitly rather than papered over. All four need an explicit line item in REQUIREMENTS.md — none should be resolved by silent default during implementation.
+
+### Tension 1: Single-session model (ARCHITECTURE) vs. explicit `session_id` handle (FEATURES/SEP-2567)
+
+ARCHITECTURE.md's Anti-Pattern 4 recommends a single-session model: `pkg/session.Manager` holds one `*Session` (nil when idle), guarded by a mutex; a second `start_session` while one is active returns an explicit error rather than silently discarding in-flight data. Rationale: matches the milestone's own tool names, the "flat memory profile" constraint, and the existing CLI's single-shot mental model, with zero existing concurrency precedent in the codebase to build against.
+
+FEATURES.md, backed directly by **SEP-2567 (Final, accepted 2026)**, recommends every session-scoped tool require an explicit opaque `session_id` argument — even for a single-process stdio server — because opaque handles produce a crisp "session `sess_xyz` not found or expired" error instead of an ambiguous "no session" state, survive context compaction (they're plain strings in the transcript), and keep the design forward-compatible if cpg ever ships multi-session or HTTP transport.
+
+**These are not in conflict — they compose.** "Single concurrent session" is a runtime *capacity* constraint (how many sessions `pkg/session.Manager` will run at once: exactly one). "Explicit `session_id`" is a *protocol design* choice (how the handle is represented and threaded through calls) — orthogonal to capacity. Concretely: `start_session` mints exactly one opaque `session_id` at a time; the manager enforces single-active-session by rejecting a second `start_session` call with an explicit, actionable error; every session-scoped tool still requires `session_id` even though only one value could ever be valid, because it costs nothing extra, gives the SEP's crisp expired/unknown-session error if the LLM calls a query tool with a stale ID after `stop_session`, and avoids a breaking tool-schema change if a future milestone ever adds multi-session support.
+
+**Requirements action:** confirm as one requirement, not two competing ones — "single concurrent session; explicit opaque `session_id` handle threaded through every session-scoped call; a second concurrent `start_session` is rejected with an actionable error, not queued or silently replaced."
+
+### Tension 2: `list_dropped_flows` has no existing complete data source
+
+ARCHITECTURE.md's build-order step 3d and Open Question 3 flag this directly from reading `pkg/hubble/aggregator.go`: neither the evidence samples (FIFO-capped, attached only to policy-worthy rules) nor the health snapshot (aggregate counts, Infra/Transient only — `DropEvent` carries no timestamp/port/verdict) add up to a complete raw dropped-flow log. FEATURES.md, by contrast, lists `list_dropped_flows` as a P1/MVP launch item with `limit`/`cursor`/`since`/namespace/dropclass filtering, describing it as "the tool most likely to blow a token budget if shipped without pagination" — its tool-contract design implicitly assumes flow-level data availability that ARCHITECTURE's source-reading shows doesn't fully exist today. This isn't a contradiction between the two files so much as FEATURES designing the ideal contract before ARCHITECTURE's grounding revealed the sourcing gap underneath it.
+
+**Recommended scoping for v1.5:** ship `list_dropped_flows` as a **composed view** over the existing capped evidence samples plus aggregate health counts — no new pipeline writer, staying inside this milestone's "integrate, don't redesign" discipline. Explicitly document that it is *not* a raw flow log (no full per-drop timestamp/port/verdict, no per-flow record for infra/transient drops beyond aggregate counts) so the tool description doesn't overpromise — an overpromising description here is exactly the failure mode PITFALLS' schema/UX pitfalls warn about. Log a genuine new minimal flow-sample writer (a 4th tee target alongside `policyCh`/`evidenceCh`/`healthCh`, with its own FIFO cap) as a deliberate fast-follow if the composed view proves insufficient in practice — that is real pipeline design work, out of this milestone's "reuse only" scope, and deserves its own sizing/requirements pass rather than being folded in silently.
+
+**Requirements action:** confirm the composed-view scoping explicitly in REQUIREMENTS.md; FEATURES.md's MVP list currently reads as if the full-fidelity tool is directly buildable as specified — it isn't, without this scoping decision.
+
+### Tension 3: `cluster-health.json` is finalize-only — live health during an active session is a gap
+
+ARCHITECTURE.md's Pattern 2 and Open Question 1 establish this directly from the pipeline source: the file is written exactly once, after `g.Wait()` returns — it does not exist at all until `stop_session`. The Scaling Considerations table calls this "the primary 'what breaks first' for this integration." FEATURES.md lists `get_cluster_health` as a P1 "thin passthrough of the existing `cluster-health.json`" without itself surfacing the mid-session-absence problem — again, only visible from ARCHITECTURE's direct source read.
+
+This overlaps with a second, related gap: `SessionStats` (flows seen, policies written so far) is also only logged once, at the very end — there's no API today for `get_status` to report live numeric counters mid-session either.
+
+**Recommended resolution for v1.5:** ship with "not available until stop" as documented, non-error behavior for both — `get_cluster_health` returns an explicit "session still capturing; cluster health available after `stop_session`" result (not an error, per FEATURES' `isError` guidance), and `get_status` reports coarse state (running/stopped, artifact file counts on disk) rather than true live counters, which are achievable with zero pipeline changes. Treat a small additive `pkg/hubble` change (periodic health flush, or an optional `*SessionStats` hook on `PipelineConfig`) as a deliberate, explicitly-scoped v1.5.x/v1.6 enhancement, not something this integration should reach for by default.
+
+**Requirements action:** decide both together (they're the same underlying "no live view into an in-flight pipeline" gap) before Phase 4's tool-response schemas are finalized — `get_status`/`get_cluster_health` need a `status: capturing | stopped` / `health: available | not_yet_available`-shaped field either way, and that shape should be designed once, deliberately, not discovered mid-implementation.
+
+### Tension 4: `pkg/output/writer.go`'s non-atomic write — torn-read risk for the new query tools
+
+ARCHITECTURE and PITFALLS independently converge on the same technical finding and the same fix, but frame the *urgency* differently. ARCHITECTURE (Pattern 2, Anti-Pattern 3) is cautious: it calls the atomic temp+rename fix "a real, low-risk improvement" but explicitly warns against "silently widening scope" mid-MCP-build, recommending only a read-side retry-on-parse-error for this integration and flagging the writer fix "for the roadmap/PITFALLS track instead of doing it here." PITFALLS (Pitfall 5) is more assertive: it calls the fix "small, mechanical, low-risk... internally consistent with cpg's own prior art" (the evidence and health writers already use temp+rename), and its Technical Debt table rates leaving the gap unfixed as acceptable "**Never**, once query tools read that directory concurrently with an active session — fix before wiring the reader." Recovery cost is rated LOW either way.
+
+**Reconciliation:** there is no real disagreement on the technical fix — both files agree temp+rename is correct, low-risk, and matches existing prior art. The tension is procedural: is this an MCP-milestone change, or a prerequisite bug fix that predates it? PITFALLS' framing is the more actionable resolution and should govern: land the fix as a **small, separately-reviewable change** to `pkg/output/writer.go` (mirroring `pkg/evidence/writer.go`/`pkg/hubble/health_writer.go`'s exact existing pattern), sequenced early — either just before or as the first explicit item of this milestone — not bundled invisibly inside a larger query-tools commit, and not deferred to "harden later." This honors ARCHITECTURE's "don't silently widen scope" caution (it's still an explicit, isolated, reviewed change, not a silent scope-creep) while satisfying PITFALLS' "never, once query tools read concurrently" urgency. Keep the read-side retry-on-parse-error as defense-in-depth regardless — cheap, and useful robustness even after the writer fix — but it is not a substitute for the writer fix, only a supplement.
+
+**Requirements/roadmap action:** sequence this as its own small, explicit task early in the roadmap (see Phase 3 below), not silently deferred past the milestone.
 
 ## Implications for Roadmap
 
-All three architecture-touching researchers (STACK, ARCHITECTURE, PITFALLS) converge on the same 3-phase split. Phases 7–9 continue cpg's existing roadmap numbering (v1.0 = phases 1–3, v1.1 = phases 4–6).
+Based on combined research — particularly ARCHITECTURE.md's explicit dependency-ordered build order and PITFALLS.md's pitfall-to-phase mapping, which independently converge on nearly identical groupings — suggested phase structure:
 
-### Phase 7: Infra-prep (no user-visible behavior change)
-**Rationale:** All three downstream phases depend on three foundational fixes that, if shipped piecemeal with L7 generation, cause silent data loss or schema breakage. Land them first; v1.1 L4 output is byte-identical at the end of this phase.
-**Delivers:**
-- `mergePortRules` preserves `Rules` field, dedups L7 per port/proto, refuses to mix HTTP+DNS on same port/proto.
-- `normalizeRule` sorts `Rules.HTTP` (by method+path) and `Rules.DNS` (by matchName/matchPattern) — `PoliciesEquivalent` deterministic for L7. Cluster-dedup inherits the fix.
-- Evidence `SchemaVersion = 2` with `L7Ref` (additive); reader keeps v1 decode path for one cycle, refuses v3+; `RuleKey` extends with optional L7 discriminator.
-- L7-visibility detection scaffold (skip-counter `l7_visibility_off`, warning copy + exit-code wiring) — hooked but unused until phase 8 wires `--l7`.
-**Addresses:** PITFALLS 8 (L4 shadowing L7 — merge correctness), 12 (cluster-dedup blind to L7), evidence schema bump.
-**Avoids:** Silent L7 data loss in any subsequent phase; evidence cache breakage on user upgrade.
+### Phase 1: MCP Server Skeleton & Protocol Safety
+**Rationale:** Must be proven before any tool logic is layered on top (ARCHITECTURE build-order step 1; PITFALLS names this "first phase" for both Pitfall 1 and Pitfall 10). Cheap to build, de-risks everything downstream.
+**Delivers:** `cpg mcp` subcommand registered in `main.go`, zero tools, stdio transport wired via `mcp.StdioTransport` + `signal.NotifyContext`, `SilenceUsage`/`SilenceErrors` set, existing `buildLogger()` reused unchanged (already stderr-only), an in-memory-transport (`NewInMemoryTransports()`) protocol test harness with a stdout-purity assertion as its first test.
+**Uses:** `github.com/modelcontextprotocol/go-sdk/mcp` v1.6.1, `zap/exp/zapslog` bridge.
+**Avoids:** Pitfall 1 (stdout pollution), Pitfall 10 (no protocol-level tests).
+**Structural decision made here (not deferred):** the composition-root readonly constraint (Pitfall 7) — `cmd/cpg/mcp.go` may only ever register handlers reaching read-only functions — should be decided as a rule at this stage even though it's *verified* later (Phase 5).
 
-### Phase 8: HTTP generation
-**Rationale:** HTTP is the lower-risk L7 track structurally — it attaches to existing `toPorts` entries (no separate-EgressRule complication). DNS adds the FQDN-egress-rule complication and is built on the HTTP scaffolding.
-**Delivers:**
-- `pkg/policy/l7.go` HTTP path: `extractHTTP`, regex-escaped + anchored path, uppercase-normalized method, whitelist filter on methods.
-- `peerRules` gains `httpRules`/`httpSeen` maps; `groupFlows` calls extractor; `ingressRulesFrom`/`egressRulesFrom` attach `*api.L7Rules{HTTP: …}` to matching `PortRule`.
-- `--l7` opt-in flag wired in `cmd/cpg/{generate,replay}.go` (default OFF; preserves v1.1 behavior).
-- L7-visibility detection actually fires when `--l7` set + zero L7 records observed; copy-pasteable annotation command in warning text; non-zero exit on `--l7-only`.
-- Evidence v2 emission for HTTP rules (`L7Ref{Type:"http", HTTPMethod, HTTPPath}`); flow samples carry `l7_method`/`l7_path` for `cpg explain`.
-- `RuleAttribution.RuleKey` carries L7 discriminator end-to-end.
-- Incomplete-L7-record validator at ingestion: `incomplete_l7_http` skip counter for empty method or empty URL; `L7FlowType_RESPONSE` filtered out (no method/path to extract).
-- Live-cluster validation of DROPPED vs REDIRECTED verdict behavior (open question) — filter expansion is a one-line change if needed.
-**Uses:** `cilium/cilium/pkg/policy/api.PortRuleHTTP`, `api/v1/flow.HTTP` accessor.
-**Implements:** ARCHITECTURE Q1 + Q2 + Q4 (HTTP slice).
-**Addresses:** PITFALLS 1, 3, 4, 10, 14, 19; FEATURES table-stakes HTTP_GEN.
+### Phase 2: Session Lifecycle (start_session / get_status / stop_session)
+**Rationale:** Every other tool depends on a working session handle; ARCHITECTURE flags this as the highest-novelty, highest-concurrency-risk piece and recommends proving it in isolation (unit-tested with a fake `FlowSource`, no real cluster, no MCP SDK) before any tool wiring touches it.
+**Delivers:** `pkg/session` package — `SessionManager` wrapping `hubble.RunPipeline` completely unmodified via a **detached**, cancellable context in a background goroutine; single-active-session guard; explicit opaque `session_id` (SEP-2567 shape).
+**Implements:** ARCHITECTURE Pattern 1 (session manager wraps the pipeline entrypoint unchanged, stop = ctx cancel).
+**Avoids:** Pitfall 2 (blocking tool handler on the pipeline), Pitfall 3 (orphaned sessions on client/harness death), Pitfall 8 partially (kubeconfig bounded-timeout wrapper around the initial client-build call).
+**Resolves:** Cross-File Tension 1 (single-session capacity + explicit `session_id` handle) — this is where that reconciliation gets implemented; confirm the requirement wording here before coding.
 
-### Phase 9: DNS generation + `cpg explain` L7
-**Rationale:** DNS adds the FQDN-egress-rule split (cannot coexist with `ToEndpoints`/`ToCIDR` in same EgressRule) and the mandatory companion-rule pairing. Lands on top of phase-8 scaffolding.
-**Delivers:**
-- DNS extractor in `pkg/policy/l7.go`: `extractDNSQuery` (request-only, trailing-dot stripped); `dnsGlob` helper distinct from HTTP path helper (typed at compile time to prevent cross-syntax bugs).
-- `buildFQDNEgressRules` post-processing: emits paired EgressRules — (a) `toFQDNs` with the observed FQDN, (b) companion egress to `k8s-app=kube-dns/kube-system` on UDP+TCP/53 with `rules.dns: [{matchPattern: "*"}]`. Always atomic; never one without the other. Hardcoded selector + YAML comment listing the assumption.
-- DNS dispatch keyed off `flow.GetL7().GetDns() != nil` (NOT port==53), to avoid Pitfall 7 (CIDR-when-should-be-FQDN trap kicks in for v1.3 correlation work, but v1.2 keeps the dispatch correct).
-- Evidence v2 emission for DNS rules (`L7Ref{Type:"dns", DNSPattern}`).
-- `cpg explain` filter flags: `--http-method`, `--http-path` (exact-match in v1.2), `--dns-pattern`. Renderer adds an L7 line per rule in text/JSON/YAML.
-- README + `cpg generate --help`/`--l7 --help` block: two-step workflow front-and-center; capture-window guidance ("run for at least one full traffic cycle"); performance impact comment template auto-emitted on every L7 policy.
-- `--dry-run` banner for L4→L7 transitions; FQDN-without-companion would-be-error caught at write time.
-- Wildcard FQDN warning (`*.amazonaws.com` → identity exhaustion, suggest CIDR alternative).
-- Optional polish: `pkg/output/annotate.go` annotates new L7 rule kinds with comments (non-blocking; render-without-comment is acceptable).
-**Uses:** `cilium/cilium/pkg/policy/api.PortRuleDNS`, `FQDNSelector`, `EgressRule.ToFQDNs`, `api/v1/flow.DNS` accessor.
-**Implements:** ARCHITECTURE Q1 (DNS slice), Q5 (FQDN egress split), Q8 (`cpg explain` L7).
-**Addresses:** PITFALLS 5, 6, 7 (dispatch only), 13, 15, 16, 17; FEATURES table-stakes DNS_GEN, CLI explain L7, two-step workflow docs.
+### Phase 3: Read-Side Foundations (parallelizable with Phase 2)
+**Rationale:** Each piece depends only on an already-existing package, independent of session/MCP wiring — ARCHITECTURE explicitly calls this parallelizable with Phase 2. Promote `pkg/explain` here since it touches existing `cmd/cpg` files and tests; land the atomic-write fix here (or earlier, standalone) per Tension 4's resolution, before any query tool reads from `pkg/output`.
+**Delivers:** `pkg/output/writer.go` brought to the same temp+rename pattern already used by the evidence/health writers (Tension 4 fix); `pkg/hubble.ReadClusterHealth` + exported `ClusterHealthReport`/`HealthDropJSON` types; `pkg/explain` promoted from `cmd/cpg` (mechanical move, existing `cpg explain` test suite re-run immediately to confirm nothing broke).
+**Implements:** ARCHITECTURE Pattern 3 (promote `cmd/cpg` presentation logic to an importable package — direct precedent from `pkg/flowsource`'s v1.1 promotion).
+**Avoids:** Pitfall 5 (writer/reader torn-read races) — fixed at the source, not just papered over with read-side retries.
+
+### Phase 4: Query Tools (dropped flows, policies, evidence, cluster health)
+**Rationale:** Depends on Phase 2 (session_id, tmpdir) and Phase 3 (readers). This is where the actual MCP tool contracts, schemas, and response shapes get designed and reviewed — and where Tensions 2 and 3 must already be resolved, since they change these tools' response shapes.
+**Delivers:** `list_dropped_flows`, `list_policies` + `get_policy`, `get_evidence` (reusing the promoted `pkg/explain` renderer verbatim), `get_cluster_health` — all with pagination (`limit`/`cursor`/`total_count`/`has_more`), `structuredContent`+`outputSchema`, `isError` actionable errors, tool annotations, and descriptions that explicitly teach the dropclass taxonomy.
+**Addresses:** Nearly all remaining FEATURES.md table-stakes and differentiator items.
+**Avoids:** Pitfall 4 (unbounded results), Pitfall 6 (schema mistakes — enum `DropClass` not raw `DropReason`, no root-level `oneOf`/`anyOf`/`allOf`, "exactly one of" validated in handler logic).
+**Requires resolution before design is final:** Tension 2 (`list_dropped_flows` composed-view scoping) and Tension 3 (live cluster-health/status shape).
+
+### Phase 5: Security / Readonly Hardening & Operational Docs
+**Rationale:** Cross-cutting audit pass once the tool table is complete. The *structural* decision (composition root only calls read-only functions) was already made in Phase 1 — this phase verifies and documents it, and closes the remaining pitfalls that are judgment calls rather than code patterns.
+**Delivers:** Import-graph readonly audit (no reachable K8s write verb, no filesystem write outside the session tmpdir — re-run on every future tool addition); documented `env` block requirements for MCP host configs (`KUBECONFIG`/`HOME`/`PATH`/`TMPDIR` — nothing is inherited by default); an explicit written decision on `HTTPPath`/label secret exposure (ship-documented-risk vs. best-effort redaction); distinct, specific error strings per kubeconfig/auth failure mode.
+**Avoids:** Pitfall 7 (readonly-as-hint-not-enforcement), Pitfall 8 (kubeconfig env/docs half), Pitfall 9 (secrets traveling differently through an LLM than through committed YAML).
+
+### Phase 6: End-to-End Stdio Validation
+**Rationale:** Last, per ARCHITECTURE's build order — proves the full stdio contract holds across a complete session lifecycle, with everything from Phases 1–5 wired together.
+**Delivers:** Integration test driving `initialize → start_session → get_status → each query tool → stop_session → process exit`, asserting stdout carries only valid JSON-RPC frames throughout; `-race` extended to all new packages, consistent with cpg's existing "tests passing with `-race`" discipline; an ungraceful-disconnect variant (kill the transport mid-session, assert port-forward + tmpdir are gone within a bounded deadline).
 
 ### Phase Ordering Rationale
 
-- **Phase 7 first** — `mergePortRules` silent-data-loss bug is non-negotiable infra-prep. Evidence schema bump must precede any writer that wants to populate L7 fields. Both are zero-behavior-change at end-of-phase, so the branch is mergeable mid-stream.
-- **Phase 8 before 9** — HTTP is structurally simpler (no EgressRule split, no companion rule). DNS reuses every piece of HTTP infrastructure (extractor pattern, evidence v2, attribution L7 discriminator, detection warning). DNS-first order would have to retrofit those onto HTTP later — wasteful.
-- **`cpg explain` lands in phase 9, not in a separate phase** — extending filters and renderers is ~30–80 lines of cmd wiring against an already-stable schema; bundling with DNS keeps the phase counts honest at 3 (matches ~13 dev-day estimate at ~4-5 days/phase).
+- Phases 1–3 are almost entirely internal/invisible (no new user-facing tool works yet) but exist because ARCHITECTURE's dependency read is explicit: session lifecycle and the read-side helpers are prerequisites, not just "nice to build first" — Phase 4's tools cannot be correctly designed until Tensions 1–4 are resolved, which happens naturally by the end of Phase 3.
+- Phases 2 and 3 are independent of each other (different packages, different risk profiles) and can run in parallel if the roadmapper wants to compress the schedule — ARCHITECTURE calls this out explicitly.
+- Security hardening is deliberately Phase 5, not folded into Phase 4, because PITFALLS' own phase mapping keeps it as a discrete audit pass — but the roadmapper should note the *structural* readonly rule is a Phase 1 decision, only *verified* in Phase 5, to avoid the false impression that readonly safety is bolted on at the end.
+- Phase 6 is last by construction — it's the integration proof, not a place where new capability is built.
 
 ### Research Flags
 
 Phases likely needing deeper research during planning:
-- **Phase 8 — DROPPED vs REDIRECTED verdict** — needs live-cluster validation. With L7 visibility on, denied L7 traffic may arrive as `Verdict_REDIRECTED` rather than `Verdict_DROPPED` (current Hubble client filter). One-line filter expansion if needed; trade-off is REDIRECTED also includes successful proxy traffic (must verdict-aware-handle to avoid generating policies *from allowed flows*). Recommend `/gsd:research-phase` before phase 8 implementation if no live-cluster access during phase 7.
-- **Phase 9 — DNS REFUSED via FORWARDED verdict** — Cilium denies DNS via REFUSED rcode; flow may still show `Verdict_FORWARDED`. v1.2 with DROPPED-only filter will miss this. Document limitation; live-cluster validation recommended; `--include-l7-forwarded` flag deferred to v1.3.
+- **Phase 4 (query tools):** contingent on which option is chosen for Tension 2 — if a new minimal flow-sample writer is chosen over the composed-view scoping, that is genuinely new pipeline design work (a 4th tee target, its own FIFO cap sizing) not covered by this research pass and would benefit from a focused `--research-phase` pass before implementation.
+- **Phase 5 (secrets/redaction decision within security hardening):** low technical complexity, but the `HTTPPath`/label exposure choice is a product/security judgment call rather than an implementation pattern — flag for explicit stakeholder decision rather than technical research per se.
 
-Phases with standard patterns (skip research-phase):
-- **Phase 7** — pure refactor + schema bump, all paths verified in codebase + STACK research. No additional research needed.
+Phases with standard patterns (skip research-phase — code-level shapes are already fully specified by ARCHITECTURE.md's Patterns 1–3 and PITFALLS' concrete fixes):
+- **Phase 1:** exact cobra/SDK wiring snippet already given in STACK.md; `SilenceUsage` behavior verified via `go doc -src` against the pinned cobra version.
+- **Phase 2:** exact `Session`/`Manager` shape and detached-context pattern already given in ARCHITECTURE Pattern 1; the one open item (Tension 1 wording) is a requirements confirmation, not a research gap.
+- **Phase 3:** direct precedent already exists in the codebase twice over (evidence/health writers' temp+rename; `pkg/flowsource`'s promotion history) — mechanical work.
+- **Phase 6:** in-memory transport testing approach already documented (go-sdk's `NewInMemoryTransports()`), golden-sequence test shape already specified.
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | All types verified via `go doc` against vendored `cilium/cilium v1.19.1`. Zero new deps. PortRuleDNS-as-type-alias correction logged. |
-| Features | HIGH | Cilium L7 schema, two-step workflow, companion-DNS requirement all confirmed in upstream docs (HIGH). MEDIUM only on regex-collapse heuristics — design choice deliberately deferred. |
-| Architecture | HIGH | Codebase analysis direct; integration points enumerated by file + line. AggKey-stays-flat decision unanimous across stack/architecture/pitfalls research. |
-| Pitfalls | HIGH | Verified against Cilium docs, Hubble flow proto, existing cpg codebase, and prior research archive. All 12 critical + 7 moderate pitfalls have prevention + warning-sign + phase mapping. |
+| Stack | HIGH | Context7 + official modelcontextprotocol.io SDK-tier page + GitHub API version/star verification + direct source reads (zap `config.go`, go-sdk `logging.go`/`server.go`) at the exact pinned tag. Very little inference; version-compatibility claims verified against cpg's actual `go.mod`. |
+| Features | HIGH (core spec) / MEDIUM (ecosystem) | Core MCP claims (tool annotations, structured content, pagination scope, SEP-2567's Final/accepted status) verified via Context7 + the official spec pages. Ecosystem-adoption and Claude-Code-specific claims (Resources client-support gap, `mcp_` auto-namespacing) are WebSearch-sourced but cross-checked against at least one primary/official source each. |
+| Architecture | HIGH | The strongest-grounded of the four files — integration points, writer atomicity, and concurrency behavior verified by directly reading the actual `pkg/hubble/pipeline.go`, `pkg/output/writer.go`, `pkg/evidence/*` source, not by pattern inference. zap/cobra defaults verified via `go doc` against the exact pinned versions. |
+| Pitfalls | HIGH (spec/library/codebase) / MEDIUM-LOW inline (ecosystem) | Grounded in the official MCP spec (draft + stable 2025-06-18), current official Claude Code MCP docs (timeouts, env handling, output-token limits), vendored cobra/zap source read directly, and the live cpg codebase read/grepped this session. Community-sourced claims (e.g., Claude Code orphaned-process GitHub issues, general MCP schema-design blog guidance) are explicitly flagged MEDIUM inline rather than presented as verified fact. |
 
-**Overall confidence:** HIGH. Recommendation: proceed to roadmap creation.
+**Overall confidence:** HIGH — an unusually strong research pass. All four files performed direct reads of the actual cpg source (not just pattern induction from generic MCP guidance), and the MCP-specific claims are grounded in the official spec plus an accepted SEP. The residual uncertainty is concentrated entirely in the four cross-file tensions above — and those are correctly surfaced as *product/requirements decisions the research revealed*, not gaps the research failed to close.
 
 ### Gaps to Address
 
-- **Empty-L7 warning copy/UX** — exact wording, exit-code semantics for `--l7-only`, and whether to also emit a structured JSON event need finalization in phase 8 requirements. Source material in PITFALLS 1 is sufficient as starting point.
-- **kube-dns selector autodetection** — recommended hardcoded `k8s-app=kube-dns` (covers CoreDNS too) with YAML comment in v1.2; autodetect deferred to v1.3 (we already have a kube client when `--cluster-dedup` is on). Decide hardcoded copy in phase 9 requirements.
-- **DROPPED vs REDIRECTED verdict** — needs live-cluster validation in phase 8. Mitigation: filter expansion is a one-line change; document trade-off (REDIRECTED includes successful proxy traffic — needs verdict-aware handling so we don't generate policies from allowed flows).
-- **`--min-flows-per-l7-rule` default** — recommend default 1 in v1.2 with comment-out for low-confidence rules (`# low-confidence: 2 flows over 11m`); revisit after user feedback. Acceptable per PITFALLS 9 if `cpg explain` is documented as the gate.
-- **DNS REFUSED via FORWARDED verdict** — documented as known v1.2 limitation; `--include-l7-forwarded` deferred to v1.3.
+- **Cross-File Tension 1** (single-session capacity vs. explicit `session_id` handle): reconciliation proposed above; needs one explicit REQUIREMENTS.md line item combining both, not two separate/competing ones — handle during Phase 2 planning.
+- **Cross-File Tension 2** (`list_dropped_flows` data-source scoping): needs an explicit REQUIREMENTS.md decision on the composed-view scope before Phase 4's tool contract is finalized; if the composed view is later judged insufficient, the flow-sample-writer fast-follow needs its own sizing/research pass.
+- **Cross-File Tension 3** (live cluster-health/status during an active session): needs an explicit REQUIREMENTS.md decision — "not available until stop" documented behavior recommended for v1.5, decided jointly with the live-counters gap since both stem from the same underlying limitation.
+- **Cross-File Tension 4** (non-atomic `pkg/output/writer.go`): fix recommended as a small, standalone, early-sequenced change (not deferred) — needs to be an explicit roadmap task, not silently absorbed into a larger commit.
+- **Minor:** MCP spec draft `2026-07-28` / go-sdk `v1.7.0-pre.1..3` are not GA and not on the public spec pages yet — correctly excluded from v1.5 scope by STACK.md; re-check at the next milestone, no action needed now.
+- **Minor:** `cpg apply` (already "Planned" in PROJECT.md) is a live future risk to the readonly guarantee the moment it exists in the same binary — not an action item for v1.5, but PITFALLS flags it explicitly so a future apply-tool design carries the structural-exclusion requirement (Pitfall 7) forward rather than rediscovering it.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- `go doc` on vendored `github.com/cilium/cilium@v1.19.1` — `pkg/policy/api` (`L7Rules`, `PortRuleHTTP`, `PortRulesHTTP`, `PortRuleDNS` type alias, `PortRulesDNS`, `FQDNSelector`, `EgressRule.ToFQDNs` exclusivity), `api/v1/flow` (`Layer7`, `L7FlowType`, `HTTP`, `HTTPHeader`, `DNS`).
-- [Cilium L7 Policy Language](https://docs.cilium.io/en/stable/security/policy/language/) — official L7 rule syntax, RE2 regex on `path`, method case sensitivity.
-- [Cilium DNS-Based Policies](https://docs.cilium.io/en/stable/security/dns/) — DNS proxy + companion rule requirement; matchPattern glob.
-- [Cilium L7 Protocol Visibility](https://docs.cilium.io/en/stable/observability/visibility/) — chicken-and-egg confirmation; visibility annotation prerequisite.
-- [Hubble Flow Proto](https://docs.cilium.io/en/stable/_api/v1/flow/README/) — `L7.Http`, `L7.Dns`, `DestinationNames` schema.
-- [Cilium policy/api Go types on pkg.go.dev](https://pkg.go.dev/github.com/cilium/cilium/pkg/policy/api).
-- [RFC 9110 §9.1 — HTTP method case sensitivity](https://www.rfc-editor.org/rfc/rfc9110#name-method).
-- [Go regexp / RE2 syntax](https://pkg.go.dev/regexp/syntax) — anchoring + QuoteMeta.
-- Existing cpg codebase (`pkg/policy/{builder,merge,dedup,attribution}.go`, `pkg/hubble/{client,aggregator}.go`, `pkg/output/writer.go`, `pkg/evidence/schema.go`, `cmd/cpg/explain*.go`) — direct read.
-- `.planning/PROJECT.md` — v1.2 scope lock dated 2026-04-25.
+- Context7 `/modelcontextprotocol/go-sdk` — stdio transport, `AddTool`/`ToolHandlerFor`, schema inference, `ServerOptions.Logger` default, `ToolAnnotations`
+- `modelcontextprotocol.io/docs/sdk`, `/specification/2025-11-25/server/{tools,resources,prompts,utilities/pagination,utilities/progress}`, `/specification/{draft,2025-06-18}/basic/transports`, `/seps/2567-sessionless-mcp` (SEP-2567, Final, accepted 2026)
+- `code.claude.com/docs/en/mcp` (fetched 2026-07-20) — stdio timeout ceilings, env-variable non-inheritance, `MAX_MCP_OUTPUT_TOKENS`, root-level schema-union handling
+- `anthropic.com/engineering/writing-tools-for-agents` — namespacing, token-budget management, description-quality impact
+- `github.com/modelcontextprotocol/go-sdk` — README, releases (v1.6.1), `go.mod` at the pinned tag, issue #224 (`Server.Run` context-cancellation bug, fixed via PR #234)
+- Local repo inspection (this research pass, direct reads/greps): `pkg/hubble/pipeline.go`, `pkg/hubble/writer.go`, `pkg/hubble/health_writer.go`, `pkg/hubble/client.go`, `pkg/hubble/aggregator.go`, `pkg/output/writer.go`, `pkg/evidence/{reader,writer,schema}.go`, `pkg/k8s/{client,portforward}.go`, `pkg/dropclass/classifier.go`, `pkg/flowsource/source.go`, `cmd/cpg/{main,generate,explain,explain_render,explain_filter,explain_target}.go`, `go.mod`, `go.sum`, `.planning/PROJECT.md`
+- `go doc` against cpg's exact pinned versions — `go.uber.org/zap` (`NewProductionConfig`/`NewDevelopmentConfig`/`NewDevelopment` all default to stderr), `github.com/spf13/cobra.Command.ExecuteC` (usage-on-error targets stdout unless `SilenceUsage`)
 
 ### Secondary (MEDIUM confidence)
-- [Cilium L7 Protocol Visibility — v1.20-dev docs](https://docs.cilium.io/en/latest/observability/visibility/) — schema unchanged in current main.
-- WebSearch 2026-04-25 confirming `policy.cilium.io/proxy-visibility` as "historically supported but no longer recommended."
-- [OneUptime — Cilium L7 Network Policies (2026-03-13)](https://oneuptime.com/blog/post/2026-03-13-cilium-l7-network-policies/view) — community confirmation of method/path/header model.
-- [Cilium FQDN wildcard issue #22081](https://github.com/cilium/cilium/issues/22081) — wildcard subdomain limitations.
-- [Cilium issue #31197 — FQDN DNS proxy truncation](https://github.com/cilium/cilium/issues/31197).
-- [Cilium issues #35525 / #43964 / #30581 — Envoy redirect resets](https://github.com/cilium/cilium/issues/35525).
-- [Debug Cilium toFQDN Network Policies (Medium)](https://mcvidanagama.medium.com/debug-cilium-tofqdn-network-policies-b5c4837e3fc4).
+- Production MCP server prior art: AWS CloudWatch MCP + `DESIGN_GUIDELINES.md`, GitHub MCP Server, Playwright MCP, Browserbase MCP, WireMCP (counter-example)
+- `github.com/mark3labs/mcp-go` — evaluated and rejected as the SDK choice; used as a breaking-change/comparison data point
+- Claude Code GitHub issues: orphaned MCP processes (#22612, #39170), env-variable stripping (#1254, #10955)
+- Resources client-support-gap and dual preview+reference pattern write-ups (layered.dev, PulseMCP, futuresearch.ai) — WebSearch-synthesized, directionally consistent across independent sources, partially corroborated by official Claude Code docs
+- `blog.modelcontextprotocol.io/posts/2026-03-16-tool-annotations` — annotations as an untrusted-hint vocabulary
+- client-go SPDY goroutine-leak history (kubernetes/kubernetes#105830, #96339), exec-credential-plugin stdin/TTY behavior (kubernetes/kubernetes#98451)
 
 ### Tertiary (LOW confidence)
-- Prior research at `.planning/research/archive-2026-04-25/{STACK,FEATURES,ARCHITECTURE,PITFALLS,SUMMARY}.md` — superseded; this round re-verified types directly. Notable correction: `PortRuleDNS` is a type alias of `FQDNSelector`, not a parallel struct. Archive retains canonical material for v1.3-deferred topics (`cpg apply`, drift, RBAC pre-flight, Envoy-redirect-on-apply).
+None load-bearing for this synthesis — every claim used above was independently rated HIGH or MEDIUM by its source research file; MEDIUM-confidence ecosystem claims are flagged inline where they appear rather than presented as verified fact.
 
 ---
-*Research completed: 2026-04-25*
+*Research completed: 2026-07-20*
 *Ready for roadmap: yes*

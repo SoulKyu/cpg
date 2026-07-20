@@ -1,205 +1,150 @@
-# Technology Stack — v1.3 Cluster Health Surfacing
+# Stack Research
 
-**Project:** cpg (Cilium Policy Generator)
-**Researched:** 2026-04-26
-**Scope:** NEW additions only for v1.3. Existing stack (Go 1.25.1, cobra, zap, client-go, cilium/cilium gRPC proto) is unchanged and not re-litigated here.
+**Domain:** MCP (Model Context Protocol) server integration, stdio transport, Go 1.25 CLI backend
+**Researched:** 2026-07-20
+**Confidence:** HIGH
 
----
+## Recommended Stack
 
-## No New Dependencies Required
+### Core Technologies
 
-All v1.3 features are implementable with the existing `go.mod`. Zero new `require` entries.
+| Technology | Version | Purpose | Why Recommended |
+|------------|---------|---------|-----------------|
+| `github.com/modelcontextprotocol/go-sdk/mcp` | v1.6.1 (latest stable tag, 2026-05-22) | MCP server runtime: session lifecycle, tool registration/dispatch, JSON Schema inference, stdio JSON-RPC framing | **Only Go SDK listed on the official SDK page** (modelcontextprotocol.io/docs/sdk), classified **Tier 1** (same tier as the TypeScript/Python/C# SDKs) and explicitly "maintained in collaboration with Google." Stable `v1.x` — semver-committed, no breaking changes within the major version. Requires `go 1.25.0`; cpg is already on `go 1.25.1` / toolchain `go1.25.12` — zero toolchain change. |
+| `go.uber.org/zap/exp/zapslog` | bundled inside the already-pinned `go.uber.org/zap v1.27.1` (no new go.mod line — verified the `exp/zapslog` package exists at the exact `v1.27.1` tag cpg already depends on) | `slog.Handler` adapter that lets go-sdk's internal `*slog.Logger` hook write through cpg's existing zap cores | go-sdk's `ServerOptions.Logger` is a `*slog.Logger`; bridging it into zap means the SDK's own session lifecycle logs (connect/disconnect/errors) land in the same structured stderr stream as the rest of cpg instead of a second, disconnected logging path. |
 
-| Feature | Implementation | Why No New Dep |
-|---------|---------------|----------------|
-| Drop-reason taxonomy | Code-embedded `map[flowpb.DropReason]Category` | Keyed on proto enum — stdlib map |
-| cluster-health.json write | `encoding/json` + atomic write (same pattern as `pkg/evidence/writer.go`) | Already used in evidence package |
-| Remediation hint URLs | String constants embedded in taxonomy map or a parallel `map[Category]string` | No templating needed — static strings |
-| Session summary block | `fmt.Fprintf` to `os.Stderr` or existing zap | stdlib only |
-| `--ignore-drop-reason` flag | `cobra.StringSlice`, same validation pattern as `--ignore-protocol` | `spf13/cobra v1.10.2` already present |
-| `--fail-on-infra-drops` exit code | Custom sentinel error type returned from `RunE`, caught in `main()` | `os.Exit` already called on `rootCmd.Execute()` error |
+### Supporting Libraries
 
----
+| Library | Version | Purpose | When to Use |
+|---------|---------|---------|-------------|
+| `github.com/google/jsonschema-go` | v0.4.3 (transitive, pinned by go-sdk's own go.mod — do not pin separately) | JSON Schema types + `jsonschema.For[T]` reflection-based schema inference | Invisible plumbing for the common case — `mcp.AddTool[In, Out]` infers `InputSchema`/`OutputSchema` from Go struct types plus `jsonschema:"description text"` field tags. Only import it **directly** if a tool needs schema constraints structs can't express (enum, min/max, regex pattern) — e.g. `dropped-flows` tool's severity filter as an enum. |
+| `golang.org/x/sync/errgroup` | v0.20.0 (already a **direct** dependency in cpg's go.mod) | Goroutine-group lifecycle for the background Hubble capture launched by `start_session` running alongside `server.Run` | Already the pattern used in `pkg/hubble/pipeline.go` for the live capture pipeline (`golang.org/x/sync/errgroup` import confirmed at that file). Reuse it for the MCP session runner instead of hand-rolling goroutine/channel bookkeeping — one less concurrency idiom in the codebase. |
 
-## Q1: DropReason Enum — Canonical Iteration at Compile Time
+### Development Tools
 
-**Answer: Use `flowpb.DropReason_name` (runtime map), not compile-time iteration. This is the correct pattern for protobuf enums in Go.**
+| Tool | Purpose | Notes |
+|------|---------|-------|
+| `mcp.LoggingTransport` (from the go-sdk itself, no extra dep) | Wraps `&mcp.StdioTransport{}` to mirror raw JSON-RPC traffic to a file/buffer for debugging | Use during development of the new tool handlers: `mcp.NewLoggingTransport(mcp.NewStdioTransport(), logFile)` — writes to any `io.Writer`, never to stdout, so it's safe to leave wired to `os.Stderr` or a debug file behind a `--debug` flag. |
+| `MCPGODEBUG` env var | go-sdk's internal debug/compat knobs (e.g. `hintomitempty=1`, `allowsessionsinstateless=1`) | No code change needed; documented in go-sdk's `docs/mcpgodebug.md`. Only relevant if a future SDK bump changes default wire behavior and cpg needs the old behavior temporarily. |
+| Existing CI (`golangci-lint`, `govulncheck`, `go test -race`) | Lints/vuln-scans/tests the new MCP code paths | No new tool or config needed — a new `pkg/mcpserver/` (or `cmd/cpg/mcp.go`) package is automatically covered by the existing pipeline. |
 
-**Verified against:** `/home/gule/go/pkg/mod/github.com/cilium/cilium@v1.19.1/api/v1/flow/flow.pb.go` lines 597–675.
+## Installation
 
-The generated code exposes two exported package-level vars:
+```bash
+# Core — pins the MCP SDK to the exact version researched (consistent with cpg's
+# existing exact-pin convention for cilium v1.19.4 and SHA-pinned GH Actions)
+go get github.com/modelcontextprotocol/go-sdk/mcp@v1.6.1
+go mod tidy
 
-```go
-// github.com/cilium/cilium/api/v1/flow — flow.pb.go
-var (
-    DropReason_name  = map[int32]string{ 0: "DROP_REASON_UNKNOWN", 130: "INVALID_SOURCE_MAC", ... }
-    DropReason_value = map[string]int32{ "DROP_REASON_UNKNOWN": 0, "POLICY_DENIED": 133, ... }
-)
+# Nothing else to install:
+# - github.com/google/jsonschema-go arrives transitively; `go get` it directly
+#   only if/when a tool needs schema constraints beyond struct-tag inference.
+# - go.uber.org/zap/exp/zapslog ships inside the already-vendored
+#   go.uber.org/zap v1.27.1 — it's an import, not a go.mod change.
 ```
 
-Import path already used in the codebase: `flowpb "github.com/cilium/cilium/api/v1/flow"` (see `pkg/hubble/aggregator.go:10`, `evidence_writer.go:6`).
+## Integration with the Existing cobra/zap Stack
 
-**Taxonomy map pattern** — the new `pkg/health` package should define its classifier as:
+**cobra:** `cpg mcp` is one more subcommand, wired exactly like `newGenerateCmd()` / `newReplayCmd()` / `newExplainCmd()` in `cmd/cpg/main.go`. go-sdk's `Server.Run(ctx, transport)` does **not** install SIGINT/SIGTERM handling itself (verified from source: it only selects on `ctx.Done()` vs. the session-closed channel) — the `RunE` must wrap `cmd.Context()` with `signal.NotifyContext` so `stop_session`'s tmpdir cleanup runs on Ctrl-C / harness shutdown, not just on client-initiated disconnect:
 
 ```go
-import flowpb "github.com/cilium/cilium/api/v1/flow"
+func newMCPCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "mcp",
+		Short: "Run cpg as a readonly MCP server over stdio",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
 
-type Category string
-const (
-    CategoryPolicy    Category = "policy"
-    CategoryInfra     Category = "infra"
-    CategoryTransient Category = "transient"
-    CategoryUnknown   Category = "unknown"
-)
+			server := mcp.NewServer(&mcp.Implementation{Name: "cpg", Version: version}, &mcp.ServerOptions{
+				Logger: slog.New(zapslog.NewHandler(logger.Core())), // logger = existing package-level *zap.Logger
+			})
+			registerSessionTools(server) // start_session / status / stop_session
+			registerQueryTools(server)   // dropped-flows / policies / explain / cluster-health
 
-var dropReasonCategory = map[flowpb.DropReason]Category{
-    flowpb.DropReason_POLICY_DENIED:   CategoryPolicy,
-    flowpb.DropReason_POLICY_DENY:     CategoryPolicy,
-    flowpb.DropReason_AUTH_REQUIRED:   CategoryPolicy,
-    flowpb.DropReason_CT_MAP_INSERTION_FAILED: CategoryInfra,
-    // ... full list
-}
-
-func Classify(r flowpb.DropReason) Category {
-    if c, ok := dropReasonCategory[r]; ok {
-        return c
-    }
-    return CategoryUnknown
-}
-```
-
-`flowpb.DropReason_name` can be used in `ValidIgnoreDropReasons()` (same pattern as `ValidIgnoreProtocols()` in `pkg/hubble/aggregator.go:38`) to build the allowlist for `--ignore-drop-reason` flag validation.
-
-**Complete enum values** (74 entries in cilium@v1.19.1, proto range 0 and 130–205):
-
-Policy-class candidates: `POLICY_DENIED (133)`, `POLICY_DENY (181)`, `AUTH_REQUIRED (189)`, `NO_CONFIGURATION_AVAILABLE_TO_PERFORM_POLICY_DECISION (165)`.
-
-Infra-class candidates: `CT_MAP_INSERTION_FAILED (155)`, `CT_NO_MAP_FOUND (190)`, `SNAT_NO_MAP_FOUND (191)`, `FIB_LOOKUP_FAILED (169)`, `SERVICE_BACKEND_NOT_FOUND (158)`, `NO_EGRESS_GATEWAY (194)`, `DROP_HOST_NOT_READY (202)`, `DROP_EP_NOT_READY (203)`, `REACHED_EDT_RATE_LIMITING_DROP_HORIZON (162)`, `DROP_RATE_LIMITED (198)`.
-
-Transient-class candidates: `STALE_OR_UNROUTABLE_IP (151)`, `UNKNOWN_CONNECTION_TRACKING_STATE (163)`.
-
-Everything else defaults to `unknown` — safe for the planner to refine.
-
-**Confidence: HIGH** — directly verified against module cache.
-
----
-
-## Q2: New Deps for JSON Marshaling, Atomic Writes, Remediation Links
-
-**Answer: None needed.**
-
-- `encoding/json` — stdlib, already used in `pkg/evidence/writer.go` for `json.MarshalIndent` + `json.Unmarshal`. Same approach for `cluster-health.json`.
-- Atomic write pattern — `os.CreateTemp` + `os.Rename` already implemented at `pkg/evidence/writer.go:62–80`. Copy verbatim into new `pkg/health/writer.go`.
-- Remediation hint URLs — static string constants co-located with the taxonomy map. No `text/template`, no external package. Example: `map[Category]string{CategoryInfra: "https://docs.cilium.io/en/stable/operations/troubleshooting/"}`.
-
-**Confidence: HIGH** — verified against existing codebase patterns.
-
----
-
-## Q3: Cobra Exit Code Pattern for `--fail-on-infra-drops`
-
-**Answer: Return a custom sentinel error from `RunE`; `main()` already calls `os.Exit(1)` on any `rootCmd.Execute()` error. For a distinct exit code (e.g., 2), intercept before `os.Exit`.**
-
-Current flow in `cmd/cpg/main.go:58–60`:
-```go
-if err := rootCmd.Execute(); err != nil {
-    os.Exit(1)
+			return server.Run(ctx, &mcp.StdioTransport{})
+		},
+	}
 }
 ```
 
-`cobra.Command.RunE` returns an `error`. If it returns non-nil, `Execute()` returns that error, and `main()` exits with code 1.
+**zap and stdout — the good news, verified, not assumed:** cpg's existing `buildLogger()` (`cmd/cpg/main.go:71-102`) needs **zero changes**. Checked zap's source directly (`config.go`, `master` branch): both `zap.NewProductionConfig()` and `zap.NewDevelopmentConfig()` already default `OutputPaths: []string{"stderr"}` and `ErrorOutputPaths: []string{"stderr"}`, and `zap.NewDevelopment()` is a thin wrapper over the latter. All three of `buildLogger()`'s branches (`--json`, `--debug`, default console) were already stderr-only before this milestone. The only genuine stdout risks for `cpg mcp` are:
 
-For `--fail-on-infra-drops`, two viable patterns:
+1. **Any new `fmt.Println`/`fmt.Printf`/stdlib `log.Print*`** written in the new MCP code — none of the existing zap paths are at risk, but a careless debug print anywhere in the new tool handlers corrupts the newline-delimited JSON-RPC stream. Use the existing `logger` (stderr) or `fmt.Fprintln(os.Stderr, ...)`.
+2. **Reusing `pkg/hubble/writer.go` / `pkg/hubble/pipeline.go` unmodified.** Both already have an injectable `io.Writer` seam that defaults to `os.Stdout` when left nil (`writer.go:35,131` — "defaults to os.Stdout when nil"; `pipeline.go:92,358` — same, used today for the CLI's dry-run diff output and the v1.3 session-summary block). `start_session`'s background capture **must** pass that parameter explicitly (`io.Discard`, or a `bytes.Buffer` whose contents get surfaced back through a tool's structured result) rather than leaving it nil — the seam already exists for tests, so this is reuse, not new plumbing.
 
-**Pattern A — Single exit code (simplest):**
-Return a sentinel error `ErrInfraDropsDetected` from `runGenerate`/`runReplay`. `main()` catches it and exits 1. No `main.go` changes needed.
+go-sdk itself is safe by default even without the zap bridge: `ServerOptions.Logger` defaults to `slog.New(slog.DiscardHandler)` when left `nil` (verified in `mcp/logging.go`'s `ensureLogger`) — the SDK never touches stdout *or* stderr unless cpg opts in. Wiring `zapslog` is about **operability** (seeing SDK-internal session errors in cpg's existing structured logs), not about avoiding a stdout leak — that leak simply cannot happen from the SDK's own logging path.
 
-**Pattern B — Distinct exit code (recommended for v1.3):**
-Define a typed error:
-```go
-type ExitCodeError struct {
-    Code int
-    Msg  string
-}
-func (e *ExitCodeError) Error() string { return e.Msg }
-```
-In `main.go`, change the Execute block:
-```go
-if err := rootCmd.Execute(); err != nil {
-    var ec *ExitCodeError
-    if errors.As(err, &ec) {
-        os.Exit(ec.Code)
-    }
-    os.Exit(1)
-}
-```
+**Readonly guarantee → tool annotations:** go-sdk's `mcp.Tool.Annotations` includes `ToolAnnotations{ReadOnlyHint, IdempotentHint bool; DestructiveHint, OpenWorldHint *bool; Title string}` (verified in `mcp/protocol.go`). Every one of cpg's 7 planned tools (`start_session`, `status`, `stop_session`, dropped-flows, generated-policies, explain/evidence, cluster-health) should set `ReadOnlyHint: true` — this is a spec-level signal to the LLM harness, not just documentation, and it directly encodes the milestone's "never mutates the cluster" contract into the protocol surface itself. (`start_session`/`stop_session` mutate *cpg's own ephemeral tmpdir*, not the cluster — still readonly with respect to the cluster and any files outside the session dir.)
 
-**Recommendation: Pattern B.** The v1.3 requirement is a CI/cron hook — operators need a distinct exit code to differentiate "infra drops detected" (actionable) from "cpg error" (bug). Exit 2 is the conventional "condition" code in CLI tooling. The `ExitCodeError` type adds ~10 lines to `main.go` and is clean. `runGenerate` and `runReplay` return `&ExitCodeError{Code: 2, Msg: "infra drops detected"}` when `--fail-on-infra-drops` is set and `stats.InfraDropCount > 0`.
+## Alternatives Considered
 
-`cobra` itself does not expose an exit-code mechanism beyond returning an error from `RunE` — there is no built-in `cmd.SetExitCode()`. Verified: cobra v1.10.2 has no such API.
+| Recommended | Alternative | When to Use Alternative |
+|-------------|-------------|--------------------------|
+| `github.com/modelcontextprotocol/go-sdk` | `github.com/mark3labs/mcp-go` (v0.56.0) | If the MCP surface were large/dynamic (tools registered/deregistered at runtime), or the team wanted the extra convenience of `server.ServeStdio(s)` (bundles SIGINT/SIGTERM handling that go-sdk makes you wire yourself). It's also more widely adopted by raw GitHub stars (8,910 vs. 4,822 as of 2026-07-20) and predates the official SDK by roughly 1.5 years, so tutorials/examples skew toward it. None of that outweighs the stability gap for cpg's fixed, small (7-tool) surface — see rationale below. |
+| Struct-tag `jsonschema` inference (bundled with go-sdk) | Hand-written `jsonschema.Schema` literals, or `invopop/jsonschema` (mcp-go's older, now-superseded schema generator — mcp-go itself migrated to `google/jsonschema-go` by v0.56.0, per its current go.mod) | Only when a field needs constraints structs can't express via tags alone (enum sets, numeric ranges, regex patterns) — then build/customize a `jsonschema.Schema` via `jsonschema.For[T](&jsonschema.ForOptions{...})` and pass it as `Tool.InputSchema`/`OutputSchema` explicitly. |
 
-**Confidence: HIGH** — verified against `main.go` source and cobra v1.10.2 API.
+### Why go-sdk over mcp-go, in detail
 
----
+- **Official standing.** `modelcontextprotocol.io/docs/sdk` lists exactly one Go SDK — `go-sdk`, Tier 1. `mcp-go` does not appear on that page at all; it is a well-regarded third-party implementation, not an officially recognized one.
+- **API stability, evidenced not assumed.** `go-sdk` is `v1.6.1` — a stable major version under semver. `mcp-go` is `v0.56.0` — still pre-1.0, and its own docs currently document **real, recent breaking changes** within the pre-1.0 series: `ClientCapabilities.Sampling`/`ServerCapabilities.Sampling` changed from `*struct{}` to `*mcp.SamplingCapability` (compile-time break), and the struct-tag schema syntax changed from `jsonschema_description:"…"` to `jsonschema:"…"` with `jsonschema:"required"` deprecated in favor of `omitempty` absence. For a milestone that wants to add MCP once and not re-chase the API every few weeks, the stable SDK is the lower-maintenance choice.
+- **Institutional backing.** Maintained in collaboration with Google; MCP itself is stewarded by Anthropic. No other Go option has comparable backing.
+- **Protocol parity where it matters.** Both SDKs implement the same current spec revision (`2025-11-25` — see table below), so there's no functional-completeness gap driving the choice either way.
+- **Structured output fits cpg's query tools directly.** `mcp.AddTool[In, Out]` auto-populates `CallToolResult.StructuredContent` from a typed `Out` return value and auto-infers `OutputSchema` from that type (SEP-2106) — cpg's query tools (dropped flows, generated policies, explain/evidence, cluster health) can return the same Go structs the existing writers/readers already use, with zero manual JSON-schema authoring.
+- **Zero HTTP/transport bloat either way.** Both SDKs ship SSE/StreamableHTTP support in the same module as stdio; cpg only imports/uses `&mcp.StdioTransport{}` regardless of which SDK is picked, so this isn't a differentiator — it's a reason neither choice requires an extra transport dependency (see "What NOT to Use").
 
-## Q4: Hubble Proto DropReasonDesc Stability Across Cilium 1.14 / 1.15 / 1.16
+## What NOT to Use
 
-**Answer: `DropReasonDesc` field (field 25 on `Flow`) is stable. Values are additive — new enum values are appended, no renames or removals in this range. One critical nuance: `POLICY_DENIED` (133) and `POLICY_DENY` (181) coexist; BOTH must be classified as `CategoryPolicy`.**
+| Avoid | Why | Use Instead |
+|-------|-----|--------------|
+| `mcp.SSEHandler` / `mcp.StreamableHTTPHandler` (go-sdk's HTTP transport types) or any HTTP-transport setup | v1.5 scope is stdio-only — the harness spawns `cpg mcp` as a subprocess. HTTP transport pulls in the SDK's OAuth machinery (`golang.org/x/oauth2`, `golang-jwt/jwt/v5`) which is irrelevant here and would add a network-exposed surface + auth code path with nothing exercising or securing it. | `&mcp.StdioTransport{}` only — this was also the coordinator's explicit constraint (no OAuth/authorization; that's an HTTP-transport concern). |
+| `fmt.Println` / `fmt.Printf` / bare `log.Print*` anywhere in the new MCP code | Corrupts the newline-delimited JSON-RPC stream on stdout — the harness sees garbled frames and the session breaks silently or fatally. | The existing package-level `*zap.Logger` (already stderr-only) or `fmt.Fprintln(os.Stderr, ...)`. |
+| Calling `pkg/hubble/writer.go` / `pipeline.go` diff-writer paths with a `nil` `io.Writer` from inside an MCP tool handler | Both default that parameter to `os.Stdout` when nil (pre-existing behavior for the CLI's `--dry-run` diff and v1.3 session-summary block) — silently corrupts stdio framing if triggered from `start_session`. | Pass `io.Discard` or a captured `bytes.Buffer` explicitly through the parameter that already exists for test injection. |
+| A second logging library for the MCP path (slog-only setup, logrus, zerolog, etc.) | Violates the "no new logging lib" constraint and splits structured logs across two pipelines, defeating the point of one `zap`-backed operational log. | `zap`, bridged into go-sdk's `*slog.Logger` hook via `zap/exp/zapslog` (already bundled, no new dependency). |
+| `mark3labs/mcp-go`'s `server.ServeStdio(s)` convenience wrapper | Not applicable once go-sdk is the chosen SDK — this is a note for anyone tempted to mix packages. | `server.Run(ctx, &mcp.StdioTransport{})` + explicit `signal.NotifyContext(...)` (see integration snippet above). |
 
-Key findings from proto inspection:
+## Stack Patterns by Variant
 
-- Field `drop_reason_desc = 25` (type `DropReason`) introduced in Cilium 1.13 to supersede deprecated `uint32 drop_reason = 3`.
-- `POLICY_DENY (181)` was added in Cilium 1.14 as a second policy-denial code distinct from `POLICY_DENIED (133)`. Both are emitted depending on which BPF program path triggers the drop. The taxonomy must classify both as `CategoryPolicy`.
-- `AUTH_REQUIRED (189)`, `CT_NO_MAP_FOUND (190)`, `SNAT_NO_MAP_FOUND (191)` appeared in the 1.14–1.15 range.
-- `DROP_HOST_NOT_READY (202)`, `DROP_EP_NOT_READY (203)`, `DROP_NO_EGRESS_IP (204)`, `DROP_PUNT_PROXY (205)` are 1.15–1.16 additions.
-- No enum value has been renamed or removed (proto numeric stability guarantee).
+**If a tool call must not block indefinitely (e.g. `status` on a stuck capture):**
+- Rely on the `ctx context.Context` that's already the first parameter of every `ToolHandlerFor[In, Out]` handler.
+- Because go-sdk propagates client-side cancellation as a `notifications/cancelled` message directly onto that context (verified in go-sdk's design docs) — no manual polling/timeout plumbing needed beyond a normal `context.WithTimeout` if cpg wants a server-side ceiling too.
 
-`DropReason_UNKNOWN (0)` is emitted when the agent doesn't populate the field (older nodes, or non-drop verdicts). The classifier must return `CategoryUnknown` for 0. The aggregator must still count it in `cluster-health.json` but must not suppress it from policy generation (it might be a genuine policy denial with missing metadata).
+**If a tool's output must be both human-readable (for chat transcripts) and machine-parseable (for the harness to act on):**
+- Return the typed `Out` struct from the handler and leave `CallToolResult.Content` nil.
+- Because go-sdk auto-populates `Content` with JSON text derived from the structured value when `Content` is left unset — cpg gets both channels from a single typed return, no hand-written duplicate text formatting.
 
-At runtime, `f.GetDropReasonDesc()` returns `flowpb.DropReason_DROP_REASON_UNKNOWN` (0) for unset fields — safe default, no nil dereference. Already called at `evidence_writer.go:131` as `f.GetDropReasonDesc().String()`.
+**If the binary is invoked as a kubectl plugin vs. standalone (`cpg mcp` today already inherits this ambiguity from `main.go`):**
+- Reuse the existing `isKubectlPlugin()` helper when constructing `mcp.Implementation{Name: ...}`.
+- Because it's already resolved once at startup for the cobra `Use:` string; the MCP server identity can reflect the same invocation context without a second detection path.
 
-**Confidence: MEDIUM** — proto file verified in module cache (v1.19.1); version range evolution inferred from enum value numbering and proto comments. No cross-referenced changelog, but additive proto guarantee is a Cilium project commitment.
+## Version Compatibility
 
----
-
-## Integration Points
-
-| What changes | File(s) | Change type |
-|---|---|---|
-| New `pkg/health` package | `pkg/health/classifier.go`, `pkg/health/writer.go` | New files |
-| Aggregator drop-reason filter | `pkg/hubble/aggregator.go` | Modify — add `ignoreDropReasons` + `SetIgnoreDropReasons()`, suppress non-policy flows before bucketing |
-| `validIgnoreDropReasons` set | `pkg/hubble/aggregator.go` | Modify — add alongside `validIgnoreProtocols`; keyed on `flowpb.DropReason_value` map |
-| `ValidIgnoreDropReasons()` func | `pkg/hubble/aggregator.go` | New exported func — mirrors `ValidIgnoreProtocols()` |
-| `--ignore-drop-reason` flag | `cmd/cpg/commonflags.go` | Modify — add flag + `validateIgnoreDropReasons()` |
-| `--fail-on-infra-drops` flag | `cmd/cpg/commonflags.go` | Modify — add bool flag |
-| `ExitCodeError` type | `cmd/cpg/main.go` | Modify — ~10 lines, intercept before `os.Exit(1)` |
-| `PipelineConfig` extensions | `pkg/hubble/pipeline.go` | Modify — add `IgnoreDropReasons []string`, `FailOnInfraDrops bool`, `HealthOutputPath string` |
-| `SessionStats` extensions | `pkg/hubble/pipeline.go` | Modify — add `InfraDropCount uint64`, `IgnoredByDropReason map[string]uint64` |
-| `cluster-health.json` write | `pkg/health/writer.go` + wired in `pipeline.go` Finalize section | New logic post-pipeline |
-| Session summary infra block | `pkg/hubble/pipeline.go` `SessionStats.Log()` | Modify |
-
----
-
-## Anti-Additions (Explicitly Out of Scope for v1.3)
-
-| Library / Feature | Why Not |
-|---|---|
-| `prometheus/client_golang` | Metrics export deferred — gather field feedback first (PROJECT.md) |
-| `open-telemetry/opentelemetry-go` | Same deferral as Prometheus |
-| Any semantic policy solver | Shelved (PROJECT.md) |
-| `text/template` for remediation hints | Overkill — static URL constants suffice |
-| `cpg apply` command | Deferred to v1.4+ (PROJECT.md) |
-| Policy consolidation/merging | Deferred to v1.4+ |
-| L7-FUT-* flags | Deferred to v1.4+ |
-| `database/sql` or embedded DB | No persistence layer needed — JSON file output is sufficient |
-
----
+| Package A | Compatible With | Notes |
+|-----------|------------------|-------|
+| `github.com/modelcontextprotocol/go-sdk v1.6.1` | `go 1.25.1` (cpg's module directive) / toolchain `go1.25.12` | SDK's own `go.mod` requires `go 1.25.0` minimum — cpg already exceeds it. Zero toolchain change. |
+| `github.com/modelcontextprotocol/go-sdk v1.6.1` | `golang.org/x/oauth2` (cpg currently pins `v0.34.0` indirect) | SDK requires `v0.35.0` → `go mod tidy` will bump this transitively. The package is unused code for cpg (OAuth is HTTP-transport-only, and cpg is stdio-only) — the bump is inert, not a new attack surface to review. |
+| `github.com/modelcontextprotocol/go-sdk v1.6.1` | `golang.org/x/tools` (cpg currently pins `v0.44.0` indirect) | SDK requires only `v0.42.0`; Go's minimum-version-selection keeps cpg's existing (newer) `v0.44.0` — no change at all. |
+| `github.com/modelcontextprotocol/go-sdk v1.6.1` | `github.com/google/go-cmp v0.7.0` | Already pinned identically in cpg's `go.sum` — no change. |
+| `go.uber.org/zap/exp/zapslog` | `go.uber.org/zap v1.27.1` (cpg's existing pin) | Confirmed present at the exact `v1.27.1` tag via GitHub API — import-only, no version bump. Requires Go 1.21+ (cpg's 1.25.x already clears this). |
+| Protocol spec revision `2025-11-25` (current "latest" per modelcontextprotocol.io) | `go-sdk` v1.4.0 – v1.6.1 (stable channel) **and** `mark3labs/mcp-go` v0.56.0 | Both SDKs are at wire-protocol parity on the current published spec (plus backward compat to `2025-06-18`, `2025-03-26`, `2024-11-05`) — spec support was not a differentiator in the SDK choice. |
+| Protocol spec draft `2026-07-28` | `go-sdk` **v1.7.0-pre.1..pre.3 only** (prerelease, latest `pre.3` published 2026-07-17) | Not yet on modelcontextprotocol.io's public spec pages and not GA in go-sdk. Do not adopt for v1.5 — stay on the `v1.6.1` stable channel and re-check at the next milestone. |
 
 ## Sources
 
-- Verified: `/home/gule/go/pkg/mod/github.com/cilium/cilium@v1.19.1/api/v1/flow/flow.pb.go` — `DropReason` enum constants, `DropReason_name` + `DropReason_value` exported vars
-- Verified: `/home/gule/go/pkg/mod/github.com/cilium/cilium@v1.19.1/api/v1/flow/flow.proto` — complete enum definition (lines 430–end)
-- Verified: `/home/gule/Workspace/team-infrastructure/cpg/pkg/hubble/aggregator.go` — `ValidIgnoreProtocols()` + `validIgnoreProtocols` pattern
-- Verified: `/home/gule/Workspace/team-infrastructure/cpg/pkg/evidence/writer.go` — atomic write pattern (`os.CreateTemp` + `os.Rename`)
-- Verified: `/home/gule/Workspace/team-infrastructure/cpg/cmd/cpg/main.go` — current `os.Exit(1)` on `Execute()` error
-- Verified: `/home/gule/Workspace/team-infrastructure/cpg/go.mod` — all existing dependency versions (cilium/cilium v1.19.1, cobra v1.10.2)
+- Context7 `/modelcontextprotocol/go-sdk` — stdio transport (`StdioTransport`, `server.Run`), `AddTool`/`ToolHandlerFor` signatures, struct-tag schema inference, `ServerOptions.Logger` default, `ToolAnnotations`, `LoggingTransport` debug helper
+- Context7 `/mark3labs/mcp-go` — `ServeStdio`, `WithInputSchema`/`WithOutputSchema`, `NewToolResultStructured`, breaking-change history (Sampling capability type change, schema tag rename)
+- Context7 `/uber-go/zap` — `zapslog.NewHandler` usage
+- https://modelcontextprotocol.io/docs/sdk — official SDK tier listing; Go = Tier 1, `mcp-go` absent (user-directed source, treated as authority per instructions)
+- https://modelcontextprotocol.io/specification/latest — current spec revision `2025-11-25` (user-directed source)
+- https://modelcontextprotocol.io/docs/develop/build-server (Go tab) — official Go quickstart: `go get github.com/modelcontextprotocol/go-sdk/mcp`, stdio logging guidance ("never use fmt.Println/fmt.Printf... use log.Println() which defaults to stderr"), `go 1.24+` system requirement
+- https://github.com/modelcontextprotocol/go-sdk — README (Google collaboration statement), `releases` (v1.6.1 stable 2026-05-22; v1.7.0-pre.1..3 prereleases through 2026-07-17), `go.mod` at the `v1.6.1` tag (dependency list, `go 1.25.0` directive)
+- https://raw.githubusercontent.com/modelcontextprotocol/go-sdk/v1.6.1/mcp/logging.go — `ensureLogger` default (`slog.New(slog.DiscardHandler)`)
+- https://raw.githubusercontent.com/modelcontextprotocol/go-sdk/v1.6.1/mcp/server.go — `Server.Run` has no built-in signal handling (only `ctx.Done()` vs. session-closed select)
+- https://github.com/mark3labs/mcp-go — README (protocol `2025-11-25` support statement), `releases` (v0.56.0, 2026-07-09), `go.mod` at the `v0.56.0` tag
+- https://raw.githubusercontent.com/uber-go/zap/master/config.go — `NewProductionConfig`/`NewDevelopmentConfig` both default `OutputPaths`/`ErrorOutputPaths` to `["stderr"]`
+- GitHub REST API (`gh api`) — repo stats as of 2026-07-20 (go-sdk: 4,822 stars / 68 open issues / pushed 2026-07-17; mcp-go: 8,910 stars / 36 open issues / pushed 2026-07-09); confirmed `exp/zapslog` present in the `uber-go/zap` repo at the `v1.27.1` tag
+- Local repo inspection — `/home/gule/Workspace/team-infrastructure/cpg/go.mod`, `go.sum`, `cmd/cpg/main.go` (`buildLogger`, cobra wiring), `pkg/hubble/writer.go`, `pkg/hubble/pipeline.go` (existing `os.Stdout`-defaulting `io.Writer` seams), `pkg/hubble/pipeline.go` (`golang.org/x/sync/errgroup` usage)
+
+---
+*Stack research for: MCP server integration (readonly, stdio transport) for cpg v1.5*
+*Researched: 2026-07-20*
