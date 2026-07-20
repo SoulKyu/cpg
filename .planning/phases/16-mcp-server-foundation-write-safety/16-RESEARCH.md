@@ -516,6 +516,8 @@ func TestMCPStdoutPurity(t *testing.T) {
 }
 ```
 
+> **Correction (revision) — one transport pair per session:** The skeleton above calls `clientTransport.Connect(ctx)` a SECOND time (for the unknown-method scenario) after `client.Connect(ctx, clientTransport, nil)` already consumed that transport half. Each `InMemoryTransport` half is a single `net.Pipe()` end and go-sdk's `Transport.Connect` is contractually "called exactly once" (transport.go:124) — the double `Connect` can hang or flake under `go test -race`. Fix: run the unknown-method scenario against its OWN independent `mcp.NewInMemoryTransports()` pair + its own `runMCPServer` goroutine, sharing only the single `os.Stdout` `os.Pipe` capture (mirrors go-sdk's own `mcp/server_test.go` one-pair-per-session precedent). Plan 16-03 Task 2 implements this split; extend the same one-pair-per-scenario shape in Phases 17-19.
+
 ### Cobra flag-error path (D-04, scenario 4 — structurally separate mechanism)
 
 ```go
@@ -548,22 +550,25 @@ Nearly every load-bearing claim in this document was independently verified this
 
 **If this table looks thin:** that is accurate, not an oversight — this phase's scope maps unusually cleanly onto directly-verifiable SDK/library/codebase facts.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **What exactly does "explicitly wired" mean for `diffOut` given it has no external setter?**
    - What we know: `policyWriter.diffOut` (`pkg/hubble/writer.go:35`) is a field on an **unexported** struct, set only inside `pkg/hubble`'s own `RunPipelineWithSource` via `newPolicyWriter(...)` — the caller (future `pkg/session`, and this phase's `cmd/cpg/mcp.go`) has **no hook** to set it. It only matters when `cfg.DryRun == true`; the milestone STACK.md's own guidance says MCP sessions must never set `DryRun: true`.
    - What's unclear: whether D-02's "explicitly wired to stderr" is satisfied structurally (document + assert "MCP mode never sets `DryRun: true`", making `diffOut` provably dead code — zero `pkg/hubble` changes) or requires a small additive `PipelineConfig.DiffOut io.Writer` field threaded into `newPolicyWriter` (defense-in-depth, consistent with D-01's "explicit wiring PLUS a global backstop" philosophy, but a `pkg/hubble` modification ARCHITECTURE.md's build order otherwise marks "unmodified").
    - Recommendation: default to the structural/zero-`pkg/hubble`-change option for Phase 16 (nothing calls `RunPipeline` this phase regardless, so the risk is currently zero either way) and revisit if Phase 17's session design ends up wanting a preview/dry-run tool. Flag explicitly for the planner to decide rather than silently picking one.
+   - **RESOLVED (Plan 16-03 objective — structural decision):** The structural / zero-`pkg/hubble`-change option was adopted. Plan 16-03's objective locks "NO `pkg/hubble` change": `diffOut` only matters when `DryRun == true`, MCP mode never sets it, and Phase 16 registers zero tools / never calls `RunPipeline`, so `diffOut` is provably dead code this phase. D-02's intent is honored via a small `mcpModeStdout()` helper (returns `os.Stderr`) pinned by the D-05 seam-audit test — no additive `PipelineConfig.DiffOut` field. Forward-tracked: Phase 17 must call `mcpModeStdout()` when it builds the first MCP-mode `PipelineConfig` (see Plan 16-03's "Handoff to Phase 17" note).
 
 2. **File permission preservation through `os.CreateTemp` + `os.Rename` for SEC-02.**
    - What we know: `os.CreateTemp` creates files at mode `0600` by default (Go stdlib behavior), not `0644`. The existing `pkg/evidence/writer.go`/`pkg/hubble/health_writer.go` atomic writers write JSON that nothing else reads permission-sensitively; `pkg/output/writer.go`'s current direct `os.WriteFile(path, data, 0644)` explicitly sets `0644`.
    - What's unclear: whether `os.Rename` preserves the **temp file's** mode (0600) onto the final path, silently changing generated policy YAML from `0644` to `0600` — this would be an observable regression (GitOps tooling/other readers expecting `0644`) not caught by any of `pkg/output/writer_test.go`'s existing assertions except `TestWriter_FilePermissions` (which explicitly asserts `os.FileMode(0644)` and WOULD catch a regression here — good, but only if the planner keeps this test running against the new code path, which it will by default since it's the same test file).
    - Recommendation: after `os.CreateTemp`, explicitly `os.Chmod(tmpPath, 0644)` before `os.Rename`, OR verify via a quick local experiment that `os.Rename` preserves the destination's semantics some other way. `TestWriter_FilePermissions` (already exists, unchanged) is the correctness gate — make sure it passes, don't just assume.
+   - **RESOLVED (Plan 16-01 Task 1, step 4 — atomic-writer chmod):** The explicit `os.Chmod(tmpPath, 0644)`-before-`os.Rename` recommendation was adopted. Plan 16-01 Task 1 step 4 chmods the temp file to 0644 between `tmp.Close()` and the rename (a deliberate deviation from the evidence/health analogs, which never chmod), so generated policy YAML keeps its 0644 mode instead of `os.CreateTemp`'s default 0600. `TestWriter_FilePermissions` (writer_test.go:126) remains the regression gate.
 
 3. **Exact placement of the `runMCPServer` test-injection seam relative to zap logger construction.**
    - What we know: `runMCPServer` as sketched reaches for the package-level `logger` var directly (matching `generate.go`/`replay.go`/`explain.go`'s existing convention), which means SRV-03's log-bridging behavior is testable via the existing `initObservedLoggerForTesting(t)` helper.
    - What's unclear: whether the planner wants `runMCPServer` to assert/require `logger != nil` explicitly (defensive), given `PersistentPreRunE` always sets it in production but a hand-constructed test call to `runMCPServer` could theoretically skip that if `initLoggerForTesting`/`initObservedLoggerForTesting` isn't called first.
    - Recommendation: low-stakes; a nil-`logger` would panic on `.Core()` immediately and loudly in any test that forgets the setup helper — acceptable fail-fast behavior, no special-casing needed.
+   - **RESOLVED (research recommendation adopted — no special-casing):** The low-stakes "no defensive nil-`logger` check" recommendation was adopted. Plan 16-03's `runMCPServer` reads the package-level `logger` directly (matching the generate/replay/explain convention); a nil `logger` panics loudly on `.Core()` in any test that forgets `initLoggerForTesting`/`initObservedLoggerForTesting` — acceptable fail-fast, no special-casing added.
 
 ## Environment Availability
 
