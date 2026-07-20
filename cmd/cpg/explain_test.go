@@ -68,6 +68,20 @@ func TestRenderYAML(t *testing.T) {
 	assert.Contains(t, buf.String(), "matched_rules:")
 }
 
+// TestWriteRuleEmptyDirection guards against a panic when a rule from malformed
+// or hand-edited evidence JSON has an empty Direction. Indexing Direction[:1]
+// would slice-bounds-panic; the guarded title falls back to "Rule".
+func TestWriteRuleEmptyDirection(t *testing.T) {
+	r := sampleEvidence().Rules[0]
+	r.Direction = ""
+
+	buf := new(bytes.Buffer)
+	require.NotPanics(t, func() {
+		writeRule(buf, colorizer{enabled: false}, r, 10)
+	})
+	assert.Contains(t, buf.String(), "Rule")
+}
+
 func httpRuleEvidence() evidence.RuleEvidence {
 	return evidence.RuleEvidence{
 		Key: "egress:ep:app=api:TCP:80:http:GET:^/api/v1/users$", Direction: "egress",

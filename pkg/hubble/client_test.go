@@ -10,7 +10,12 @@ import (
 	observerpb "github.com/cilium/cilium/api/v1/observer"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest"
+	"go.uber.org/zap/zaptest/observer"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // mockStream implements the flowStream interface for testing.
@@ -102,7 +107,7 @@ func TestClient_StreamDroppedFlows(t *testing.T) {
 		},
 	}
 
-	flows, lostEvents := streamFromSource(stream, logger, nil)
+	flows, lostEvents := streamFromSource(stream, logger, nil, nil)
 
 	var receivedFlows []*flowpb.Flow
 	var receivedLost []*flowpb.LostEvent
@@ -134,7 +139,7 @@ func TestClient_StreamContextCancel(t *testing.T) {
 	// Stream that blocks until context is cancelled
 	stream := &blockingStream{ctx: ctx}
 
-	flows, lostEvents := streamFromSource(stream, logger, nil)
+	flows, lostEvents := streamFromSource(stream, logger, nil, nil)
 
 	// Cancel context to trigger shutdown
 	cancel()
@@ -163,7 +168,7 @@ func TestClient_StreamError(t *testing.T) {
 		err: io.ErrUnexpectedEOF,
 	}
 
-	flows, lostEvents := streamFromSource(stream, logger, nil)
+	flows, lostEvents := streamFromSource(stream, logger, nil, nil)
 
 	// Both channels should close without panic
 	timeout := time.After(2 * time.Second)
@@ -201,7 +206,7 @@ func TestClient_SkipsNonDroppedFlowResponses(t *testing.T) {
 		},
 	}
 
-	flows, lostEvents := streamFromSource(stream, logger, nil)
+	flows, lostEvents := streamFromSource(stream, logger, nil, nil)
 
 	var receivedFlows []*flowpb.Flow
 	done := make(chan struct{})
@@ -218,6 +223,92 @@ func TestClient_SkipsNonDroppedFlowResponses(t *testing.T) {
 	<-done
 
 	require.Len(t, receivedFlows, 1, "should only receive the actual flow, skipping nil responses")
+}
+
+// TestStreamFromSource_SurfacesTransportError verifies that a genuine transport
+// failure (non-EOF, context not cancelled) is logged at Warn and sent on errCh,
+// while a clean io.EOF neither logs at Warn nor emits an error — so a real
+// mid-capture failure is distinguishable from a completed stream.
+func TestStreamFromSource_SurfacesTransportError(t *testing.T) {
+	tests := []struct {
+		name        string
+		recvErr     error
+		wantErrSent bool
+		wantWarn    bool
+	}{
+		{
+			name:        "transport failure surfaces error at warn",
+			recvErr:     io.ErrUnexpectedEOF,
+			wantErrSent: true,
+			wantWarn:    true,
+		},
+		{
+			name:        "clean EOF is silent",
+			recvErr:     io.EOF,
+			wantErrSent: false,
+			wantWarn:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			core, logs := observer.New(zapcore.DebugLevel)
+			logger := zap.New(core)
+
+			stream := &errorStream{ctx: context.Background(), err: tt.recvErr}
+			errCh := make(chan error, 1)
+
+			flows, lostEvents := streamFromSource(stream, logger, nil, errCh)
+
+			// Drain both data channels so the goroutine runs to completion.
+			for range flows {
+			}
+			for range lostEvents {
+			}
+
+			var gotErr error
+			var errOpen bool
+			select {
+			case gotErr, errOpen = <-errCh:
+			case <-time.After(2 * time.Second):
+				t.Fatal("timed out waiting for errCh to resolve")
+			}
+
+			if tt.wantErrSent {
+				require.True(t, errOpen, "errCh must yield an error before closing")
+				require.Error(t, gotErr)
+				assert.ErrorIs(t, gotErr, tt.recvErr)
+			} else {
+				assert.False(t, errOpen, "errCh must be closed with no error on clean EOF")
+			}
+
+			warns := logs.FilterLevelExact(zapcore.WarnLevel).All()
+			if tt.wantWarn {
+				assert.NotEmpty(t, warns, "transport failure must log at Warn")
+			} else {
+				assert.Empty(t, warns, "clean EOF must not log at Warn")
+			}
+		})
+	}
+}
+
+// TestWaitForConnReady_TimesOutOnUnreachableRelay verifies the --timeout knob is
+// actually applied to connection establishment: an unreachable relay must fail
+// fast within the configured timeout instead of blocking indefinitely.
+func TestWaitForConnReady_TimesOutOnUnreachableRelay(t *testing.T) {
+	// TEST-NET-1 (RFC 5737) is guaranteed unroutable, so the TCP connect hangs
+	// and the connection never reaches Ready.
+	conn, err := grpc.NewClient("192.0.2.1:9999", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+
+	start := time.Now()
+	err = waitForConnReady(context.Background(), conn, 200*time.Millisecond)
+	elapsed := time.Since(start)
+
+	require.Error(t, err, "unreachable relay must return a connection error")
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Less(t, elapsed, 2*time.Second, "must fail fast, close to the configured timeout")
 }
 
 // blockingStream blocks on Recv until context is cancelled.

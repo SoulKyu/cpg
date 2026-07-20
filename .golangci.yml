@@ -10,6 +10,7 @@ linters:
     - errcheck
     - staticcheck
     - unused
+    - errorlint
 
   settings:
     errcheck:

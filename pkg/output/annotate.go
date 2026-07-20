@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	slim_metav1 "github.com/cilium/cilium/pkg/k8s/slim/k8s/apis/meta/v1"
 	"github.com/cilium/cilium/pkg/policy/api"
 )
 
@@ -89,16 +90,51 @@ func describePeer(endpoints []api.EndpointSelector, entities api.EntitySlice, ci
 		}
 		return fmt.Sprintf("%s CIDR %s", direction, strings.Join(cidrStrs, ", "))
 	}
-	if len(endpoints) > 0 && endpoints[0].LabelSelector != nil && len(endpoints[0].LabelSelector.MatchLabels) > 0 {
-		lbls := endpoints[0].LabelSelector.MatchLabels
-		parts := make([]string, 0, len(lbls))
-		for k, v := range lbls {
-			parts = append(parts, k+"="+v)
+	if len(endpoints) > 0 {
+		descs := make([]string, 0, len(endpoints))
+		for _, ep := range endpoints {
+			if d := describeSelector(ep); d != "" {
+				descs = append(descs, d)
+			}
 		}
-		sort.Strings(parts)
-		return fmt.Sprintf("%s %s", direction, strings.Join(parts, ", "))
+		if len(descs) > 0 {
+			return fmt.Sprintf("%s %s", direction, strings.Join(descs, " or "))
+		}
 	}
 	return direction + " any"
+}
+
+// describeSelector renders a single endpoint selector, folding both its
+// MatchLabels and its MatchExpressions into one comma-separated clause. It
+// returns "" only for a truly empty selector (which matches any endpoint).
+func describeSelector(ep api.EndpointSelector) string {
+	if ep.LabelSelector == nil {
+		return ""
+	}
+	parts := make([]string, 0, len(ep.MatchLabels)+len(ep.MatchExpressions))
+	for k, v := range ep.MatchLabels {
+		parts = append(parts, k+"="+v)
+	}
+	for _, expr := range ep.MatchExpressions {
+		parts = append(parts, describeMatchExpression(expr))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ", ")
+}
+
+func describeMatchExpression(expr slim_metav1.LabelSelectorRequirement) string {
+	switch expr.Operator {
+	case slim_metav1.LabelSelectorOpExists:
+		return expr.Key + " exists"
+	case slim_metav1.LabelSelectorOpDoesNotExist:
+		return expr.Key + " does not exist"
+	case slim_metav1.LabelSelectorOpIn:
+		return fmt.Sprintf("%s in (%s)", expr.Key, strings.Join(expr.Values, ", "))
+	case slim_metav1.LabelSelectorOpNotIn:
+		return fmt.Sprintf("%s not in (%s)", expr.Key, strings.Join(expr.Values, ", "))
+	default:
+		return fmt.Sprintf("%s %s %s", expr.Key, expr.Operator, strings.Join(expr.Values, ", "))
+	}
 }
 
 func describeTraffic(ports api.PortRules, icmps api.ICMPRules) string {

@@ -22,6 +22,15 @@ func MergePolicy(existing, incoming *ciliumv2.CiliumNetworkPolicy) *ciliumv2.Cil
 		return result
 	}
 
+	// The existing policy may carry a nil Spec — e.g. a metadata-only stub, a
+	// truncated/hand-edited file, or a CNP authored with the `specs:` plural
+	// form. Dereferencing result.Spec below would then panic, so adopt the
+	// incoming Spec wholesale (there is nothing on the existing side to merge).
+	if result.Spec == nil {
+		result.Spec = incoming.Spec.DeepCopy()
+		return result
+	}
+
 	// Merge ingress rules
 	for _, inRule := range incoming.Spec.Ingress {
 		merged := false
@@ -363,11 +372,19 @@ func mergeICMPRules(existing, incoming api.ICMPRules) api.ICMPRules {
 	}
 
 	result := make(api.ICMPRules, 1)
-	result[0].Fields = append(result[0].Fields, existing[0].Fields...)
-
 	seen := make(map[string]struct{})
-	for _, f := range existing[0].Fields {
-		seen[icmpFieldKey(f)] = struct{}{}
+
+	// Seed from ALL existing ICMPRule entries (not just existing[0]): a
+	// disk/cluster-sourced policy may list `icmps: [{...}, {...}]`, and
+	// dropping existing[1:] would silently narrow a hand-authored allowlist.
+	for _, er := range existing {
+		for _, f := range er.Fields {
+			key := icmpFieldKey(f)
+			if _, dup := seen[key]; !dup {
+				result[0].Fields = append(result[0].Fields, f)
+				seen[key] = struct{}{}
+			}
+		}
 	}
 
 	for _, ir := range incoming {

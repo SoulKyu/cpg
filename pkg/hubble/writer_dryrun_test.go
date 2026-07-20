@@ -80,3 +80,58 @@ func TestDryRunEmitsDiffWhenExistingChanges(t *testing.T) {
 	entries := logs.FilterMessage("would write policy").All()
 	assert.Len(t, entries, 1)
 }
+
+// TestPolicyWriteFailureIncrementsFailedCounter is a regression guard: a policy
+// whose on-disk write fails must be counted in PoliciesFailed (not silently
+// dropped from every counter), so the session summary does not overstate that
+// all policies persisted.
+func TestPolicyWriteFailureIncrementsFailedCounter(t *testing.T) {
+	tmp := t.TempDir()
+	// Make the writer's output root a regular file so MkdirAll of the namespace
+	// subdirectory fails, forcing writer.Write to return an error.
+	blocker := filepath.Join(tmp, "blocked")
+	require.NoError(t, os.WriteFile(blocker, []byte("not a dir"), 0o644))
+
+	logger := zap.NewNop()
+	stats := &SessionStats{}
+	pw := newPolicyWriter(output.NewWriter(blocker, logger), nil, stats, logger)
+
+	pe := policy.PolicyEvent{
+		Namespace: "prod", Workload: "api", Policy: simplePolicy("cpg-api", "prod"),
+	}
+	pw.handle(pe)
+
+	assert.Equal(t, uint64(1), stats.PoliciesFailed, "failed write must increment PoliciesFailed")
+	assert.Equal(t, uint64(0), stats.PoliciesWritten)
+	assert.Equal(t, uint64(0), stats.PoliciesSkipped)
+}
+
+// TestDryRunEmitWarnsOnReadExistingError verifies finding-6: a genuine IO error
+// reading the existing on-disk policy (not os.IsNotExist) is surfaced as a
+// warning so the operator knows the dry-run diff may be inaccurate, rather than
+// being silently collapsed to a misleading full-addition diff.
+func TestDryRunEmitWarnsOnReadExistingError(t *testing.T) {
+	tmp := t.TempDir()
+
+	// Create prod/api.yaml as a DIRECTORY so os.ReadFile returns EISDIR — a
+	// non-NotExist error that ReadExisting propagates verbatim.
+	existingPath := filepath.Join(tmp, "prod", "api.yaml")
+	require.NoError(t, os.MkdirAll(existingPath, 0o755))
+
+	core, logs := observer.New(zapcore.WarnLevel)
+	logger := zap.New(core)
+
+	stats := &SessionStats{}
+	pw := newPolicyWriter(output.NewWriter(tmp, logger), nil, stats, logger)
+	pw.dryRun = true
+	pw.dryRunDiff = true
+	pw.diffOut = new(bytes.Buffer)
+
+	pe := policy.PolicyEvent{
+		Namespace: "prod", Workload: "api", Policy: simplePolicy("cpg-api", "prod"),
+	}
+	pw.dryRunEmit(pe)
+
+	warns := logs.FilterMessage("dry-run: reading existing policy failed; diff may be inaccurate").All()
+	assert.Len(t, warns, 1, "a non-NotExist ReadExisting error must be warned about")
+}

@@ -414,6 +414,22 @@ func TestBuildPolicy_L7Enabled_DNS_SingleQuery(t *testing.T) {
 
 	// DNS-02: companion rule present.
 	testdata.AssertHasKubeDNSCompanion(t, p)
+
+	// A DNS-consumed egress flow must NOT also emit a bare ToCIDR :53 rule:
+	// the resolver IP was the world-identity destination, but DNS is covered
+	// by the dedicated ToFQDNs rule (+ kube-dns companion). Any leftover
+	// ToCIDR/ToPorts :53 rule would be a redundant hardcoded resolver allow.
+	for _, eg := range p.Spec.Egress {
+		if len(eg.ToCIDR) == 0 {
+			continue
+		}
+		for _, pr := range eg.ToPorts {
+			for _, port := range pr.Ports {
+				assert.NotEqual(t, "53", port.Port,
+					"DNS-consumed flow must not emit a bare toCIDR :53 rule; got %+v", eg)
+			}
+		}
+	}
 }
 
 // TestBuildPolicy_L7Enabled_DNS_MultipleQueries asserts that two distinct

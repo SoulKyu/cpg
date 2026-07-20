@@ -75,6 +75,37 @@ func TestMergeExtendsExistingRule(t *testing.T) {
 	assert.Len(t, r.Samples, 5)
 }
 
+func TestMergeDedupsContributingSessions(t *testing.T) {
+	existing := NewSkeleton(PolicyRef{Name: "p", Namespace: "ns", Workload: "w"})
+	existing.Sessions = []SessionInfo{{ID: "s1", StartedAt: ts(0), EndedAt: ts(10)}}
+	existing.Rules = []RuleEvidence{{
+		Key: "ingress:ep:app=x:TCP:80", Direction: "ingress",
+		Port: "80", Protocol: "TCP",
+		ContributingSessions: []string{"s1"},
+	}}
+
+	// Same session flushes twice more against the same rule (live capture).
+	for range 2 {
+		newRule := RuleEvidence{
+			Key: "ingress:ep:app=x:TCP:80", Direction: "ingress",
+			Port: "80", Protocol: "TCP",
+			ContributingSessions: []string{"s1"},
+		}
+		Merge(&existing, SessionInfo{ID: "s1", StartedAt: ts(0)}, []RuleEvidence{newRule}, MergeCaps{MaxSamples: 10, MaxSessions: 10})
+	}
+
+	// A genuinely new session then contributes.
+	newRule := RuleEvidence{
+		Key: "ingress:ep:app=x:TCP:80", Direction: "ingress",
+		Port: "80", Protocol: "TCP",
+		ContributingSessions: []string{"s2"},
+	}
+	Merge(&existing, SessionInfo{ID: "s2", StartedAt: ts(20)}, []RuleEvidence{newRule}, MergeCaps{MaxSamples: 10, MaxSessions: 10})
+
+	assert.Equal(t, []string{"s1", "s2"}, existing.Rules[0].ContributingSessions,
+		"duplicate session IDs must be collapsed, order preserved")
+}
+
 func TestMergeCapsSamplesFIFO(t *testing.T) {
 	existing := NewSkeleton(PolicyRef{Name: "p"})
 	existing.Sessions = []SessionInfo{{ID: "s1", StartedAt: ts(0), EndedAt: ts(10)}}

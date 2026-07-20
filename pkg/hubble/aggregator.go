@@ -528,7 +528,12 @@ func (a *Aggregator) flush(buckets map[AggKey][]*flowpb.Flow, out chan<- policy.
 // monitorLostEvents accumulates LostEvents and logs an aggregated warning
 // every 30 seconds instead of per-event to avoid log spam. On context
 // cancellation, logs a final summary if any events were lost.
-func monitorLostEvents(ctx context.Context, ch <-chan *flowpb.LostEvent, logger *zap.Logger) error {
+//
+// total receives the running lost-event count so the caller can surface it on
+// SessionStats after g.Wait() (the count is stored on every exit path). Pass a
+// non-nil pointer; it is read only after this goroutine has returned, so a
+// plain atomic keeps the read race-free.
+func monitorLostEvents(ctx context.Context, ch <-chan *flowpb.LostEvent, total *atomic.Uint64, logger *zap.Logger) error {
 	var totalLost uint64
 	var periodLost uint64
 
@@ -544,6 +549,7 @@ func monitorLostEvents(ctx context.Context, ch <-chan *flowpb.LostEvent, logger 
 						zap.Uint64("total_lost", totalLost),
 					)
 				}
+				total.Store(totalLost)
 				return nil
 			}
 			periodLost += le.NumEventsLost
@@ -564,6 +570,7 @@ func monitorLostEvents(ctx context.Context, ch <-chan *flowpb.LostEvent, logger 
 					zap.Uint64("total_lost", totalLost),
 				)
 			}
+			total.Store(totalLost)
 			return nil
 		}
 	}

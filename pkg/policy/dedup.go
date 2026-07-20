@@ -62,15 +62,45 @@ func normalizeRule(r *api.Rule) {
 		}
 	}
 
-	// Sort ingress rules by key
-	sort.Slice(r.Ingress, func(i, j int) bool {
+	// Sort ingress rules by key. SliceStable keeps input order for any pair
+	// whose keys still tie (genuinely identical rules serialize the same, so
+	// their relative order is irrelevant to the byte comparison).
+	sort.SliceStable(r.Ingress, func(i, j int) bool {
 		return ingressRuleKey(r.Ingress[i]) < ingressRuleKey(r.Ingress[j])
 	})
 
-	// Sort egress rules by key
-	sort.Slice(r.Egress, func(i, j int) bool {
+	// Sort egress rules by key.
+	sort.SliceStable(r.Egress, func(i, j int) bool {
 		return egressRuleKey(r.Egress[i]) < egressRuleKey(r.Egress[j])
 	})
+}
+
+// ruleContentParts returns discriminator strings for a rule's ToPorts/ICMPs so
+// two rules targeting the SAME peer but differing in type (ports vs ICMP), in
+// their port/proto set, or in their L7 payload get DISTINCT sort keys. Without
+// these, a same-peer [ports, icmp] pair collides on one key and normalizeRule's
+// sort leaves them in input order, making PoliciesEquivalent order-dependent.
+func ruleContentParts(ports api.PortRules, icmps api.ICMPRules) []string {
+	var parts []string
+	for _, pr := range ports {
+		for _, p := range pr.Ports {
+			parts = append(parts, "port:"+p.Port+"/"+string(p.Protocol))
+		}
+		if pr.Rules != nil {
+			for _, h := range pr.Rules.HTTP {
+				parts = append(parts, "http:"+httpRuleKey(h))
+			}
+			for _, d := range pr.Rules.DNS {
+				parts = append(parts, "dns:"+dnsRuleKey(d))
+			}
+		}
+	}
+	for _, ir := range icmps {
+		for _, f := range ir.Fields {
+			parts = append(parts, "icmp:"+icmpFieldKey(f))
+		}
+	}
+	return parts
 }
 
 // sortL7Rules deterministically sorts L7 sub-lists on a PortRule so YAML
@@ -126,6 +156,7 @@ func ingressRuleKey(r api.IngressRule) string {
 	for _, entity := range r.FromEntities {
 		parts = append(parts, "entity:"+string(entity))
 	}
+	parts = append(parts, ruleContentParts(r.ToPorts, r.ICMPs)...)
 	sort.Strings(parts)
 	return fmt.Sprintf("%v", parts)
 }
@@ -149,6 +180,10 @@ func egressRuleKey(r api.EgressRule) string {
 	for _, entity := range r.ToEntities {
 		parts = append(parts, "entity:"+string(entity))
 	}
+	for _, fqdn := range r.ToFQDNs {
+		parts = append(parts, "fqdn:"+fqdn.MatchName+"|"+fqdn.MatchPattern)
+	}
+	parts = append(parts, ruleContentParts(r.ToPorts, r.ICMPs)...)
 	sort.Strings(parts)
 	return fmt.Sprintf("%v", parts)
 }

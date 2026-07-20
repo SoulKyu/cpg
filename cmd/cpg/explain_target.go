@@ -32,11 +32,13 @@ func resolveFromYAML(path string) (explainTarget, error) {
 	if err != nil {
 		return explainTarget{}, fmt.Errorf("reading %s: %w", path, err)
 	}
+	// sigs.k8s.io/yaml converts YAML to JSON and unmarshals via encoding/json,
+	// which honors `json:` tags only — `yaml:` tags would be silently ignored.
 	type meta struct {
 		Metadata struct {
-			Name      string `yaml:"name"`
-			Namespace string `yaml:"namespace"`
-		} `yaml:"metadata"`
+			Name      string `json:"name"`
+			Namespace string `json:"namespace"`
+		} `json:"metadata"`
 	}
 	var m meta
 	if err := sigyaml.Unmarshal(data, &m); err != nil {

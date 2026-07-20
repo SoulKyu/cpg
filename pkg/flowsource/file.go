@@ -91,6 +91,11 @@ func (s *FileSource) StreamDroppedFlows(ctx context.Context, _ []string, _ bool)
 
 		lineNum := 0
 		for scanner.Scan() {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 			lineNum++
 			s.stats.linesRead.Add(1)
 			line := strings.TrimSpace(scanner.Text())
@@ -120,7 +125,20 @@ func (s *FileSource) StreamDroppedFlows(ctx context.Context, _ []string, _ bool)
 			}
 		}
 		if err := scanner.Err(); err != nil {
-			s.logger.Warn("scanner error", zap.Error(err))
+			// A scanner error (e.g. bufio.ErrTooLong on a single line exceeding
+			// defaultScannerBufferBytes) terminates the loop, so every subsequent
+			// flow in the file is dropped rather than per-line skipped. Surface this
+			// as a truncated replay at Error level instead of a success-looking
+			// "replay complete", which would hide the partial failure.
+			s.logger.Error("replay truncated: scanner error, remaining flows not processed",
+				zap.Error(err),
+				zap.Int("last_line", lineNum),
+				zap.Int64("lines_read", s.stats.linesRead.Load()),
+				zap.Int64("flows_dropped", s.stats.flowsEmitted.Load()),
+				zap.Int64("non_dropped_skipped", s.stats.nonDroppedSkipped.Load()),
+				zap.Int64("malformed_skipped", s.stats.malformed.Load()),
+			)
+			return
 		}
 		s.logger.Info("replay complete",
 			zap.Int64("lines_read", s.stats.linesRead.Load()),

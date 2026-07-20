@@ -55,7 +55,10 @@ func renderText(w io.Writer, pe evidence.PolicyEvidence, matched []evidence.Rule
 }
 
 func writeRule(w io.Writer, c colorizer, r evidence.RuleEvidence, limit int) {
-	title := strings.ToUpper(r.Direction[:1]) + r.Direction[1:] + " rule"
+	title := "Rule"
+	if r.Direction != "" {
+		title = strings.ToUpper(r.Direction[:1]) + r.Direction[1:] + " rule"
+	}
 	fmt.Fprintf(w, "%s%s%s\n", c.green(), title, c.reset())
 	fmt.Fprintf(w, "  Peer:        %s\n", peerSummary(r.Peer))
 	fmt.Fprintf(w, "  Port:        %s/%s\n", r.Port, r.Protocol)

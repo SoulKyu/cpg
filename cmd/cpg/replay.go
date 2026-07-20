@@ -55,7 +55,10 @@ func runReplay(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	ignoreDropReasons, err := validateIgnoreDropReasons(f.ignoreDropReasons, logger)
+	// FILTER-03: PreRunE (validateCommonFlags) already validated these flags and
+	// emitted any redundancy warning. Pass a nil logger here so this re-validation
+	// stays silent and the warning is not duplicated per invocation.
+	ignoreDropReasons, err := validateIgnoreDropReasons(f.ignoreDropReasons, nil)
 	if err != nil {
 		return err
 	}

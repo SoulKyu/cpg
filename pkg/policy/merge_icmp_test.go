@@ -4,8 +4,12 @@ import (
 	"testing"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
+	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
+	"github.com/cilium/cilium/pkg/policy/api"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/SoulKyu/cpg/pkg/policy"
 	"github.com/SoulKyu/cpg/pkg/policy/testdata"
@@ -96,6 +100,66 @@ func TestMergePolicy_ICMPNewTypeMerged(t *testing.T) {
 	require.Len(t, merged.Spec.Ingress, 1)
 	require.Len(t, merged.Spec.Ingress[0].ICMPs, 1)
 	assert.Len(t, merged.Spec.Ingress[0].ICMPs[0].Fields, 2)
+}
+
+// icmpv4Field builds an IPv4 ICMPField for the given type. Mirrors the shape
+// BuildPolicy emits, but lets a test hand-assemble multi-entry ICMPs slices
+// that generated policies never produce.
+func icmpv4Field(icmpType int32) api.ICMPField {
+	t := intstr.FromInt32(icmpType)
+	return api.ICMPField{Family: "IPv4", Type: &t}
+}
+
+// TestMergePolicy_MultiEntryExistingICMPPreserved locks the fix: an existing
+// disk/cluster policy whose ingress rule carries MORE THAN ONE ICMPRule entry
+// (`icmps: [{...}, {...}]`, valid Cilium) must not lose existing[1:] on merge.
+func TestMergePolicy_MultiEntryExistingICMPPreserved(t *testing.T) {
+	// Existing: same peer, two ICMPRule entries (type 8 and type 0).
+	existing := &ciliumv2.CiliumNetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "cpg-server", Namespace: "default"},
+		Spec: &api.Rule{
+			Ingress: []api.IngressRule{
+				{
+					IngressCommonRule: api.IngressCommonRule{
+						FromEndpoints: []api.EndpointSelector{
+							api.NewESFromMatchRequirements(map[string]string{"any:app": "client"}, nil),
+						},
+					},
+					ICMPs: api.ICMPRules{
+						{Fields: []api.ICMPField{icmpv4Field(8)}},
+						{Fields: []api.ICMPField{icmpv4Field(0)}},
+					},
+				},
+			},
+		},
+	}
+	// Incoming: same peer, ICMP type 3 (DestinationUnreachable).
+	incoming, _ := policy.BuildPolicy("default", "server", []*flowpb.Flow{
+		testdata.IngressICMPv4Flow(
+			[]string{"k8s:app=client"}, "default",
+			[]string{"k8s:app=server"}, "default", 3,
+		),
+	}, nil, policy.AttributionOptions{})
+
+	merged := policy.MergePolicy(existing, incoming)
+	require.NotNil(t, merged.Spec)
+
+	// Locate the ICMP-bearing ingress rule.
+	var fields []api.ICMPField
+	for _, r := range merged.Spec.Ingress {
+		for _, ir := range r.ICMPs {
+			fields = append(fields, ir.Fields...)
+		}
+	}
+
+	types := map[string]bool{}
+	for _, f := range fields {
+		require.NotNil(t, f.Type)
+		types[f.Type.String()] = true
+	}
+	assert.True(t, types["8"], "existing[0] type 8 must survive merge")
+	assert.True(t, types["0"], "existing[1] type 0 must survive merge (not dropped)")
+	assert.True(t, types["3"], "incoming type 3 must be present")
 }
 
 func TestMergePolicy_EntityRulesAppended(t *testing.T) {

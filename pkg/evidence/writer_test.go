@@ -175,6 +175,20 @@ func TestRuleEvidence_RoundTripsDNSL7(t *testing.T) {
 	assert.Equal(t, "s3.amazonaws.com", got.L7.DNSMatchName)
 }
 
+func TestWriterRejectsInvalidRef(t *testing.T) {
+	dir := t.TempDir()
+	w := NewWriter(dir, "hash0", MergeCaps{MaxSamples: 10, MaxSessions: 10})
+	session := SessionInfo{ID: "s1", StartedAt: ts(0), EndedAt: ts(10)}
+
+	err := w.Write(PolicyRef{Name: "cpg-api", Namespace: "prod", Workload: ""}, session, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "workload")
+
+	// No hidden ".json" file must have been created.
+	_, statErr := os.Stat(filepath.Join(dir, "hash0", "prod", ".json"))
+	assert.True(t, os.IsNotExist(statErr))
+}
+
 func TestWriterIgnoresUnknownSchemaVersion(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hash0", "prod", "api.json")

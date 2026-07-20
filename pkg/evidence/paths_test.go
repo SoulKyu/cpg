@@ -43,3 +43,30 @@ func TestResolvePolicyPath(t *testing.T) {
 	p := ResolvePolicyPath("/base", "a3f2b1", "production", "api-server")
 	assert.Equal(t, "/base/a3f2b1/production/api-server.json", p)
 }
+
+func TestValidatePolicyRef(t *testing.T) {
+	tests := []struct {
+		name      string
+		namespace string
+		workload  string
+		wantErr   bool
+	}{
+		{name: "valid", namespace: "production", workload: "api-server", wantErr: false},
+		{name: "empty namespace", namespace: "", workload: "api", wantErr: true},
+		{name: "empty workload", namespace: "prod", workload: "", wantErr: true},
+		{name: "workload with separator", namespace: "prod", workload: "a/b", wantErr: true},
+		{name: "namespace with separator", namespace: "a/b", workload: "api", wantErr: true},
+		{name: "parent traversal workload", namespace: "prod", workload: "..", wantErr: true},
+		{name: "dot namespace", namespace: ".", workload: "api", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidatePolicyRef(tt.namespace, tt.workload)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}

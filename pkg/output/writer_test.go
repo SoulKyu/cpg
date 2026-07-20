@@ -214,3 +214,34 @@ func TestWriter_WritesDifferentPolicy(t *testing.T) {
 	assert.Contains(t, string(content2), "443")
 	assert.Contains(t, string(content2), "80")
 }
+
+// TestWriter_RejectsInvalidPolicyRef pins the path-validation guard: a
+// namespace/workload that is empty or a traversal segment must be refused
+// before any directory or file is created under the output root.
+func TestWriter_RejectsInvalidPolicyRef(t *testing.T) {
+	tests := []struct {
+		name     string
+		ns       string
+		workload string
+	}{
+		{"empty namespace", "", "api"},
+		{"empty workload", "prod", ""},
+		{"traversal namespace", "..", "api"},
+		{"traversal workload", "prod", ".."},
+		{"separator in workload", "prod", "a/b"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			w := NewWriter(dir, zap.NewNop())
+
+			err := w.Write(buildTestEvent(tt.ns, tt.workload))
+
+			require.Error(t, err, "invalid ref must be refused")
+			entries, readErr := os.ReadDir(dir)
+			require.NoError(t, readErr)
+			assert.Empty(t, entries, "nothing may be created under the output root")
+		})
+	}
+}
