@@ -112,7 +112,23 @@ Full details: [milestones/v1.4-ROADMAP.md](milestones/v1.4-ROADMAP.md)
   4. Killing the transport for any reason (stdin EOF, harness crash) during an active session cancels the session context, closes the port-forward, and removes the tmpdir — each step bounded by its own deadline so one wedged cleanup cannot block process exit
   5. Any session-scoped tool called with an unknown or already-stopped `session_id` returns a crisp "session not found or expired" error, never a generic failure
 
-**Plans**: TBD
+**Plans**: 4 plans in 4 waves (linear — each layer consumes the prior)
+
+**Wave 1**
+
+- [ ] 17-01-PLAN.md — pkg/hubble OnFinal end-of-run stats hook (D-08); the one additive pipeline change
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 17-02-PLAN.md — pkg/session data model + buildPipelineConfig recipe (state/results, tmpdir-scoped config, zero-duration crash guard)
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 17-03-PLAN.md — pkg/session Manager: single-active state machine, retention, idempotent stop, bounded shutdown fan-out (SESS-01..06, D-01..04)
+
+**Wave 4** *(blocked on Wave 3)*
+
+- [ ] 17-04-PLAN.md — cmd/cpg session tools (start_session/get_status/stop_session) + composition wiring + in-memory integration tests
 
 ### Phase 18: Query Tools
 
@@ -163,7 +179,7 @@ Full details: [milestones/v1.4-ROADMAP.md](milestones/v1.4-ROADMAP.md)
 | 14. Fix Verification + Quality Gates | v1.4 | n/a (direct workflow) | Complete | 2026-07-20 |
 | 15. CI Trigger Fix + PR Delivery | v1.4 | n/a (direct workflow) | Complete | 2026-07-20 |
 | 16. MCP Server Foundation & Write Safety | v1.5 | 3/3 | Complete    | 2026-07-20 |
-| 17. Session Lifecycle | v1.5 | 0/TBD | Not started | - |
+| 17. Session Lifecycle | v1.5 | 0/4 | Planned | - |
 | 18. Query Tools | v1.5 | 0/TBD | Not started | - |
 | 19. Security Hardening & End-to-End Validation | v1.5 | 0/TBD | Not started | - |
 
