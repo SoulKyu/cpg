@@ -629,17 +629,17 @@ func (m *Manager) Status(id string) (StatusResult, error) {
 
 ## Open Questions
 
-1. **Should `l7=true` trigger L7 cluster pre-flight inside `start_session`?**
+1. **Should `l7=true` trigger L7 cluster pre-flight inside `start_session`?** — **(RESOLVED: skip L7 preflight in MCP mode — cited in 17-02 buildPipelineConfig comment and 17-03 resolveSetup; A3, low risk.)**
    - What we know: `maybeRunL7Preflight` (`generate.go:31-56`) is explicitly commented "invoked AT MOST ONCE per cpg invocation" — reasoning specific to a single-shot CLI process, which doesn't cleanly generalize to a long-lived MCP server that might run many sessions across its lifetime.
    - What's unclear: CONTEXT.md's D-05 lists `l7` as an exposed arg but is silent on preflight; there's no `--no-l7-preflight`-equivalent MCP arg proposed either.
    - Recommendation: skip preflight entirely for v1.5's `start_session` (A3, LOW risk either way — preflight only warns, never blocks `--l7` from working) — flag for explicit confirmation if the planner disagrees.
 
-2. **Exact bounded-deadline constants for `Shutdown()`/`Stop()`'s waits.**
+2. **Exact bounded-deadline constants for `Shutdown()`/`Stop()`'s waits.** — **(RESOLVED: stopWait=5s / removeWait=2s adopted as NewManager defaults in 17-03.)**
    - What we know: SESS-05 requires "each step bounded by its own deadline"; explicitly Claude's Discretion per CONTEXT.md.
    - What's unclear: no specific numbers are locked.
    - Recommendation: 5s for the pipeline-exit wait (generous relative to Ctrl+C's existing, undocumented-but-presumably-fast shutdown on `cpg generate`), 2s for `os.RemoveAll` (local filesystem, should be near-instant even for hundreds of small files) — starting points, not locked values.
 
-3. **Concurrent `stop_session` handling: `sync.Once` (Code Example 3) vs. accepting the double-timeout cost (Pitfall F).**
+3. **Concurrent `stop_session` handling: `sync.Once` (Code Example 3) vs. accepting the double-timeout cost (Pitfall F).** — **(RESOLVED: sync.Once adopted in 17-03 Stop via s.stopOnce.Do.)**
    - What we know: `sync.Once` fully resolves the race with ~5 lines of code.
    - What's unclear: whether the added complexity is worth it for what is, in production, an unlikely edge case (single LLM client, unlikely to fire two concurrent `stop_session` calls for the same session).
    - Recommendation: use `sync.Once` — it's cheap, directly testable under `-race`, and removes a class of flaky-latency test failures before they occur.
