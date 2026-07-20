@@ -26,16 +26,20 @@ type noopCloseWriter struct{ io.Writer }
 func (noopCloseWriter) Close() error { return nil }
 
 // newMCPCmd builds the `cpg mcp` subcommand: a readonly MCP server over
-// stdio. SilenceUsage/SilenceErrors are set here (D-03) — on this command
-// only, never on rootCmd — so cobra's own usage/error text never reaches
-// stdout. This is required regardless of the capture-then-swap ordering
-// below, because cobra flag-parse errors happen before RunE ever runs.
+// stdio. SilenceUsage is set here (D-03) — on this command only, never on
+// rootCmd — to suppress cobra's full usage dump on every runtime error,
+// which would be noisy for a long-running server. SilenceErrors is
+// deliberately NOT set: no production code ever calls cmd.SetOut/SetErr, so
+// cobra's own Print*/PrintErrln already fall back to os.Stderr
+// (OutOrStderr()/ErrOrStderr()) and never touch the stdout wire — silencing
+// it too would delete the only diagnostic text a failed `cpg mcp` produces,
+// leaving a supervising MCP host (Claude Desktop, an IDE, etc.) with
+// nothing to log on a bad flag or a bad --log-level value.
 func newMCPCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:           "mcp",
-		Short:         "Run cpg as a readonly MCP server over stdio",
-		SilenceUsage:  true,
-		SilenceErrors: true,
+		Use:          "mcp",
+		Short:        "Run cpg as a readonly MCP server over stdio",
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()

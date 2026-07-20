@@ -25,24 +25,37 @@ func TestMCPModeStdoutNeverDefaultsToRealStdout(t *testing.T) {
 
 // TestMCPCobraFlagErrorStaysOffStdout is D-04 scenario 4 / D-03: a cobra
 // flag-parse error on `cpg mcp` fails before RunE ever runs, so it never
-// reaches the transport/swap logic at all — this test proves
-// SilenceUsage/SilenceErrors (set on the mcp command only) keep cobra's own
-// usage/error text off the real stdout.
+// reaches the transport/swap logic at all — this test proves SilenceUsage
+// (set on the mcp command only) keeps cobra's own usage/error text off the
+// real stdout, while cobra's default error printer still reaches stderr
+// (SilenceErrors is deliberately not set — see newMCPCmd's doc comment), so
+// a supervising MCP host always has a diagnostic to surface.
 func TestMCPCobraFlagErrorStaysOffStdout(t *testing.T) {
-	r, w, err := os.Pipe()
+	outR, outW, err := os.Pipe()
 	require.NoError(t, err)
 	realStdout := os.Stdout
-	os.Stdout = w
+	os.Stdout = outW
 	t.Cleanup(func() { os.Stdout = realStdout })
+
+	errR, errW, err := os.Pipe()
+	require.NoError(t, err)
+	realStderr := os.Stderr
+	os.Stderr = errW
+	t.Cleanup(func() { os.Stderr = realStderr })
 
 	cmd := newMCPCmd()
 	cmd.SetArgs([]string{"--totally-unknown-flag"})
-	_ = cmd.Execute() // error expected; assertion is about stdout, not the error itself
+	_ = cmd.Execute() // error expected; assertion is about stdout/stderr, not the error itself
 
-	require.NoError(t, w.Close())
-	leaked, err := io.ReadAll(r)
+	require.NoError(t, outW.Close())
+	leaked, err := io.ReadAll(outR)
 	require.NoError(t, err)
-	assert.Empty(t, leaked, "D-03: SilenceUsage/SilenceErrors must keep cobra's own error/usage text off stdout")
+	assert.Empty(t, leaked, "D-03: SilenceUsage must keep cobra's own usage text off stdout")
+
+	require.NoError(t, errW.Close())
+	diagnostic, err := io.ReadAll(errR)
+	require.NoError(t, err)
+	assert.NotEmpty(t, diagnostic, "cobra's flag-parse error must still reach stderr so a supervising host has something to log")
 }
 
 // TestMCPLoggingBridgesToZapStderr is the SRV-03 bridge test: it proves a
