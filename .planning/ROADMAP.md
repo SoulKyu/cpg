@@ -87,7 +87,10 @@ Full details: [milestones/v1.4-ROADMAP.md](milestones/v1.4-ROADMAP.md)
   1. Across a full simulated session on an in-memory transport, every byte written to stdout parses as a valid JSON-RPC frame — verified by an automated stdout-purity test that exercises every stdout-defaulting seam (`PipelineConfig.Stdout`, dry-run `diffOut`, cobra `SilenceUsage`/`SilenceErrors`)
   2. All server-side log output — cpg's own zap logs and the go-sdk's internal logs bridged via `zap/exp/zapslog` — appears on stderr only, as one unified stream
   3. `pkg/output/writer.go` writes policy YAML via temp+rename (matching the evidence and health writers' existing pattern), so a concurrent reader can never observe a partial or corrupt file
-**Plans**: TBD
+**Plans**: 3 plans in 2 waves
+- [ ] 16-01-PLAN.md — SEC-02 atomic policy writer (temp+rename, chmod 0644)
+- [ ] 16-02-PLAN.md — go-sdk v1.6.1 dependency legitimacy gate + install
+- [ ] 16-03-PLAN.md — cpg mcp stdio server skeleton + stdout-purity & logging tests
 
 ### Phase 17: Session Lifecycle
 **Goal**: An LLM can start, monitor, and stop a live Hubble capture session through MCP tools, with the process robustly cleaning up on every exit path
@@ -143,7 +146,7 @@ Full details: [milestones/v1.4-ROADMAP.md](milestones/v1.4-ROADMAP.md)
 | 13. Flags + Exit Code | v1.3 | 3/3 | Complete | 2026-04-26 |
 | 14. Fix Verification + Quality Gates | v1.4 | n/a (direct workflow) | Complete | 2026-07-20 |
 | 15. CI Trigger Fix + PR Delivery | v1.4 | n/a (direct workflow) | Complete | 2026-07-20 |
-| 16. MCP Server Foundation & Write Safety | v1.5 | 0/TBD | Not started | - |
+| 16. MCP Server Foundation & Write Safety | v1.5 | 0/3 | Not started | - |
 | 17. Session Lifecycle | v1.5 | 0/TBD | Not started | - |
 | 18. Query Tools | v1.5 | 0/TBD | Not started | - |
 | 19. Security Hardening & End-to-End Validation | v1.5 | 0/TBD | Not started | - |
