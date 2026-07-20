@@ -14,6 +14,12 @@ import (
 // (stdout-purity pipe capture), so comparing against the live global is
 // order- and timing-sensitive. The seam contract is against the process's
 // REAL stdout, which only this init-time capture reliably names.
+//
+// Caveat discovered the hard way: under `go test -json` (-test.v=test2json)
+// the testing framework ITSELF aliases os.Stderr = os.Stdout inside the
+// test process so stderr writes get framed into the JSON event stream.
+// In that mode "stderr is not the real stdout" is structurally false for
+// reasons unrelated to cpg — the identity sub-assertion below guards on it.
 var realProcessStdout = os.Stdout
 
 // TestMCPModeStdoutNeverDefaultsToRealStdout is the D-05 seam-audit unit
@@ -29,8 +35,14 @@ var realProcessStdout = os.Stdout
 func TestMCPModeStdoutNeverDefaultsToRealStdout(t *testing.T) {
 	got := mcpModeStdout()
 	assert.NotNil(t, got)
-	assert.NotSame(t, realProcessStdout, got, "MCP-mode stdout seam must never resolve to the real process stdout")
 	assert.Same(t, os.Stderr, got, "D-02: MCP-mode human-output seams resolve to stderr")
+	if os.Stderr != realProcessStdout {
+		// Meaningless under test2json mode, where the framework aliased
+		// os.Stderr onto the real stdout before any test ran (see the
+		// realProcessStdout doc comment). Production `cpg mcp` never runs
+		// under -test.v=test2json, so the guard loses nothing real.
+		assert.NotSame(t, realProcessStdout, got, "MCP-mode stdout seam must never resolve to the real process stdout")
+	}
 }
 
 // TestMCPCobraFlagErrorStaysOffStdout is D-04 scenario 4 / D-03: a cobra
