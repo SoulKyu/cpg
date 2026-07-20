@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 	"sigs.k8s.io/yaml"
 
+	"github.com/SoulKyu/cpg/pkg/evidence"
 	"github.com/SoulKyu/cpg/pkg/policy"
 )
 
@@ -32,6 +33,9 @@ func NewWriter(outputDir string, logger *zap.Logger) *Writer {
 // If the file already exists, it reads the existing policy, merges it with the
 // incoming policy using MergePolicy, and writes the merged result.
 func (w *Writer) Write(event policy.PolicyEvent) error {
+	if err := evidence.ValidatePolicyRef(event.Namespace, event.Workload); err != nil {
+		return fmt.Errorf("refusing to write policy YAML: %w", err)
+	}
 	nsDir := filepath.Join(w.outputDir, event.Namespace)
 	if err := os.MkdirAll(nsDir, 0755); err != nil {
 		return fmt.Errorf("creating namespace directory %s: %w", nsDir, err)
