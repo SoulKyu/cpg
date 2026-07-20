@@ -8,6 +8,18 @@ A Go CLI tool that connects directly to Hubble Relay via gRPC, observes dropped/
 
 Automatically generate correct CiliumNetworkPolicies from observed Hubble denials so that SREs spend zero time manually writing network policies in default-deny environments.
 
+## Current Milestone: v1.4 Audit Fable5
+
+**Goal:** Every confirmed finding from the Fable 5 full-code review (2026-07-20, commit 427e047) is fixed with tests and delivered as a CI-green, reviewable PR.
+
+**Target features:**
+- All 29 confirmed review findings fixed on dedicated branch `fix/review-findings` (1 high, 7 medium, 11 low, 10 info)
+- CI pipeline actually running on `master` (trigger was `main`-only — pipeline never ran) with pinned actions/tools
+- Full gates green: `go build`, `go vet`, `go test -race`, `golangci-lint` (no new issues)
+- Branch pushed with atomic per-package conventional commits + PR open for review
+
+**Key context:** Review executed by a 27-agent workflow (9 section reviewers + 18 adversarial verifiers); 2 findings refuted as false positives. Report: `code-review-report.html` (repo root, untracked). Lint debt (17 errcheck + 13 staticcheck SA1019) deliberately descoped to keep this milestone tight.
+
 ## Requirements
 
 ### Validated
@@ -45,9 +57,13 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 
 ### Active
 
-<!-- Awaiting v1.4 scoping via /gsd:new-milestone. -->
+<!-- v1.4 Audit Fable5 — audit-driven hardening. -->
 
-- _(defined during `/gsd:new-milestone`)_
+- [ ] AUDIT-01: Every confirmed high/medium review finding (1 high, 7 medium) fixed with a regression test proving the behavior change
+- [ ] AUDIT-02: Every confirmed low/info review finding (21) fixed (doc/comment-only findings exempt from new tests)
+- [ ] AUDIT-03: CI pipeline triggers on `master` (push + PR) with actions and tools pinned
+- [ ] AUDIT-04: Full gates green on the fix branch: build, vet, `go test -race`, golangci-lint with no new issues
+- [ ] AUDIT-05: `fix/review-findings` pushed with atomic per-package conventional commits and PR open for user review
 
 ### Planned
 
@@ -135,7 +151,24 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 
 **Codebase:** 10 packages (`pkg/{labels,policy,output,hubble,k8s,dedup,flowsource,evidence,diff,dropclass}` + `cmd/`). New in v1.3: `pkg/dropclass/` (classifier + hints + version) and `pkg/hubble/{health_writer,summary}.go`. **418 tests passing** across 10 packages (up from 319 at v1.2 close). Release-please continues to handle product SemVer tagging.
 
-**Next milestone:** v1.4 — awaiting scoping. See Planned section above for candidates carried over from v1.3 deferrals.
+**Next milestone:** v1.4 Audit Fable5 — in progress. Audit-driven hardening from the Fable 5 full-code review; feature candidates from v1.3 deferrals remain in Planned for v1.5.
+
+## Evolution
+
+This document evolves at phase transitions and milestone boundaries.
+
+**After each phase transition** (via `/gsd-transition`):
+1. Requirements invalidated? → Move to Out of Scope with reason
+2. Requirements validated? → Move to Validated with phase reference
+3. New requirements emerged? → Add to Active
+4. Decisions to log? → Add to Key Decisions
+5. "What This Is" still accurate? → Update if drifted
+
+**After each milestone** (via `/gsd-complete-milestone`):
+1. Full review of all sections
+2. Core Value check — still the right priority?
+3. Audit Out of Scope — reasons still valid?
+4. Update Context with current state
 
 ---
-*Last updated: 2026-04-26 — v1.3 Cluster Health Surfacing milestone shipped (8 plans, 13 REQs, 418 tests).*
+*Last updated: 2026-07-20 — v1.4 Audit Fable5 milestone started (full-code review: 29 confirmed findings to land).*

@@ -1,13 +1,12 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.4
-milestone_name: awaiting-scope
-status: between_milestones
-stopped_at: v1.3 archived 2026-04-26; next milestone awaits /gsd:new-milestone
-last_updated: "2026-04-26T22:00:00.000Z"
-last_activity: 2026-04-26 -- Archived v1.3 Cluster Health Surfacing milestone
+milestone_name: Audit Fable5
+status: planning
+last_updated: "2026-07-20T10:30:32.689Z"
+last_activity: 2026-07-20
 progress:
-  total_phases: 0
+  total_phases: 2
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -21,23 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-26)
 
 **Core value:** Automatically generate correct CiliumNetworkPolicies from observed Hubble denials so that SREs spend zero time manually writing network policies in default-deny environments.
-**Current focus:** Phase 13 — flags-and-exit-code
+**Current focus:** Phase 14 — fix-verification-and-quality-gates
 
 ## Current Position
 
-Phase: 13
-Plan: Not started
-Status: Phase complete — ready for verification
-Last activity: 2026-04-26
-
-Progress: v1.0 ✅ · v1.1 ✅ · v1.2 ✅ · v1.3 🗺 (roadmap ready)
-
-```
-Phase 10 [          ] 0%   Classifier Core
-Phase 11 [          ] 0%   Aggregator Suppression + Health Writer
-Phase 12 [          ] 0%   Session Summary Block
-Phase 13 [          ] 0%   Flags + Exit Code
-```
+Phase: 14 of 15 (Fix Verification + Quality Gates)
+Plan: — (not yet planned)
+Status: Ready to plan
+Last activity: 2026-07-20 — ROADMAP.md created for v1.4 (Phases 14-15, 5/5 requirements mapped)
 
 ## Performance Metrics
 
@@ -90,7 +80,7 @@ None.
 
 ### Blockers/Concerns
 
-None open. v1.3 deferred items (L7-FUT-01, DNS-FUT-02, etc.) tracked in PROJECT.md Planned section.
+None open. v1.3 deferred items (L7-FUT-01, DNS-FUT-02, etc.) tracked in PROJECT.md Planned section. v1.4 lint debt (LINT-01..03) and release hardening (RELSEC-01..02) deliberately descoped — tracked in REQUIREMENTS.md Future Requirements for v1.5.
 
 ### Quick Tasks Completed
 
@@ -102,6 +92,6 @@ None open. v1.3 deferred items (L7-FUT-01, DNS-FUT-02, etc.) tracked in PROJECT.
 
 ## Session Continuity
 
-Last session: 2026-04-27
-Stopped at: Completed quick task 260427-bp7-v1-3-second-pass-review-fixes
-Resume: `/gsd:plan-phase 10` — Classifier Core (CLASSIFY-01, CLASSIFY-02, CLASSIFY-03)
+Last session: 2026-07-20
+Stopped at: ROADMAP.md created for v1.4 (Phases 14-15) — 5/5 requirements mapped, awaiting plan-phase
+Resume: `/gsd:plan-phase 14` — Fix Verification + Quality Gates (AUDIT-01, AUDIT-02, AUDIT-04)
