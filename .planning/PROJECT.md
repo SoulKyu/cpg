@@ -58,6 +58,9 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 - ✓ Zero reachable vulnerabilities: cilium v1.19.4, x/net v0.55.0, `toolchain go1.25.12` (govulncheck clean in CI) — v1.4
 - ✓ Genuine stream failures exit non-zero; LostEvents/PoliciesFailed counted; `--timeout` actually applied — v1.4
 - ✓ Policy-ref validation (empty/traversal) on evidence and output writers — v1.4
+- ✓ `cpg mcp` protocol-safe stdio skeleton: pure JSON-RPC stdout (IOTransport pre-swap capture + global os.Stdout→stderr backstop), zero tools registered (SRV-02) — v1.5 Phase 16
+- ✓ Unified stderr logging: zap + go-sdk logs bridged via zapslog (SRV-03) — v1.5 Phase 16
+- ✓ Atomic temp+rename policy writes in `pkg/output/writer.go` (torn-read safe for future concurrent MCP readers, SEC-02) — v1.5 Phase 16
 
 ### Active
 
@@ -152,6 +155,9 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 | GitHub Actions pinned to release-tag SHAs (verified via `git ls-remote`) | Mutable tags are a supply-chain risk; one agent-suggested pin pointed at an untagged branch commit — verification against real tags is part of the pin | ✓ Good — shipped v1.4 |
 | Stream failure ⇒ non-zero exit (behavior change) | Debug-logged clean exits hid mid-capture relay crashes; operators/CI must see failure | ✓ Good — shipped v1.4; replay truncation exit parity deferred (v1.5 candidate) |
 | Milestone executed via direct multi-agent workflow (no gsd plans) | Audit remediation with a complete findings inventory doesn't benefit from per-phase planning ceremony; review→verify→fix→PR pipeline replaces it | ✓ Good — v1.4 shipped same-day; keep gsd plans for feature milestones |
+| `mcp.IOTransport` with pre-swap stdout capture, never `mcp.StdioTransport{}` | StdioTransport reads package-level os.Stdout lazily inside Connect() — combined with the D-01 global swap it would bind the JSON-RPC wire to stderr and hang the server | ✓ Good — shipped v1.5 Phase 16; acceptance criteria forbid StdioTransport |
+| `go.uber.org/zap/exp` v0.3.0 as separate direct dependency | zapslog is NOT bundled in zap v1.27.1 (independently versioned module) — corrected a locked research claim via operator-approved legitimacy gate | ✓ Good — shipped v1.5 Phase 16 |
+| Seam-audit identity assertion guarded against test2json aliasing | `go test -json` makes the testing framework alias os.Stderr = os.Stdout in-process; unguarded global-identity assertions flake by mode, not by race | ✓ Good — root-caused and guarded v1.5 Phase 16 |
 
 ## Current State
 
@@ -159,7 +165,7 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 
 **Codebase:** 10 packages (`pkg/{labels,policy,output,hubble,k8s,dedup,flowsource,evidence,diff,dropclass}` + `cmd/`). **484 tests passing with `-race`** across 10 packages (up from 418 at v1.3 close). CI green and operational for the first time (build + race tests + lint + govulncheck). Deps: cilium v1.19.4, toolchain go1.25.12. Known debt: 26 lint issues (16 errcheck + 10 SA1019) gated by `only-new-issues`, scoped to v1.5. Release-please continues to handle product SemVer tagging.
 
-**Current milestone:** v1.5 MCP Integration — in scoping (requirements → roadmap). Debt candidates (lint zero, release hardening, replay exit parity) remain in Planned; pulled in or deferred at requirements scoping.
+**Current milestone:** v1.5 MCP Integration — Phase 16 (MCP Server Foundation & Write Safety) complete 2026-07-20: `cpg mcp` skeleton (go-sdk v1.6.1, zero tools), stdout purity + zapslog stderr bridge, atomic policy writer. Next: Phase 17 (Session Lifecycle) — MUST wire `PipelineConfig.Stdout = mcpModeStdout()`. Debt candidates (lint zero, release hardening, replay exit parity) tracked as v2 requirements.
 
 ## Evolution
 
@@ -179,4 +185,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-20 — milestone v1.5 MCP Integration started (goal + target features set; requirements in progress).*
+*Last updated: 2026-07-20 — v1.5 Phase 16 (MCP Server Foundation & Write Safety) completed and verified (12/12 must-haves).*
