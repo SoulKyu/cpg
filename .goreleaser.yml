@@ -4,7 +4,7 @@ project_name: cpg
 
 before:
   hooks:
-    - go mod tidy
+    - go mod verify
     - go test -race -count=1 ./...
 
 builds:
