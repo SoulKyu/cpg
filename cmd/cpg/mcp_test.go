@@ -9,18 +9,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// realProcessStdout is captured at package-var init, before any test runs —
+// other tests in this package legitimately swap the os.Stdout global
+// (stdout-purity pipe capture), so comparing against the live global is
+// order- and timing-sensitive. The seam contract is against the process's
+// REAL stdout, which only this init-time capture reliably names.
+var realProcessStdout = os.Stdout
+
 // TestMCPModeStdoutNeverDefaultsToRealStdout is the D-05 seam-audit unit
-// test: it pins mcpModeStdout()'s contract (never nil, never os.Stdout,
-// always os.Stderr) without driving a live session or a PipelineConfig.
-// This stands in for the PipelineConfig.Stdout seam that Phase 17 will wire
-// this helper into; diffOut is covered structurally instead (MCP mode
-// never sets DryRun: true, so pkg/hubble/writer.go's diffOut is dead code
-// this phase — see mcpModeStdout's doc comment in mcp.go).
+// test: it pins mcpModeStdout()'s contract (never nil, never the real
+// process stdout, always the current os.Stderr) without driving a live
+// session or a PipelineConfig. This stands in for the PipelineConfig.Stdout
+// seam that Phase 17 will wire this helper into; diffOut is covered
+// structurally instead (MCP mode never sets DryRun: true, so
+// pkg/hubble/writer.go's diffOut is dead code this phase — see
+// mcpModeStdout's doc comment in mcp.go). Pointer-identity assertions
+// (Same/NotSame) are deliberate: DeepEqual over *os.File internals is
+// meaningless here, and identity is exactly what the D-01 swap manipulates.
 func TestMCPModeStdoutNeverDefaultsToRealStdout(t *testing.T) {
 	got := mcpModeStdout()
 	assert.NotNil(t, got)
-	assert.NotEqual(t, os.Stdout, got, "MCP-mode stdout seam must never resolve to the real os.Stdout")
-	assert.Equal(t, os.Stderr, got, "D-02: MCP-mode human-output seams resolve to stderr")
+	assert.NotSame(t, realProcessStdout, got, "MCP-mode stdout seam must never resolve to the real process stdout")
+	assert.Same(t, os.Stderr, got, "D-02: MCP-mode human-output seams resolve to stderr")
 }
 
 // TestMCPCobraFlagErrorStaysOffStdout is D-04 scenario 4 / D-03: a cobra
