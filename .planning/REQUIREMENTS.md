@@ -35,7 +35,7 @@ Requirements for milestone v1.5. Each maps to roadmap phases.
 ### Security & Hardening
 
 - [ ] **SEC-01**: Readonly guarantee is structural: the MCP composition root registers only read-path handlers — no K8s write verb reachable from `cpg mcp`, no filesystem write outside the session tmpdir — verified by an audit test, re-runnable for every future tool
-- [ ] **SEC-02**: `pkg/output/writer.go` writes policy YAML atomically (temp+rename, same pattern as the evidence and health writers) — landed as an early standalone change before any query tool reads that directory
+- [x] **SEC-02**: `pkg/output/writer.go` writes policy YAML atomically (temp+rename, same pattern as the evidence and health writers) — landed as an early standalone change before any query tool reads that directory
 - [ ] **SEC-03**: README MCP section documents harness configuration (explicit `env` block: `KUBECONFIG`/`PATH`/`TMPDIR` — MCP hosts don't inherit the shell env), the secrets posture (HTTP paths/labels reach the LLM context; headers are never captured), and the exec-credential-plugin non-interactive hang caveat
 
 ## v2 Requirements
@@ -90,7 +90,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | QRY-04 | Phase 18 | Pending |
 | QRY-05 | Phase 18 | Pending |
 | SEC-01 | Phase 19 | Pending |
-| SEC-02 | Phase 16 | Pending |
+| SEC-02 | Phase 16 | Complete |
 | SEC-03 | Phase 19 | Pending |
 
 **Coverage:**
