@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: MCP Integration
-status: executing
-last_updated: "2026-07-20T16:21:46.823Z"
-last_activity: 2026-07-20 -- Phase 16 execution started
+status: planning
+last_updated: "2026-07-20T18:11:41.397Z"
+last_activity: 2026-07-20
 progress:
   total_phases: 4
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 3
-  completed_plans: 0
-  percent: 0
+  completed_plans: 3
+  percent: 25
 ---
 
 # Project State
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-20)
 
 **Core value:** Automatically generate correct CiliumNetworkPolicies from observed Hubble denials so that SREs spend zero time manually writing network policies in default-deny environments.
-**Current focus:** Phase 16 — MCP Server Foundation & Write Safety
+**Current focus:** Phase 17 — session lifecycle
 
 ## Current Position
 
-Phase: 16 (MCP Server Foundation & Write Safety) — EXECUTING
-Plan: 1 of 3
-Status: Executing Phase 16
-Last activity: 2026-07-20 -- Phase 16 execution started
+Phase: 17
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-07-20
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -35,7 +35,7 @@ Progress: [░░░░░░░░░░] 0%
 
 **Velocity (cumulative):**
 
-- Total plans completed: 30 (across 13 phases, 4 milestones; v1.4 executed via direct workflow, no plans)
+- Total plans completed: 33 (across 13 phases, 4 milestones; v1.4 executed via direct workflow, no plans)
 - Total tests: 484 across 10 packages
 
 **By Milestone:**
@@ -80,6 +80,7 @@ Decisions logged in PROJECT.md Key Decisions table.
 - [v1.5 roadmap]: SEC-02 (atomic policy writer) pulled into Phase 16 (first phase) — must land before any query tool reads `pkg/output`'s directory (Phase 18)
 - [v1.5 roadmap]: SRV-01 (full tool-list handshake) and SRV-04 (e2e lifecycle test) both close Phase 19 rather than SRV-01 sitting in the skeleton phase — "all tools listed" only becomes true once every tool from Phases 16-18 is registered
 - [v1.5 roadmap]: Research's 6-phase proposal consolidated to 4 (coarse granularity) — Read-Side Foundations folded into Query Tools (Phase 18); Security Hardening + E2E Validation merged into one closing phase (Phase 19)
+- [Phase 16]: Phase 17 handoff: MCP-mode PipelineConfig.Stdout MUST use mcpModeStdout()
 
 ### Pending Todos
 

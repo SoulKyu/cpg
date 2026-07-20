@@ -162,7 +162,7 @@ Full details: [milestones/v1.4-ROADMAP.md](milestones/v1.4-ROADMAP.md)
 | 13. Flags + Exit Code | v1.3 | 3/3 | Complete | 2026-04-26 |
 | 14. Fix Verification + Quality Gates | v1.4 | n/a (direct workflow) | Complete | 2026-07-20 |
 | 15. CI Trigger Fix + PR Delivery | v1.4 | n/a (direct workflow) | Complete | 2026-07-20 |
-| 16. MCP Server Foundation & Write Safety | v1.5 | 3/3 | Complete   | 2026-07-20 |
+| 16. MCP Server Foundation & Write Safety | v1.5 | 3/3 | Complete    | 2026-07-20 |
 | 17. Session Lifecycle | v1.5 | 0/TBD | Not started | - |
 | 18. Query Tools | v1.5 | 0/TBD | Not started | - |
 | 19. Security Hardening & End-to-End Validation | v1.5 | 0/TBD | Not started | - |

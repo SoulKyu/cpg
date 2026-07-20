@@ -11,8 +11,8 @@ Requirements for milestone v1.5. Each maps to roadmap phases.
 ### MCP Server Core
 
 - [ ] **SRV-01**: SRE can register cpg in an MCP harness (`cpg mcp`, stdio transport) and the initialize handshake succeeds with all tools listed
-- [ ] **SRV-02**: stdout carries only JSON-RPC frames across a full session lifecycle — enforced by explicit wiring of every stdout-defaulting seam (`PipelineConfig.Stdout`, dry-run `diffOut`, cobra `SilenceUsage`/`SilenceErrors`) and verified by an automated stdout-purity test on an in-memory transport
-- [ ] **SRV-03**: All server logs go to stderr through the existing zap logger; go-sdk internal logging is bridged into it via `zap/exp/zapslog` (one unified log stream)
+- [x] **SRV-02**: stdout carries only JSON-RPC frames across a full session lifecycle — enforced by explicit wiring of every stdout-defaulting seam (`PipelineConfig.Stdout`, dry-run `diffOut`, cobra `SilenceUsage`/`SilenceErrors`) and verified by an automated stdout-purity test on an in-memory transport
+- [x] **SRV-03**: All server logs go to stderr through the existing zap logger; go-sdk internal logging is bridged into it via `zap/exp/zapslog` (one unified log stream)
 - [ ] **SRV-04**: An end-to-end stdio integration test drives `initialize → start_session → get_status → each query tool → stop_session → exit` under `-race`, plus an ungraceful-disconnect variant proving port-forward and tmpdir are cleaned up within a bounded deadline
 
 ### Session Lifecycle
@@ -75,8 +75,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | SRV-01 | Phase 19 | Pending |
-| SRV-02 | Phase 16 | Pending |
-| SRV-03 | Phase 16 | Pending |
+| SRV-02 | Phase 16 | Complete |
+| SRV-03 | Phase 16 | Complete |
 | SRV-04 | Phase 19 | Pending |
 | SESS-01 | Phase 17 | Pending |
 | SESS-02 | Phase 17 | Pending |
