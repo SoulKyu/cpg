@@ -7,6 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
+	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
+	"github.com/cilium/cilium/pkg/policy/api"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/SoulKyu/cpg/pkg/policy"
 	"github.com/SoulKyu/cpg/pkg/policy/testdata"
@@ -94,6 +97,40 @@ func TestMergePolicy_EgressMerge(t *testing.T) {
 	portStrings := []string{ports[0].Port, ports[1].Port}
 	assert.Contains(t, portStrings, "53")
 	assert.Contains(t, portStrings, "5353")
+}
+
+func TestMergePolicy_ExistingNilSpec(t *testing.T) {
+	// Existing policy read from disk with a nil Spec (metadata-only stub,
+	// `specs:` plural form, or truncated file). Must not panic; must adopt
+	// the incoming Spec while preserving the existing ObjectMeta.
+	existing := &ciliumv2.CiliumNetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cpg-server",
+			Namespace: "default",
+			Labels:    map[string]string{"app.kubernetes.io/managed-by": "cpg"},
+		},
+		Spec: nil,
+	}
+	incoming, _ := policy.BuildPolicy("default", "server", []*flowpb.Flow{
+		testdata.IngressTCPFlow([]string{"k8s:app=client"}, []string{"k8s:app=server"}, "default", 80),
+	}, nil, policy.AttributionOptions{})
+
+	var merged *ciliumv2.CiliumNetworkPolicy
+	require.NotPanics(t, func() {
+		merged = policy.MergePolicy(existing, incoming)
+	})
+	require.NotNil(t, merged)
+	require.NotNil(t, merged.Spec, "nil existing Spec must adopt the incoming Spec")
+	require.Len(t, merged.Spec.Ingress, 1)
+
+	// ObjectMeta preserved from existing.
+	assert.Equal(t, "cpg-server", merged.Name)
+	assert.Equal(t, "default", merged.Namespace)
+
+	// Adopting the incoming Spec must be a deep copy — mutating the result
+	// must not bleed into the incoming policy.
+	merged.Spec.Ingress = append(merged.Spec.Ingress, api.IngressRule{})
+	assert.Len(t, incoming.Spec.Ingress, 1, "result Spec must be independent of incoming Spec")
 }
 
 func TestMergePolicy_PreservesObjectMeta(t *testing.T) {

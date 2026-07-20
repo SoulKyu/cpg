@@ -392,10 +392,13 @@ func groupFlows(
 				b.entities[entity] = er
 				b.entityOrder = append(b.entityOrder, entity)
 			}
-			er.addFlow(fp)
-			peer := Peer{Type: PeerEntity, Entity: string(entity)}
-			if !recordL7(er, f, fp, direction, peer, opts) {
-				er.recordAttribution(ruleKeyFor(direction, peer, fp), f, opts.MaxSamples)
+			p := Peer{Type: PeerEntity, Entity: string(entity)}
+			kind := recordL7(er, f, fp, direction, p, opts)
+			if kind != l7DNS {
+				er.addFlow(fp)
+			}
+			if kind == l7None {
+				er.recordAttribution(ruleKeyFor(direction, p, fp), f, opts.MaxSamples)
 			}
 			continue
 		}
@@ -414,10 +417,13 @@ func groupFlows(
 				b.cidrs[cidrStr] = cb
 				b.cidrOrder = append(b.cidrOrder, cidrStr)
 			}
-			cb.addFlow(fp)
-			peer := Peer{Type: PeerCIDR, CIDR: cidrStr}
-			if !recordL7(cb.peerRules, f, fp, direction, peer, opts) {
-				cb.recordAttribution(ruleKeyFor(direction, peer, fp), f, opts.MaxSamples)
+			p := Peer{Type: PeerCIDR, CIDR: cidrStr}
+			kind := recordL7(cb.peerRules, f, fp, direction, p, opts)
+			if kind != l7DNS {
+				cb.addFlow(fp)
+			}
+			if kind == l7None {
+				cb.recordAttribution(ruleKeyFor(direction, p, fp), f, opts.MaxSamples)
 			}
 			continue
 		}
@@ -431,26 +437,47 @@ func groupFlows(
 			b.peers[key] = eb
 			b.peerOrder = append(b.peerOrder, key)
 		}
-		eb.addFlow(fp)
-		peer := Peer{Type: PeerEndpoint, Labels: selectedLabelsFromFlow(ep)}
-		if !recordL7(eb.peerRules, f, fp, direction, peer, opts) {
-			eb.recordAttribution(ruleKeyFor(direction, peer, fp), f, opts.MaxSamples)
+		p := Peer{Type: PeerEndpoint, Labels: selectedLabelsFromFlow(ep)}
+		kind := recordL7(eb.peerRules, f, fp, direction, p, opts)
+		if kind != l7DNS {
+			eb.addFlow(fp)
+		}
+		if kind == l7None {
+			eb.recordAttribution(ruleKeyFor(direction, p, fp), f, opts.MaxSamples)
 		}
 	}
 	return b
 }
 
+// l7Kind reports how recordL7 consumed a flow so the caller can decide
+// whether the flow's L4 port still needs to spawn a bare peer rule.
+type l7Kind int
+
+const (
+	// l7None: no L7 rule emitted — caller falls back to the v1.1 L4 path
+	// (add the port to the bucket + record L4 attribution).
+	l7None l7Kind = iota
+	// l7HTTP: HTTP L7 rules attach to the SAME L4 PortRule, so the caller
+	// still adds the port to the bucket (the L7 rules ride on that port).
+	l7HTTP
+	// l7DNS: the flow is fully covered by the dedicated ToFQDNs egress rule
+	// (+ kube-dns companion), so the caller must NOT add a bare L4 :53 port —
+	// doing so would emit a redundant ToCIDR/ToEndpoints :53 allow.
+	l7DNS
+)
+
 // recordL7 attaches HTTP L7 rules + per-(method, path) attribution to a peer
 // bucket when AttributionOptions.L7Enabled is true and the flow carries a
-// non-nil L7 HTTP record producing at least one rule. Returns true when L7
-// attribution was recorded — caller then SKIPS the bare L4 attribution so
-// the evidence bucket reflects the L7-discriminated rules only (otherwise
-// flows would double-count: once L4, once L7). Returns false when no L7
-// rules were emitted (L7Enabled=false, no HTTP record, or empty method) so
-// the caller falls back to the v1.1 L4 attribution path.
-func recordL7(pr *peerRules, f *flowpb.Flow, fp *flowProto, direction string, peer Peer, opts AttributionOptions) bool {
+// non-nil L7 HTTP record producing at least one rule. The returned l7Kind
+// tells the caller whether L7 attribution was recorded — the caller then SKIPS
+// the bare L4 attribution so the evidence bucket reflects the L7-discriminated
+// rules only (otherwise flows would double-count: once L4, once L7). It also
+// signals whether the L4 port must still be added to the bucket: l7HTTP shares
+// the L4 port, l7DNS does not. Returns l7None when no L7 rules were emitted
+// (L7Enabled=false, no HTTP record, or empty method).
+func recordL7(pr *peerRules, f *flowpb.Flow, fp *flowProto, direction string, peer Peer, opts AttributionOptions) l7Kind {
 	if !opts.L7Enabled {
-		return false
+		return l7None
 	}
 
 	// HTTP path: any L7 record whose Http sub-record is non-nil produces
@@ -458,7 +485,7 @@ func recordL7(pr *peerRules, f *flowpb.Flow, fp *flowProto, direction string, pe
 	if f.GetL7().GetHttp() != nil {
 		rules := extractHTTPRules(f)
 		if len(rules) == 0 {
-			return false
+			return l7None
 		}
 		portKey := strconv.FormatUint(uint64(fp.port), 10) + "/" + string(fp.proto)
 		pr.addHTTPRules(portKey, rules)
@@ -466,7 +493,7 @@ func recordL7(pr *peerRules, f *flowpb.Flow, fp *flowProto, direction string, pe
 			l7 := &L7Discriminator{Protocol: "http", HTTPMethod: r.Method, HTTPPath: r.Path}
 			pr.recordAttribution(ruleKeyForL7(direction, peer, fp, l7), f, opts.MaxSamples)
 		}
-		return true
+		return l7HTTP
 	}
 
 	// DNS path (Phase 9): only meaningful on egress — DNS proxy denials
@@ -476,15 +503,15 @@ func recordL7(pr *peerRules, f *flowpb.Flow, fp *flowProto, direction string, pe
 	if direction == "egress" && f.GetL7().GetDns() != nil {
 		name, ok := extractDNSQuery(f)
 		if !ok {
-			return false
+			return l7None
 		}
 		pr.addDNSName(name)
 		l7 := &L7Discriminator{Protocol: "dns", DNSMatchName: name}
 		pr.recordAttribution(ruleKeyForL7(direction, peer, fp, l7), f, opts.MaxSamples)
-		return true
+		return l7DNS
 	}
 
-	return false
+	return l7None
 }
 
 func buildIngressRules(flows []*flowpb.Flow, policyNamespace string, tracker FlowTracker, opts AttributionOptions) ([]api.IngressRule, []RuleAttribution) {
