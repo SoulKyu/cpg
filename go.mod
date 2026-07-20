@@ -2,6 +2,8 @@ module github.com/SoulKyu/cpg
 
 go 1.25.1
 
+toolchain go1.25.12
+
 require (
 	github.com/cilium/cilium v1.19.4
 	github.com/google/uuid v1.6.0
