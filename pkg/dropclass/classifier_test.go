@@ -125,7 +125,7 @@ func TestClassifyAllKnownReasons(t *testing.T) {
 
 // TestClassifierVersion asserts the version constant is the expected semver string.
 func TestClassifierVersion(t *testing.T) {
-	const want = "1.0.0-cilium1.19.1"
+	const want = "1.0.0-cilium1.19.4"
 	if dropclass.ClassifierVersion != want {
 		t.Errorf("ClassifierVersion = %q, want %q", dropclass.ClassifierVersion, want)
 	}
