@@ -2,7 +2,7 @@
 
 ## Overview
 
-CPG delivers a Go CLI tool that turns Hubble dropped flows into ready-to-apply CiliumNetworkPolicies. v1.0 shipped the core live-streaming generator. v1.1 added an offline iteration workflow (`cpg replay`), per-rule flow evidence, `cpg explain`, and `--dry-run` with unified YAML diff. v1.2 extended generation to L7 (HTTP + DNS) with two-step workflow guidance. v1.3 closed the class of bug where infra-level Hubble drops generated bogus CNPs via a static classifier taxonomy. v1.4 landed audit-driven hardening from a Fable 5 full-code review — 29 confirmed findings fixed, two reachable vulnerabilities patched, and the CI pipeline running (green) for the first time.
+CPG delivers a Go CLI tool that turns Hubble dropped flows into ready-to-apply CiliumNetworkPolicies. v1.0 shipped the core live-streaming generator. v1.1 added an offline iteration workflow (`cpg replay`), per-rule flow evidence, `cpg explain`, and `--dry-run` with unified YAML diff. v1.2 extended generation to L7 (HTTP + DNS) with two-step workflow guidance. v1.3 closed the class of bug where infra-level Hubble drops generated bogus CNPs via a static classifier taxonomy. v1.4 landed audit-driven hardening from a Fable 5 full-code review — 29 confirmed findings fixed, two reachable vulnerabilities patched, and the CI pipeline running (green) for the first time. v1.5 exposes cpg as a readonly MCP stdio server so an LLM harness can run a live Hubble capture session, query dropped flows and generated policies, and review cluster health — cpg stays deterministic while the LLM brings the intelligence.
 
 ## Milestones
 
@@ -11,6 +11,7 @@ CPG delivers a Go CLI tool that turns Hubble dropped flows into ready-to-apply C
 - ✅ **v1.2 L7 Policies (HTTP + DNS)** — Phases 7-9 (shipped 2026-04-25) — [archive](milestones/v1.2-ROADMAP.md)
 - ✅ **v1.3 Cluster Health Surfacing** — Phases 10-13 (shipped 2026-04-26) — [archive](milestones/v1.3-ROADMAP.md)
 - ✅ **v1.4 Audit Fable5** — Phases 14-15 (shipped 2026-07-20) — [archive](milestones/v1.4-ROADMAP.md)
+- 📋 **v1.5 MCP Integration** — Phases 16-19 (in progress)
 
 ## Phases
 
@@ -69,6 +70,60 @@ Full details: [milestones/v1.4-ROADMAP.md](milestones/v1.4-ROADMAP.md)
 
 </details>
 
+### 📋 v1.5 MCP Integration (Phases 16-19)
+
+- [ ] **Phase 16: MCP Server Foundation & Write Safety** - Protocol-safe stdio process (pure JSON-RPC stdout, unified stderr logging) plus an atomic policy writer
+- [ ] **Phase 17: Session Lifecycle** - `start_session`/`get_status`/`stop_session` MCP tools wrapping the Hubble capture pipeline, with full cleanup on every exit path
+- [ ] **Phase 18: Query Tools** - Paginated readonly tools over dropped flows, generated policies, evidence, and cluster health
+- [ ] **Phase 19: Security Hardening & End-to-End Validation** - Structural readonly audit, full stdio lifecycle test under `-race`, MCP harness documentation
+
+## Phase Details
+
+### Phase 16: MCP Server Foundation & Write Safety
+**Goal**: `cpg mcp` runs as a protocol-safe stdio process — pure JSON-RPC on stdout, unified stderr logging — and the on-disk policy writer is torn-read safe, before any session or query tool is built on top of it
+**Depends on**: Nothing (first phase of v1.5, builds on the v1.4 codebase)
+**Requirements**: SRV-02, SRV-03, SEC-02
+**Success Criteria** (what must be TRUE):
+  1. Across a full simulated session on an in-memory transport, every byte written to stdout parses as a valid JSON-RPC frame — verified by an automated stdout-purity test that exercises every stdout-defaulting seam (`PipelineConfig.Stdout`, dry-run `diffOut`, cobra `SilenceUsage`/`SilenceErrors`)
+  2. All server-side log output — cpg's own zap logs and the go-sdk's internal logs bridged via `zap/exp/zapslog` — appears on stderr only, as one unified stream
+  3. `pkg/output/writer.go` writes policy YAML via temp+rename (matching the evidence and health writers' existing pattern), so a concurrent reader can never observe a partial or corrupt file
+**Plans**: TBD
+
+### Phase 17: Session Lifecycle
+**Goal**: An LLM can start, monitor, and stop a live Hubble capture session through MCP tools, with the process robustly cleaning up on every exit path
+**Depends on**: Phase 16
+**Requirements**: SESS-01, SESS-02, SESS-03, SESS-04, SESS-05, SESS-06
+**Success Criteria** (what must be TRUE):
+  1. LLM calls `start_session` with namespace/filter arguments and receives an opaque `session_id`; the capture pipeline runs in a background goroutine on a detached cancellable context, writing artifacts to an ephemeral `os.MkdirTemp` tmpdir — and a second `start_session` while one is active is rejected with an actionable error naming the active session, never queued or silently replaced
+  2. LLM calls `get_status(session_id)` at any point and receives coarse state — capturing/stopped, elapsed time, artifact file counts on disk
+  3. LLM calls `stop_session(session_id)` and the pipeline context is cancelled, artifacts are finalized (`cluster-health.json`, session stats), and a final summary is returned
+  4. Killing the transport for any reason (stdin EOF, harness crash) during an active session cancels the session context, closes the port-forward, and removes the tmpdir — each step bounded by its own deadline so one wedged cleanup cannot block process exit
+  5. Any session-scoped tool called with an unknown or already-stopped `session_id` returns a crisp "session not found or expired" error, never a generic failure
+**Plans**: TBD
+
+### Phase 18: Query Tools
+**Goal**: An LLM can read a session's dropped flows, generated policies, per-rule evidence, and cluster health as safe, well-described, paginated MCP tool results
+**Depends on**: Phase 17
+**Requirements**: QRY-01, QRY-02, QRY-03, QRY-04, QRY-05
+**Success Criteria** (what must be TRUE):
+  1. LLM calls `list_dropped_flows(session_id, …filters)` and receives a paginated (`limit`/`cursor`/`total_count`/`has_more`) composed view over the capped evidence samples and aggregate health counts, with the tool description explicit that it is a sampled/aggregated view, not a raw flow log
+  2. LLM calls `list_policies(session_id)` for policy metadata (name, workload, direction, rule counts) and `get_policy(session_id, name)` for full CNP YAML plus its absolute tmpdir path, both returning consistent data even while the pipeline is actively writing
+  3. LLM calls `get_evidence(session_id, …filters)` and receives paginated per-rule flow attribution identical to `cpg explain --output json`, via the promoted `pkg/explain` renderer
+  4. LLM calls `get_cluster_health(session_id)` and receives the finalized report (including per-reason Cilium remediation URLs) once stopped, or an explicit non-error "available after stop_session" result while still capturing
+  5. Every one of these tools ships `structuredContent` + `outputSchema`, truthful annotations (`readOnlyHint` etc.), a description that teaches the dropclass taxonomy (policy-actionable vs infra/transient), and `isError` errors with specific, actionable text on failure
+**Plans**: TBD
+
+### Phase 19: Security Hardening & End-to-End Validation
+**Goal**: The readonly guarantee is structurally proven and documented, and the complete session lifecycle is verified end-to-end under race detection
+**Depends on**: Phase 18
+**Requirements**: SRV-01, SRV-04, SEC-01, SEC-03
+**Success Criteria** (what must be TRUE):
+  1. An SRE registers `cpg mcp` (stdio transport) in an MCP harness and the initialize handshake succeeds, listing all 8 tools (`start_session`, `get_status`, `stop_session`, `list_dropped_flows`, `list_policies`, `get_policy`, `get_evidence`, `get_cluster_health`) with correct schemas
+  2. An audit test proves no K8s write verb and no filesystem write outside the session tmpdir is reachable from the MCP composition root — re-runnable for every future tool addition
+  3. An end-to-end stdio integration test drives `initialize → start_session → get_status → each query tool → stop_session → exit` under `-race`, plus an ungraceful-disconnect variant proving the port-forward and tmpdir are cleaned up within a bounded deadline
+  4. README's MCP section documents harness `env` configuration (`KUBECONFIG`/`PATH`/`TMPDIR`), the secrets posture (HTTP paths/labels reach the LLM context, headers never captured), and the exec-credential-plugin non-interactive hang caveat, so an SRE can configure a harness correctly on first try
+**Plans**: TBD
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -88,5 +143,9 @@ Full details: [milestones/v1.4-ROADMAP.md](milestones/v1.4-ROADMAP.md)
 | 13. Flags + Exit Code | v1.3 | 3/3 | Complete | 2026-04-26 |
 | 14. Fix Verification + Quality Gates | v1.4 | n/a (direct workflow) | Complete | 2026-07-20 |
 | 15. CI Trigger Fix + PR Delivery | v1.4 | n/a (direct workflow) | Complete | 2026-07-20 |
+| 16. MCP Server Foundation & Write Safety | v1.5 | 0/TBD | Not started | - |
+| 17. Session Lifecycle | v1.5 | 0/TBD | Not started | - |
+| 18. Query Tools | v1.5 | 0/TBD | Not started | - |
+| 19. Security Hardening & End-to-End Validation | v1.5 | 0/TBD | Not started | - |
 
-**Milestone status:** v1.0 ✅ shipped · v1.1 ✅ shipped · v1.2 ✅ shipped · v1.3 ✅ shipped · v1.4 ✅ shipped
+**Milestone status:** v1.0 ✅ shipped · v1.1 ✅ shipped · v1.2 ✅ shipped · v1.3 ✅ shipped · v1.4 ✅ shipped · v1.5 📋 in progress

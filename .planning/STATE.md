@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: MCP Integration
 status: planning
-last_updated: "2026-07-20T12:36:22.800Z"
+last_updated: "2026-07-20T14:24:34.000Z"
 last_activity: 2026-07-20
 progress:
-  total_phases: 0
+  total_phases: 4
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -20,14 +20,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-20)
 
 **Core value:** Automatically generate correct CiliumNetworkPolicies from observed Hubble denials so that SREs spend zero time manually writing network policies in default-deny environments.
-**Current focus:** Awaiting v1.5 scoping (`/gsd-new-milestone`)
+**Current focus:** Phase 16 — MCP Server Foundation & Write Safety
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-07-20 — Milestone v1.5 started
+Phase: 16 of 19 (MCP Server Foundation & Write Safety)
+Plan: — (not yet planned)
+Status: Ready to plan
+Last activity: 2026-07-20 — ROADMAP.md created for v1.5 (Phases 16-19), 18/18 requirements mapped
+
+Progress: [░░░░░░░░░░] 0%
 
 ## Performance Metrics
 
@@ -45,6 +47,7 @@ Last activity: 2026-07-20 — Milestone v1.5 started
 | v1.2 | 7-9 | 12 | 319 |
 | v1.3 | 10-13 | 8 | 418 |
 | v1.4 | 14-15 | 0 (direct workflow) | 484 |
+| v1.5 | 16-19 | TBD (planning not started) | - |
 
 *Updated after each plan completion.*
 | Phase 10-classifier-core P01 | 4 | 2 tasks | 5 files |
@@ -74,6 +77,9 @@ Decisions logged in PROJECT.md Key Decisions table.
 - [Phase 13-flags-and-exit-code]: validateIgnoreDropReasons accepts *zap.Logger for inline FILTER-03 WARN emission; dropClassLabel() local helper avoids exporting String() from pkg/dropclass
 - [Phase 13-flags-and-exit-code]: FailOnInfraDrops stored in PipelineConfig but exit logic not yet implemented (plan 13-03)
 - [Phase 13-flags-and-exit-code]: ExitCodeError defined in pkg/hubble to avoid import cycle; shouldExitForInfraDrops pure helper; errors.As in main.go; exit code 1 only (not 2)
+- [v1.5 roadmap]: SEC-02 (atomic policy writer) pulled into Phase 16 (first phase) — must land before any query tool reads `pkg/output`'s directory (Phase 18)
+- [v1.5 roadmap]: SRV-01 (full tool-list handshake) and SRV-04 (e2e lifecycle test) both close Phase 19 rather than SRV-01 sitting in the skeleton phase — "all tools listed" only becomes true once every tool from Phases 16-18 is registered
+- [v1.5 roadmap]: Research's 6-phase proposal consolidated to 4 (coarse granularity) — Read-Side Foundations folded into Query Tools (Phase 18); Security Hardening + E2E Validation merged into one closing phase (Phase 19)
 
 ### Pending Todos
 
@@ -81,7 +87,7 @@ None.
 
 ### Blockers/Concerns
 
-None open. v1.3 deferred items (L7-FUT-01, DNS-FUT-02, etc.) tracked in PROJECT.md Planned section. v1.4 lint debt (LINT-01..03) and release hardening (RELSEC-01..02) deliberately descoped — tracked in REQUIREMENTS.md Future Requirements for v1.5.
+None open. v1.3 deferred items (L7-FUT-01, DNS-FUT-02, etc.) tracked in PROJECT.md Planned section. v1.4 lint debt (LINT-01..03) and release hardening (RELSEC-01..02) deliberately descoped — tracked in REQUIREMENTS.md v2 Requirements for v1.5+ (not in v1.5's 18 v1 requirements).
 
 ### Quick Tasks Completed
 
@@ -104,9 +110,10 @@ Items acknowledged and deferred at milestone close on 2026-07-20:
 ## Session Continuity
 
 Last session: 2026-07-20
-Stopped at: Milestone v1.4 Audit Fable5 completed and archived (PR #16 merged as be06b7b; CI 4/4 green)
-Resume: `/gsd-new-milestone` — scope v1.5 (candidates: lint debt zero, release hardening, replay exit parity, feature backlog in PROJECT.md Planned)
+Stopped at: ROADMAP.md and STATE.md written for v1.5 MCP Integration — Phases 16-19 created, 18/18 requirements mapped, REQUIREMENTS.md traceability updated
+Resume: `/gsd-plan-phase 16` — plan MCP Server Foundation & Write Safety (SRV-02, SRV-03, SEC-02)
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Review the roadmap draft in .planning/ROADMAP.md
+- Start planning with /gsd-plan-phase 16

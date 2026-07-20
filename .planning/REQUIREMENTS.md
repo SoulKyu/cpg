@@ -74,13 +74,30 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| _(populated by roadmap)_ | | |
+| SRV-01 | Phase 19 | Pending |
+| SRV-02 | Phase 16 | Pending |
+| SRV-03 | Phase 16 | Pending |
+| SRV-04 | Phase 19 | Pending |
+| SESS-01 | Phase 17 | Pending |
+| SESS-02 | Phase 17 | Pending |
+| SESS-03 | Phase 17 | Pending |
+| SESS-04 | Phase 17 | Pending |
+| SESS-05 | Phase 17 | Pending |
+| SESS-06 | Phase 17 | Pending |
+| QRY-01 | Phase 18 | Pending |
+| QRY-02 | Phase 18 | Pending |
+| QRY-03 | Phase 18 | Pending |
+| QRY-04 | Phase 18 | Pending |
+| QRY-05 | Phase 18 | Pending |
+| SEC-01 | Phase 19 | Pending |
+| SEC-02 | Phase 16 | Pending |
+| SEC-03 | Phase 19 | Pending |
 
 **Coverage:**
 - v1 requirements: 18 total
-- Mapped to phases: 0
-- Unmapped: 18 ⚠️ (roadmap pending)
+- Mapped to phases: 18
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-07-20*
-*Last updated: 2026-07-20 after initial definition (research-informed scoping)*
+*Last updated: 2026-07-20 after roadmap creation (Phases 16-19, full coverage)*
