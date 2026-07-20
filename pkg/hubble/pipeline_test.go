@@ -3,6 +3,7 @@ package hubble
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -160,6 +161,94 @@ func TestSessionStats_Log(t *testing.T) {
 	}
 	assert.Contains(t, fieldMap, "flows_seen")
 	assert.Contains(t, fieldMap, "policies_written")
+}
+
+// TestRunPipeline_PopulatesLostEvents is a regression guard for the BUG-01
+// class defect on lost_events: monitorLostEvents accumulated the count locally
+// but never wrote it back to SessionStats, so the session summary always
+// reported lost_events=0 even when Hubble dropped events.
+func TestRunPipeline_PopulatesLostEvents(t *testing.T) {
+	tmpDir := t.TempDir()
+	core, logs := observer.New(zapcore.InfoLevel)
+	logger := zap.New(core)
+
+	source := &mockFlowSource{
+		flows: []*flowpb.Flow{
+			testdata.IngressTCPFlow(
+				[]string{"k8s:app=client"},
+				[]string{"k8s:app=server"},
+				"production",
+				8080,
+			),
+		},
+		lostEvents: []*flowpb.LostEvent{
+			{NumEventsLost: 3},
+			{NumEventsLost: 4},
+		},
+	}
+
+	cfg := PipelineConfig{
+		FlushInterval: 10 * time.Millisecond,
+		OutputDir:     tmpDir,
+		Logger:        logger,
+	}
+
+	err := RunPipelineWithSource(context.Background(), cfg, source)
+	require.NoError(t, err)
+
+	entries := logs.FilterMessage("session summary").All()
+	require.Len(t, entries, 1, "session summary must be logged exactly once")
+
+	var lost int64 = -1
+	for _, f := range entries[0].Context {
+		if f.Key == "lost_events" {
+			lost = f.Integer
+		}
+	}
+	assert.Equal(t, int64(7), lost, "lost_events must reflect the accumulated total, not 0")
+}
+
+// errStreamSource is a FlowSource whose stream fails mid-capture: both flow
+// channels close cleanly but StreamErr yields a transport error, mirroring a
+// live relay crash under Follow:true.
+type errStreamSource struct {
+	err error
+}
+
+func (e *errStreamSource) StreamDroppedFlows(_ context.Context, _ []string, _ bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
+	fc := make(chan *flowpb.Flow)
+	close(fc)
+	lc := make(chan *flowpb.LostEvent)
+	close(lc)
+	return fc, lc, nil
+}
+
+func (e *errStreamSource) StreamErr() <-chan error {
+	ec := make(chan error, 1)
+	ec <- e.err
+	close(ec)
+	return ec
+}
+
+// TestRunPipeline_SurfacesStreamError verifies a genuine transport failure is
+// propagated out of the pipeline (non-nil error / non-zero exit) instead of
+// draining to a clean exit 0.
+func TestRunPipeline_SurfacesStreamError(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := zaptest.NewLogger(t)
+
+	sentinel := errors.New("hubble stream failed: connection reset")
+	source := &errStreamSource{err: sentinel}
+
+	cfg := PipelineConfig{
+		FlushInterval: 10 * time.Millisecond,
+		OutputDir:     tmpDir,
+		Logger:        logger,
+	}
+
+	err := RunPipelineWithSource(context.Background(), cfg, source)
+	require.Error(t, err, "a mid-capture stream failure must not be reported as a clean run")
+	assert.ErrorIs(t, err, sentinel)
 }
 
 // channelFlowSource returns pre-made channels for testing.

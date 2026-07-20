@@ -2,6 +2,7 @@ package hubble
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -221,9 +222,10 @@ func TestMonitorLostEvents_AggregatesWarnings(t *testing.T) {
 	ch <- &flowpb.LostEvent{NumEventsLost: 10}
 	ch <- &flowpb.LostEvent{NumEventsLost: 5}
 
+	var total atomic.Uint64
 	done := make(chan error, 1)
 	go func() {
-		done <- monitorLostEvents(ctx, ch, logger)
+		done <- monitorLostEvents(ctx, ch, &total, logger)
 	}()
 
 	// Deterministic: wait until both events are drained, then cancel.
@@ -245,6 +247,7 @@ func TestMonitorLostEvents_AggregatesWarnings(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "should log warning about lost events")
+	assert.Equal(t, uint64(15), total.Load(), "accumulated total must be reported to caller")
 }
 
 func TestMonitorLostEvents_FinalSummary(t *testing.T) {
@@ -256,9 +259,10 @@ func TestMonitorLostEvents_FinalSummary(t *testing.T) {
 
 	ch <- &flowpb.LostEvent{NumEventsLost: 42}
 
+	var total atomic.Uint64
 	done := make(chan error, 1)
 	go func() {
-		done <- monitorLostEvents(ctx, ch, logger)
+		done <- monitorLostEvents(ctx, ch, &total, logger)
 	}()
 
 	require.Eventually(t, func() bool { return len(ch) == 0 }, time.Second, time.Millisecond)
@@ -281,6 +285,7 @@ func TestMonitorLostEvents_FinalSummary(t *testing.T) {
 		}
 	}
 	assert.True(t, totalLogged, "should log total lost events in final summary")
+	assert.Equal(t, uint64(42), total.Load(), "accumulated total must be reported to caller")
 }
 
 // TestAggregator_L7DNSCount_Increments asserts that observing a flow carrying

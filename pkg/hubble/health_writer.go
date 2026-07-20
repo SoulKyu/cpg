@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
@@ -36,7 +35,6 @@ type healthWriter struct {
 	logger         *zap.Logger
 	drops          map[flowpb.DropReason]*healthDropEntry
 	startedAt      time.Time
-	finalized      atomic.Bool
 	snapshotOnce   sync.Once
 	cachedSnapshot []HealthDropSnapshot
 }
@@ -209,7 +207,6 @@ func (hw *healthWriter) Snapshot() []HealthDropSnapshot {
 			})
 		}
 		hw.cachedSnapshot = cache
-		hw.finalized.Store(true)
 	})
 	// C-2: deep-copy on every call. Cache holds canonical entries; each
 	// returned slice + inner maps are fresh allocations so callers cannot

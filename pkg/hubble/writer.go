@@ -73,6 +73,7 @@ func (w *policyWriter) handle(pe policy.PolicyEvent) {
 			zap.String("workload", pe.Workload),
 			zap.Error(err),
 		)
+		w.stats.PoliciesFailed++
 		return
 	}
 	w.stats.PoliciesWritten++
@@ -102,8 +103,17 @@ func (w *policyWriter) dryRunEmit(pe policy.PolicyEvent) {
 		return
 	}
 
+	// ReadExisting already maps os.IsNotExist to (nil, nil); any error here is a
+	// genuine IO failure on an existing file. Treating it as "no existing file"
+	// would render the whole policy as a spurious full addition, so warn the
+	// operator that the dry-run diff may not reflect the true delta.
 	existing, err := w.writer.ReadExisting(pe.Namespace, pe.Workload)
 	if err != nil {
+		w.logger.Warn("dry-run: reading existing policy failed; diff may be inaccurate",
+			zap.String("namespace", pe.Namespace),
+			zap.String("workload", pe.Workload),
+			zap.Error(err),
+		)
 		existing = nil
 	}
 

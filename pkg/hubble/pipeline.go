@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
@@ -94,10 +95,15 @@ type PipelineConfig struct {
 
 // SessionStats tracks pipeline metrics for the session summary.
 type SessionStats struct {
-	StartTime          time.Time
-	FlowsSeen          uint64
-	PoliciesWritten    uint64
-	PoliciesSkipped    uint64
+	StartTime       time.Time
+	FlowsSeen       uint64
+	PoliciesWritten uint64
+	PoliciesSkipped uint64
+	// PoliciesFailed counts policies that could not be persisted (e.g. disk
+	// full, permission denied). These are in neither PoliciesWritten nor
+	// PoliciesSkipped, so surfacing the counter keeps the summary honest for a
+	// GitOps artifact generator rather than silently undercounting.
+	PoliciesFailed     uint64
 	PoliciesWouldWrite uint64 // dry-run counter
 	PoliciesWouldSkip  uint64 // dry-run counter
 	LostEvents         uint64
@@ -128,6 +134,7 @@ func (s *SessionStats) Log(logger *zap.Logger) {
 		zap.Uint64("flows_seen", s.FlowsSeen),
 		zap.Uint64("policies_written", s.PoliciesWritten),
 		zap.Uint64("policies_skipped", s.PoliciesSkipped),
+		zap.Uint64("policies_failed", s.PoliciesFailed),
 		zap.Uint64("policies_would_write", s.PoliciesWouldWrite),
 		zap.Uint64("policies_would_skip", s.PoliciesWouldSkip),
 		zap.Uint64("lost_events", s.LostEvents),
@@ -201,6 +208,24 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 
 	g, gctx := errgroup.WithContext(ctx)
 
+	// Stage 0: Surface a genuine stream transport failure (non-EOF) so a
+	// mid-capture relay crash makes g.Wait() — and therefore this function —
+	// return non-nil instead of draining to a clean exit 0. Only sources that
+	// expose a stream-error channel (the live Hubble Client) participate;
+	// offline/replay sources close cleanly and simply skip this stage.
+	if es, ok := source.(interface{ StreamErr() <-chan error }); ok {
+		if errCh := es.StreamErr(); errCh != nil {
+			g.Go(func() error {
+				for streamErr := range errCh {
+					if streamErr != nil {
+						return streamErr
+					}
+				}
+				return nil
+			})
+		}
+	}
+
 	// Stage 1: Aggregate flows and build policies.
 	// healthCh receives DropEvents for Infra/Transient flows (HEALTH-02).
 	g.Go(func() error {
@@ -208,7 +233,11 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 	})
 
 	// Stage 1b: Fan out PolicyEvent to the policy writer and evidence writer.
-	// Neither consumer may block the other.
+	// Sends are sequential (policyCh then evidenceCh), so the two consumers are
+	// NOT fully independent: if the evidence writer stalls and evidenceCh (buf
+	// 64) fills, this loop blocks and stops forwarding to policyCh, coupling the
+	// two under sustained load. Bounded buffers keep this from deadlocking, so
+	// the coupling is a throughput concern only.
 	// healthCh is closed here because agg.Run closes its out (policies) channel;
 	// when policies drains, we are done forwarding and must close healthCh so
 	// Stage 2c exits cleanly.
@@ -262,9 +291,12 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 		return nil
 	})
 
-	// Stage 3: Monitor lost events
+	// Stage 3: Monitor lost events. lostTotal captures the accumulated count so
+	// it can be reflected on SessionStats after g.Wait() (BUG-01 class fix for
+	// lost_events, previously stuck at 0).
+	var lostTotal atomic.Uint64
 	g.Go(func() error {
-		return monitorLostEvents(gctx, lostEvents, cfg.Logger)
+		return monitorLostEvents(gctx, lostEvents, &lostTotal, cfg.Logger)
 	})
 
 	err = g.Wait()
@@ -275,6 +307,7 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 	// VIS-01 gate share the same numbers. This also fixes v1.0 BUG-01 for
 	// flows_seen which had been stuck at 0 since v1.0.
 	stats.FlowsSeen = agg.FlowsSeen()
+	stats.LostEvents = lostTotal.Load()
 	stats.L7HTTPCount = agg.L7HTTPCount()
 	stats.L7DNSCount = agg.L7DNSCount()
 	stats.IgnoredByProtocol = agg.IgnoredByProtocol()
