@@ -78,8 +78,27 @@ func (w *Writer) Write(event policy.PolicyEvent) error {
 	// Annotate rules with human-readable comments
 	data = annotateRules(data, spec)
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("writing policy file %s: %w", path, err)
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("creating temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("writing temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("closing temp file: %w", err)
+	}
+	if err := os.Chmod(tmpPath, 0644); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("setting temp file permissions: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("atomic rename: %w", err)
 	}
 
 	return nil
