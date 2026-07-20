@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.9.1](https://github.com/SoulKyu/cpg/compare/v1.9.0...v1.9.1) (2026-07-20)
+
+
+### Bug Fixes
+
+* **ci:** gate lint on new issues only until v1.5 debt cleanup ([516d77b](https://github.com/SoulKyu/cpg/commit/516d77b490acf7fef7d081b0d15a77dce43934fa))
+* **ci:** pin Go toolchain to 1.25.12 for patched stdlib (govulncheck) ([ab97d96](https://github.com/SoulKyu/cpg/commit/ab97d964714b90722c1f34357d00cd097562a736))
+* **ci:** repin actions/checkout to the v4.3.1 release SHA ([f802e79](https://github.com/SoulKyu/cpg/commit/f802e79250fb3f8fb01a9f734d1514335a15ddf6))
+* **ci:** run pipeline on master and pin actions/tools to immutable versions ([c4cad81](https://github.com/SoulKyu/cpg/commit/c4cad81a40a49b6a1390ce620138c4f4ce51bd1c))
+* **cli:** emit FILTER-03 warning once, guard empty Direction render, use json struct tags ([85d1796](https://github.com/SoulKyu/cpg/commit/85d1796285953870b741a392b657f73ad04f6e26))
+* **deps:** bump cilium to v1.19.4 and x/net to v0.55.0 (govulncheck) ([37a7fb4](https://github.com/SoulKyu/cpg/commit/37a7fb4b3425bea410476358ffca7357c255e9d2))
+* **evidence,output:** dedup contributing sessions, validate policy refs, describe all selectors ([69840d4](https://github.com/SoulKyu/cpg/commit/69840d4a576fb6de837f3c063e1ce7e582ab9342))
+* **flowsource,dropclass:** report truncated replay, honor ctx cancel in scan loop, hints doc ([6843471](https://github.com/SoulKyu/cpg/commit/684347103466cb2053c823ee668e3bfa7deb58ae))
+* **hubble:** surface stream failures, populate LostEvents, apply --timeout, count write failures ([1559343](https://github.com/SoulKyu/cpg/commit/15593433f79e3e6ec83f75b795d22a605f4e0686))
+* land all 29 confirmed findings from the Fable 5 full code review ([be06b7b](https://github.com/SoulKyu/cpg/commit/be06b7b45ef8922f727ea513f929e1f3c5e2a1bd))
+* **output:** validate policy ref before writing YAML ([7e4ce88](https://github.com/SoulKyu/cpg/commit/7e4ce88da47b4cad455112f54f17c7797b7e965c))
+* **policy:** nil-Spec merge guard, content-aware dedup keys, multi-entry ICMP merge, DNS rule dedup ([4c2e474](https://github.com/SoulKyu/cpg/commit/4c2e474c2e43fbed752839c0e43004769fbe5f04))
+
 ## [1.9.0](https://github.com/SoulKyu/cpg/compare/v1.8.0...v1.9.0) (2026-04-27)
 
 
