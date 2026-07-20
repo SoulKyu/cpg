@@ -3,12 +3,16 @@ package output
 import (
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
+	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"sigs.k8s.io/yaml"
 
 	"github.com/SoulKyu/cpg/pkg/policy"
 	"github.com/SoulKyu/cpg/pkg/policy/testdata"
@@ -244,4 +248,98 @@ func TestWriter_RejectsInvalidPolicyRef(t *testing.T) {
 			assert.Empty(t, entries, "nothing may be created under the output root")
 		})
 	}
+}
+
+// TestWriter_AtomicNoLeftoverTempFiles verifies that after a successful
+// write, no leftover ".tmp-*" file remains in the namespace directory --
+// proving the temp file was renamed into place rather than left behind.
+func TestWriter_AtomicNoLeftoverTempFiles(t *testing.T) {
+	dir := t.TempDir()
+	logger := zap.NewNop()
+	w := NewWriter(dir, logger)
+
+	event := buildTestEvent("default", "server")
+	err := w.Write(event)
+	require.NoError(t, err)
+
+	nsDir := filepath.Join(dir, "default")
+	entries, err := os.ReadDir(nsDir)
+	require.NoError(t, err)
+
+	for _, entry := range entries {
+		assert.False(t, strings.Contains(entry.Name(), ".tmp-"), "leftover temp file found: %s", entry.Name())
+	}
+
+	path := filepath.Join(nsDir, "server.yaml")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+
+	var cnp ciliumv2.CiliumNetworkPolicy
+	require.NoError(t, yaml.Unmarshal(data, &cnp), "written file must be valid CNP YAML")
+}
+
+// TestWriter_ConcurrentReaderNeverSeesPartialFile drives a writer goroutine
+// that repeatedly rewrites the same policy file -- varying the destination
+// port each iteration so every write is a genuine content change, forcing a
+// real temp+rename cycle every time instead of hitting the
+// equivalent-policy skip path -- concurrently with a reader goroutine that
+// repeatedly reads the same path. Atomic rename guarantees the reader
+// observes either the previous complete file or the new complete file,
+// never a partial one. Run under -race.
+func TestWriter_ConcurrentReaderNeverSeesPartialFile(t *testing.T) {
+	dir := t.TempDir()
+	logger := zap.NewNop()
+	w := NewWriter(dir, logger)
+
+	const (
+		ns       = "default"
+		workload = "server"
+		iters    = 100
+	)
+	path := filepath.Join(dir, ns, workload+".yaml")
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iters; i++ {
+			flows := []*flowpb.Flow{
+				testdata.IngressTCPFlow(
+					[]string{"k8s:app=client"},
+					[]string{"k8s:app=server"},
+					ns, uint32(8000+i),
+				),
+			}
+			cnp, _ := policy.BuildPolicy(ns, workload, flows, nil, policy.AttributionOptions{})
+			event := policy.PolicyEvent{
+				Namespace: ns,
+				Workload:  workload,
+				Policy:    cnp,
+			}
+			if err := w.Write(event); err != nil {
+				t.Errorf("writer goroutine: unexpected error: %v", err)
+			}
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iters; i++ {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue // valid before the first rename
+				}
+				t.Errorf("reader goroutine: unexpected read error: %v", err)
+				continue
+			}
+			var cnp ciliumv2.CiliumNetworkPolicy
+			if err := yaml.Unmarshal(data, &cnp); err != nil {
+				t.Errorf("reader observed a partial/corrupt file: %v", err)
+			}
+		}
+	}()
+
+	wg.Wait()
 }
