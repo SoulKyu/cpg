@@ -72,7 +72,7 @@ Full details: [milestones/v1.4-ROADMAP.md](milestones/v1.4-ROADMAP.md)
 
 ### 📋 v1.5 MCP Integration (Phases 16-19)
 
-- [ ] **Phase 16: MCP Server Foundation & Write Safety** - Protocol-safe stdio process (pure JSON-RPC stdout, unified stderr logging) plus an atomic policy writer
+- [x] **Phase 16: MCP Server Foundation & Write Safety** - Protocol-safe stdio process (pure JSON-RPC stdout, unified stderr logging) plus an atomic policy writer (completed 2026-07-20)
 - [ ] **Phase 17: Session Lifecycle** - `start_session`/`get_status`/`stop_session` MCP tools wrapping the Hubble capture pipeline, with full cleanup on every exit path
 - [ ] **Phase 18: Query Tools** - Paginated readonly tools over dropped flows, generated policies, evidence, and cluster health
 - [ ] **Phase 19: Security Hardening & End-to-End Validation** - Structural readonly audit, full stdio lifecycle test under `-race`, MCP harness documentation
@@ -97,7 +97,7 @@ Full details: [milestones/v1.4-ROADMAP.md](milestones/v1.4-ROADMAP.md)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 16-03-PLAN.md — cpg mcp stdio server skeleton + stdout-purity & logging tests
+- [x] 16-03-PLAN.md — cpg mcp stdio server skeleton + stdout-purity & logging tests
 
 ### Phase 17: Session Lifecycle
 
@@ -162,7 +162,7 @@ Full details: [milestones/v1.4-ROADMAP.md](milestones/v1.4-ROADMAP.md)
 | 13. Flags + Exit Code | v1.3 | 3/3 | Complete | 2026-04-26 |
 | 14. Fix Verification + Quality Gates | v1.4 | n/a (direct workflow) | Complete | 2026-07-20 |
 | 15. CI Trigger Fix + PR Delivery | v1.4 | n/a (direct workflow) | Complete | 2026-07-20 |
-| 16. MCP Server Foundation & Write Safety | v1.5 | 2/3 | In Progress|  |
+| 16. MCP Server Foundation & Write Safety | v1.5 | 3/3 | Complete   | 2026-07-20 |
 | 17. Session Lifecycle | v1.5 | 0/TBD | Not started | - |
 | 18. Query Tools | v1.5 | 0/TBD | Not started | - |
 | 19. Security Hardening & End-to-End Validation | v1.5 | 0/TBD | Not started | - |
