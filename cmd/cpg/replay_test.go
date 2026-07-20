@@ -30,6 +30,40 @@ func TestReplayCmd_L7DefaultIsFalse(t *testing.T) {
 	assert.False(t, f.l7)
 }
 
+// TestReplay_IgnoreDropReasonWarnsOnce is the guardrail for FILTER-03: cobra
+// runs PreRunE (validateCommonFlags) and then RunE (runReplay). Both used to
+// validate --ignore-drop-reason with a non-nil logger, so an Infra-classified
+// reason emitted the redundancy WARN twice per invocation. RunE now re-validates
+// silently, so exactly one WARN must be observed.
+func TestReplay_IgnoreDropReasonWarnsOnce(t *testing.T) {
+	logs := initObservedLoggerForTesting(t)
+
+	outDir := t.TempDir()
+	evDir := t.TempDir()
+
+	cmd := newReplayCmd()
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+	cmd.SilenceUsage = true
+	cmd.SetArgs([]string{
+		"../../testdata/flows/small.jsonl",
+		"--output-dir", outDir,
+		"--evidence-dir", evDir,
+		"--flush-interval", "100ms",
+		// CT_MAP_INSERTION_FAILED is Infra → triggers the FILTER-03 redundancy WARN.
+		"--ignore-drop-reason", "CT_MAP_INSERTION_FAILED",
+	})
+	require.NoError(t, cmd.Execute())
+
+	redundant := 0
+	for _, e := range logs.All() {
+		if strings.Contains(e.Message, "redundant") {
+			redundant++
+		}
+	}
+	assert.Equal(t, 1, redundant, "FILTER-03 redundancy warning must be emitted exactly once per invocation")
+}
+
 // TestReplay_L7FlagByteStable is the PRIMARY guardrail for critical
 // correctness invariant 4: cpg replay --l7=true and cpg replay --l7=false
 // against the SAME v1.1 jsonpb fixture must produce byte-identical YAML
