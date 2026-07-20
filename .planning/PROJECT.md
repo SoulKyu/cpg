@@ -8,6 +8,17 @@ A Go CLI tool that connects directly to Hubble Relay via gRPC, observes dropped/
 
 Automatically generate correct CiliumNetworkPolicies from observed Hubble denials so that SREs spend zero time manually writing network policies in default-deny environments.
 
+## Current Milestone: v1.5 MCP Integration
+
+**Goal:** Expose cpg as a readonly MCP server (stdio) so an LLM harness can run a live Hubble capture session, analyze dropped flows, and review generated policies — the LLM brings the intelligence, cpg stays deterministic.
+
+**Target features:**
+- `cpg mcp` subcommand — MCP server over stdio transport (the harness spawns the process)
+- Session tools: start_session / status / stop_session — background Hubble capture
+- Ephemeral session tmpdir (`os.MkdirTemp`, respects `$TMPDIR`): policies YAML + evidence + cluster-health.json written via the existing writers with existing FIFO caps — flat memory profile, no parallel in-memory path
+- Query tools: dropped flows (dropclass-classified), generated policies, explain/evidence, cluster health — all implemented as readers over the session tmpdir artifacts
+- Readonly guarantee: never mutates the cluster, never writes outside the session tmpdir; tmpdir cleaned at stop_session and server shutdown
+
 ## Requirements
 
 ### Validated
@@ -50,9 +61,9 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 
 ### Active
 
-<!-- Awaiting v1.5 scoping via /gsd-new-milestone. -->
+<!-- v1.5 MCP Integration — requirements being defined via /gsd-new-milestone. -->
 
-- _(defined during `/gsd-new-milestone`)_
+- _(being defined — see REQUIREMENTS.md once written)_
 
 ### Planned
 
@@ -148,7 +159,7 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 
 **Codebase:** 10 packages (`pkg/{labels,policy,output,hubble,k8s,dedup,flowsource,evidence,diff,dropclass}` + `cmd/`). **484 tests passing with `-race`** across 10 packages (up from 418 at v1.3 close). CI green and operational for the first time (build + race tests + lint + govulncheck). Deps: cilium v1.19.4, toolchain go1.25.12. Known debt: 26 lint issues (16 errcheck + 10 SA1019) gated by `only-new-issues`, scoped to v1.5. Release-please continues to handle product SemVer tagging.
 
-**Next milestone:** v1.5 — awaiting scoping. Candidates: lint debt zero, release hardening, replay exit parity, plus feature candidates in Planned.
+**Current milestone:** v1.5 MCP Integration — in scoping (requirements → roadmap). Debt candidates (lint zero, release hardening, replay exit parity) remain in Planned; pulled in or deferred at requirements scoping.
 
 ## Evolution
 
@@ -168,4 +179,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-20 after v1.4 Audit Fable5 milestone (29 findings landed via PR #16, first green CI, 484 tests).*
+*Last updated: 2026-07-20 — milestone v1.5 MCP Integration started (goal + target features set; requirements in progress).*
