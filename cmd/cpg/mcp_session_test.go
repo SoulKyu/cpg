@@ -218,3 +218,45 @@ func TestMCPSessionLifecycleWiringAndStdoutPurity(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, leaked, "Pitfall I: mcpModeStdout() must keep the session summary off the real os.Stdout")
 }
+
+// TestParseOptionalDuration proves WR-03: parseOptionalDuration rejects any
+// duration above maxSessionDuration (24h) for both timeout and
+// flush_interval — the only backstop on setupCtx's deadline once WR-02's
+// ctx-cancellation merge is in place — while retaining its pre-existing
+// empty/positive/non-positive behavior unchanged (regression guard).
+func TestParseOptionalDuration(t *testing.T) {
+	cases := []struct {
+		name      string
+		raw       string
+		wantErr   string // substring expected in err.Error(), "" means no error
+		wantValue time.Duration
+	}{
+		{name: "empty omitted arg returns zero, no error", raw: "", wantErr: "", wantValue: 0},
+		{name: "normal positive value succeeds", raw: "30s", wantErr: "", wantValue: 30 * time.Second},
+		{name: "negative value still rejected as non-positive", raw: "-5s", wantErr: "must be positive"},
+		{name: "zero value still rejected as non-positive", raw: "0s", wantErr: "must be positive"},
+		{name: "malformed value still rejected as invalid duration", raw: "not-a-duration", wantErr: "invalid duration"},
+		{name: "value exactly at the ceiling succeeds", raw: "24h", wantErr: "", wantValue: 24 * time.Hour},
+		{name: "value above the ceiling is rejected", raw: "876000h", wantErr: "must be <="},
+		{name: "value one second above the ceiling is rejected", raw: "24h0m1s", wantErr: "must be <="},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseOptionalDuration(tc.raw, "timeout")
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				assert.Equal(t, tc.wantValue, got)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+			assert.Equal(t, time.Duration(0), got, "an error return must carry the zero Duration")
+		})
+	}
+
+	// field name is threaded through both branches this test exercises.
+	_, err := parseOptionalDuration("876000h", "flush_interval")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "flush_interval must be <=", "the field name must be reported in the ceiling error too")
+}

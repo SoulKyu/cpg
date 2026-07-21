@@ -719,3 +719,72 @@ func TestManager_PipelineErrorAutonomouslyStopsSession(t *testing.T) {
 
 	m.Shutdown()
 }
+
+// TestManager_Start_ShutdownCancelsSetupCtx proves WR-02 (Truth 4 / SESS-05
+// reopened gap): Shutdown's s.cancel() now reaches a mid-setup Start call's
+// setupCtx via the Task 1 context.AfterFunc(sessionCtx, setupCancel) merge,
+// so a resolveSetupFn that genuinely observes its ctx (unlike
+// TestManager_Start_ShutdownRacesSetup's fake above, which blocks on a
+// plain manually-closed release channel and therefore cannot prove ctx
+// cancellation at all) aborts promptly instead of running to its own setup
+// timeout.
+//
+// Load-bearing property: reqCtx is context.Background() (never cancelled)
+// and Timeout is a deliberately large 30s, so setupCtx's own timeout is
+// irrelevant to this test's bounded window — the ONLY way the fake can
+// unblock within a few hundred milliseconds is if Shutdown's cancellation
+// reached setupCtx. Pre-fix (setupCtx rooted in reqCtx alone, no merge),
+// this test's bounded assertions below would time out (t.Fatal) well
+// before the fake ever unblocks at the real 30s mark — proving the pre-fix
+// separate-context-tree code cannot meet this bar.
+func TestManager_Start_ShutdownCancelsSetupCtx(t *testing.T) {
+	m := newTestManager(t, &blockingFlowSource{flow: someFlow()})
+
+	entered := make(chan struct{})
+	m.resolveSetupFn = func(setupCtx context.Context, _ StartArgs) (string, func(), map[string]*ciliumv2.CiliumNetworkPolicy, error) {
+		close(entered)
+		<-setupCtx.Done() // load-bearing: inspects ctx instead of a manual release lever
+		return "", nil, nil, setupCtx.Err()
+	}
+
+	before, err := filepath.Glob(filepath.Join(os.TempDir(), "cpg-session-*"))
+	require.NoError(t, err)
+
+	startDone := make(chan startOutcome, 1)
+	go func() {
+		res, err := m.Start(context.Background(), StartArgs{Server: "bypass:1", Timeout: 30 * time.Second})
+		startDone <- startOutcome{res: res, err: err}
+	}()
+
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start never reached the setup seam")
+	}
+
+	bound := 4 * (m.stopWait + m.removeWait) // well under the 30s setup timeout
+
+	shutdownDone := make(chan struct{})
+	go func() {
+		m.Shutdown()
+		close(shutdownDone)
+	}()
+
+	select {
+	case <-shutdownDone:
+	case <-time.After(bound):
+		t.Fatal("Shutdown did not return within the bounded deadline while a Start was mid-setup")
+	}
+
+	var outcome startOutcome
+	select {
+	case outcome = <-startDone:
+	case <-time.After(bound):
+		t.Fatal("Start did not return promptly after Shutdown — setupCtx was not cancelled by sessionCtx (WR-02 regression: pre-fix code would only unblock at the 30s setup timeout)")
+	}
+	require.Error(t, outcome.err, "a cancelled mid-setup resolveSetupFn must surface as a Start error")
+
+	after, err := filepath.Glob(filepath.Join(os.TempDir(), "cpg-session-*"))
+	require.NoError(t, err)
+	assert.Len(t, after, len(before), "no orphaned session tmpdir should remain after Shutdown cancelled a mid-setup Start")
+}
