@@ -83,16 +83,19 @@ type Session struct {
 	// Manager's server-rooted ctx, never the tool-call's request ctx — see
 	// plan 17-03 Pattern 2). context.CancelFunc is documented idempotent
 	// and safe to call more than once, supporting D-03's idempotent stop.
-	cancel context.CancelFunc
+	// Set and driven by plan 17-03's Manager; this plan writes zero
+	// orchestration logic (see package doc), so the field is unread here.
+	cancel context.CancelFunc //nolint:unused // consumed by plan 17-03's Manager
 	// done receives the pipeline goroutine's terminal error exactly once.
 	// Buffered 1 so the goroutine never blocks sending even before anyone
-	// has received from it.
-	done chan error
+	// has received from it. Set and driven by plan 17-03's Manager.
+	done chan error //nolint:unused // consumed by plan 17-03's Manager
 	// stopOnce guards the actual cancel+wait+finalize sequence so
 	// concurrent stop_session calls for the same session all observe the
 	// identical completed teardown, rather than racing on the
-	// single-buffered done channel (Pitfall F).
-	stopOnce sync.Once
+	// single-buffered done channel (Pitfall F). Driven by plan 17-03's
+	// Manager.
+	stopOnce sync.Once //nolint:unused // consumed by plan 17-03's Manager
 
 	// final holds the fully populated hubble.SessionStats captured by the
 	// pipeline's OnFinal hook. Written on the pipeline's own goroutine,
