@@ -720,6 +720,50 @@ func TestManager_PipelineErrorAutonomouslyStopsSession(t *testing.T) {
 	m.Shutdown()
 }
 
+// TestManager_ScopedDialTimeoutAutonomouslyStopsSession proves WR-01 (fresh
+// gap found post-17-05, narrower than the original Truth 2 gap): a pipeline
+// that fails with a SCOPED context.DeadlineExceeded — derived from the
+// still-healthy sessionCtx, exactly the shape pkg/hubble/client.go:109-121's
+// waitForConnReady returns on an unreachable/typo'd --server address — must
+// still autonomously transition the session to stopped. The pre-fix guard
+// classified purely on the returned error's KIND via
+// errors.Is(err, context.DeadlineExceeded), which matches this scoped
+// timeout too even though sessionCtx itself was never cancelled — the fix
+// classifies on sessionCtx.Err() instead, the only true "this was on
+// purpose" signal.
+//
+// Load-bearing property: the Eventually assertion below is FALSE against the
+// pre-fix launch-goroutine guard — a scoped DeadlineExceeded satisfies the
+// old errors.Is filter and is discarded, so State never leaves
+// StateCapturing and get_status reports "capturing" forever for exactly
+// this realistic connection-failure mode. This test fails against that old
+// behavior, which is the point.
+func TestManager_ScopedDialTimeoutAutonomouslyStopsSession(t *testing.T) {
+	m := newTestManager(t, &blockingFlowSource{flow: someFlow()})
+
+	// Mirrors waitForConnReady exactly: derive a scoped dialCtx from the
+	// passed (healthy) ctx, block until it expires, then return a wrapped
+	// DeadlineExceeded from the CHILD ctx. The parent — sessionCtx, == the
+	// ctx passed here — is never cancelled on this path.
+	m.runPipeline = func(ctx context.Context, _ hubble.PipelineConfig) error {
+		dialCtx, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+		defer cancel()
+		<-dialCtx.Done()
+		return fmt.Errorf("connecting to hubble relay %q: %w", "bad:1", dialCtx.Err())
+	}
+
+	res, err := m.Start(context.Background(), StartArgs{Server: "bad:1"})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		status, statusErr := m.Status(res.SessionID)
+		return statusErr == nil && status.State == "stopped" && strings.Contains(status.Error, "connecting to hubble relay")
+	}, 5*time.Second, 5*time.Millisecond,
+		"a scoped dial-timeout DeadlineExceeded (sessionCtx itself never cancelled) must autonomously stop the session — zero stop_session calls required")
+
+	m.Shutdown()
+}
+
 // TestManager_Start_ShutdownCancelsSetupCtx proves WR-02 (Truth 4 / SESS-05
 // reopened gap): Shutdown's s.cancel() now reaches a mid-setup Start call's
 // setupCtx via the Task 1 context.AfterFunc(sessionCtx, setupCancel) merge,
