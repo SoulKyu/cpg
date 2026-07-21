@@ -87,6 +87,91 @@ func TestRunPipeline_EndToEnd(t *testing.T) {
 	assert.Contains(t, string(data), "kind: CiliumNetworkPolicy")
 }
 
+// TestRunPipeline_OnFinalFiresOnce proves the D-08 contract: cfg.OnFinal is
+// called exactly once at end-of-run with the fully populated SessionStats.
+// This is the tested foundation 17-02's session manager wires against
+// (session.final.Store(&s) inside the closure).
+func TestRunPipeline_OnFinalFiresOnce(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := zaptest.NewLogger(t)
+
+	source := &mockFlowSource{
+		flows: []*flowpb.Flow{
+			testdata.IngressTCPFlow(
+				[]string{"k8s:app=client"},
+				[]string{"k8s:app=server"},
+				"production",
+				8080,
+			),
+			testdata.EgressUDPFlow(
+				[]string{"k8s:app=server"},
+				[]string{"k8s:app=dns"},
+				"production",
+				53,
+			),
+		},
+	}
+
+	var called int
+	var captured SessionStats
+
+	cfg := PipelineConfig{
+		FlushInterval: 10 * time.Millisecond,
+		OutputDir:     tmpDir,
+		Logger:        logger,
+		OnFinal: func(s SessionStats) {
+			called++
+			captured = s
+		},
+	}
+
+	// RunPipelineWithSource is synchronous: it returns only after g.Wait()
+	// and therefore after OnFinal has already fired. Reading called/captured
+	// after this call (not from another goroutine) is race-free with no
+	// additional synchronization needed.
+	err := RunPipelineWithSource(context.Background(), cfg, source)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, called, "OnFinal must fire exactly once")
+	assert.Equal(t, uint64(2), captured.FlowsSeen, "captured stats must be fully populated (FlowsSeen from agg.FlowsSeen())")
+}
+
+// TestRunPipeline_OnFinalNilSafe proves a nil OnFinal (every existing CLI
+// path) is a pure no-op: no panic, no error.
+func TestRunPipeline_OnFinalNilSafe(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := zaptest.NewLogger(t)
+
+	source := &mockFlowSource{
+		flows: []*flowpb.Flow{
+			testdata.IngressTCPFlow(
+				[]string{"k8s:app=client"},
+				[]string{"k8s:app=server"},
+				"production",
+				8080,
+			),
+			testdata.EgressUDPFlow(
+				[]string{"k8s:app=server"},
+				[]string{"k8s:app=dns"},
+				"production",
+				53,
+			),
+		},
+	}
+
+	cfg := PipelineConfig{
+		FlushInterval: 10 * time.Millisecond,
+		OutputDir:     tmpDir,
+		Logger:        logger,
+		// OnFinal intentionally left unset (zero value / nil).
+	}
+
+	require.NotPanics(t, func() {
+		err := RunPipelineWithSource(context.Background(), cfg, source)
+		require.NoError(t, err)
+	})
+}
+
 func TestRunPipeline_GracefulShutdown(t *testing.T) {
 	tmpDir := t.TempDir()
 	logger := zaptest.NewLogger(t)
