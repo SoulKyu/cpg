@@ -69,6 +69,9 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 - ✓ `get_evidence`: paginated per-rule attribution byte-identical to `cpg explain --output json` via promoted `pkg/explain` (Filter/Output/Render*/ParsePeerLabel exported, flowsource-style promotion) (QRY-03) — v1.5 Phase 18
 - ✓ `get_cluster_health`: typed passthrough via `pkg/hubble.ReadClusterHealth`, 4-state branch (capturing → `available_after_stop`; stopped+absent+no-error → "zero drops"; crash → isError citing pipeline error), remediation URLs intact (QRY-04) — v1.5 Phase 18
 - ✓ QRY-05 contract on all 8 tools: `structuredContent`+`outputSchema` (explicit `*jsonschema.Schema` dropclass enum — go-sdk has no enum tags), truthful annotations, taxonomy-teaching descriptions, actionable `isError`; opaque fail-closed cursor; `session.DeriveSessionPaths` single source of truth for tmpdir layout — v1.5 Phase 18
+- ✓ SEC-01 structural readonly audit: `TestMCPAuditReadonlyReachability` — SSA/RTA callgraph from `runMCPServer`, BFS-filtered to cpg-owned functions, direct-call scan; K8s write verbs (incl. DeleteCollection/UpdateStatus/ApplyStatus) fail unconditionally, fs writes (incl. Chmod/Truncate/Symlink/…) gated by an exact 5-function allowlist; mutation-tested diagnostic (function symbol + call path) — v1.5 Phase 19
+- ✓ SRV-01 + SRV-04: real-subprocess stdio e2e — `-race`-built `cpg mcp` driven over real pipes against an in-process fake Hubble observer relay; graceful lifecycle (initialize → 8-tool handshake/schema/annotation proof → session + 5 query tools → stop → clean exit, byte-pure stdout) and ungraceful-disconnect variant (stdin kill → bounded self-exit, tmpdir removed, relay stream cancelled; 5/5 stability under `-race`) — v1.5 Phase 19
+- ✓ SEC-03 README `## MCP Server (cpg mcp)` section: harness `env` block (KUBECONFIG/PATH/TMPDIR + why), secrets posture (L7 paths/labels reach the LLM; headers never captured), exec-credential-plugin non-interactive caveat + credential-persistence note, session model — v1.5 Phase 19
 
 ### Active
 
@@ -173,7 +176,7 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 
 **Codebase:** 12 packages (`pkg/{labels,policy,output,hubble,k8s,dedup,flowsource,evidence,diff,dropclass,session,explain}` + `cmd/`). **607 tests passing with `-race`** across 12 packages (up from 539 at Phase 17 close). CI green and operational (build + race tests + lint + govulncheck). Deps: cilium v1.19.4, go-sdk v1.6.1, jsonschema-go v0.4.3 (direct since Phase 18), toolchain go1.25.12. Known debt: 26 lint issues (16 errcheck + 10 SA1019) gated by `only-new-issues`, scoped to v1.5; pre-existing `pkg/session` shared-`/tmp` test flake documented in `phases/18-query-tools/deferred-items.md`. Release-please continues to handle product SemVer tagging.
 
-**Current milestone:** v1.5 MCP Integration — Phase 18 (Query Tools) complete 2026-07-21: all 8 MCP tools live (3 session + 5 query), verified 5/5 must-haves first pass; code review (0 critical, 4 warnings) fully fixed same-day (DROP_REASON_UNKNOWN classification, list_policies pagination, get_policy single-read, DeriveSessionPaths helper). Next: Phase 19 (Security Hardening & End-to-End Validation) — structural readonly audit test, full-stdio e2e lifecycle under `-race`, README MCP harness docs (SRV-01, SRV-04, SEC-01, SEC-03).
+**Current milestone:** v1.5 MCP Integration — ALL 4 PHASES COMPLETE (16-19, 2026-07-20 → 2026-07-21). Phase 19 (Security Hardening & End-to-End Validation) closed 2026-07-21: SEC-01 audit (mutation-tested), SRV-01/SRV-04 real-stdio e2e both variants green under `-race`, SEC-03 README harness docs; verified 5/5 (one tracking-only gap closed same-day); code review (0 critical, 4 warnings) fixed same-day (audit self-check de-tautologized, verb/fs watchlists extended, subprocess t.Cleanup kill-guard). All 18 v1.5 requirements complete — milestone ready for `/gsd-complete-milestone`. Tests: 610 across 12 packages (607 at Phase 18 close + audit + 2 e2e variants), all `-race`.
 
 ## Evolution
 
@@ -193,4 +196,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-21 — v1.5 Phase 18 (Query Tools) completed, verified 5/5 first pass, review warnings fixed.*
+*Last updated: 2026-07-21 — v1.5 Phase 19 (Security Hardening & End-to-End Validation) completed, verified 5/5, review findings fixed; all v1.5 phases (16-19) done.*
