@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: MCP Integration
-status: executing
-last_updated: "2026-07-21T09:11:12.895Z"
-last_activity: 2026-07-21 -- Phase 17 planning complete
+status: verifying
+last_updated: "2026-07-21T09:29:58.660Z"
+last_activity: 2026-07-21
 progress:
   total_phases: 4
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 11
-  completed_plans: 10
-  percent: 25
+  completed_plans: 11
+  percent: 50
 ---
 
 # Project State
@@ -25,11 +25,11 @@ See: .planning/PROJECT.md (updated 2026-07-20)
 ## Current Position
 
 Phase: 17 (session-lifecycle) — EXECUTING
-Plan: 1 of 7
-Status: Ready to execute
-Last activity: 2026-07-21 -- Phase 17 planning complete
+Plan: 8 of 8
+Status: Phase complete — ready for verification
+Last activity: 2026-07-21
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -58,6 +58,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 13-flags-and-exit-code P01 | 8 | 2 tasks | 2 files |
 | Phase 13-flags-and-exit-code P02 | 8 | 2 tasks | 5 files |
 | Phase 13-flags-and-exit-code P03 | 146 | 2 tasks | 4 files |
+| Phase 17 P08 | ~13min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -81,6 +82,10 @@ Decisions logged in PROJECT.md Key Decisions table.
 - [v1.5 roadmap]: SRV-01 (full tool-list handshake) and SRV-04 (e2e lifecycle test) both close Phase 19 rather than SRV-01 sitting in the skeleton phase — "all tools listed" only becomes true once every tool from Phases 16-18 is registered
 - [v1.5 roadmap]: Research's 6-phase proposal consolidated to 4 (coarse granularity) — Read-Side Foundations folded into Query Tools (Phase 18); Security Hardening + E2E Validation merged into one closing phase (Phase 19)
 - [Phase 16]: Phase 17 handoff: MCP-mode PipelineConfig.Stdout MUST use mcpModeStdout()
+- [Phase 17-session-lifecycle]: WR-01 crash classifier uses sessionCtx.Err() == nil (not errors.Is on the returned error) — the only true 'cancelled on purpose' signal, so it subsumes any future scoped-timeout shape a pipeline dependency introduces, not just client.go's dial timeout
+- [Phase 17-session-lifecycle]: s.cancel() releases sessionCtx on the autonomous-exit path, placed inside the existing genuine-failure guard (not a separate step) — idempotent and safe w.r.t. Start's context.AfterFunc(sessionCtx, setupCancel), already un-registered by then
+- [Phase 17-session-lifecycle]: WR-02: Session.explicitStopSeen atomic.Bool decouples 'was Stop() already called' from 'is State == StateStopped' — same per-session primitive placement as cancel/done/stopOnce, keeps Manager stateless across sessions
+- [Phase 17-session-lifecycle]: explicitStopSeen.Swap(true) applied at BOTH of Stop's buildSummary call sites (the state==StateStopped early-return AND the post-stopOnce path) — the early-return is exactly the path a first-post-crash Stop() takes, so it needs the same already_stopped semantics
 
 ### Pending Todos
 
@@ -110,11 +115,11 @@ Items acknowledged and deferred at milestone close on 2026-07-20:
 
 ## Session Continuity
 
-Last session: 2026-07-20T19:14:56.902Z
-Stopped at: Phase 17 context gathered
-Resume: `/gsd-plan-phase 16` — plan MCP Server Foundation & Write Safety (SRV-02, SRV-03, SEC-02)
+Last session: 2026-07-21T09:29:58.652Z
+Stopped at: Phase 17 (session-lifecycle) complete — plan 08 (WR-01/WR-02 gap closure) executed, all 8 plans done
+Resume: `/gsd-verify-phase 17` — verify Phase 17 session-lifecycle (all 8 plans complete, gap closures WR-01/WR-02/WR-03/WR-04/D-02 done)
 
 ## Operator Next Steps
 
-- Review the roadmap draft in .planning/ROADMAP.md
-- Start planning with /gsd-plan-phase 16
+- Phase 16 (MCP Server Foundation & Write Safety) and Phase 17 (session-lifecycle) are both fully executed
+- Verify Phase 17 before proceeding to Phase 18 (Query Tools) planning

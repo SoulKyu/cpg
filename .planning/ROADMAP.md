@@ -132,7 +132,7 @@ Full details: [milestones/v1.4-ROADMAP.md](milestones/v1.4-ROADMAP.md)
 
 **Gap Closure (post-verification):** 17-05..17-07 closed the prior round (WR-01 old class, WR-02/03 old, D-02 docs). 17-VERIFICATION.md (2026-07-21, 4/5) reopened SESS-03 narrowly and flagged an SESS-04/D-03 contract regression:
 
-- [ ] 17-08-PLAN.md — WR-01 (scoped dial-timeout crash classification, SESS-03) + WR-02 (already_stopped reflects explicit stop, D-03/SESS-04)
+- [x] 17-08-PLAN.md — WR-01 (scoped dial-timeout crash classification, SESS-03) + WR-02 (already_stopped reflects explicit stop, D-03/SESS-04)
 
 ### Phase 18: Query Tools
 
@@ -183,7 +183,7 @@ Full details: [milestones/v1.4-ROADMAP.md](milestones/v1.4-ROADMAP.md)
 | 14. Fix Verification + Quality Gates | v1.4 | n/a (direct workflow) | Complete | 2026-07-20 |
 | 15. CI Trigger Fix + PR Delivery | v1.4 | n/a (direct workflow) | Complete | 2026-07-20 |
 | 16. MCP Server Foundation & Write Safety | v1.5 | 3/3 | Complete    | 2026-07-20 |
-| 17. Session Lifecycle | v1.5 | 7/8 | Gap closure | 2026-07-21 |
+| 17. Session Lifecycle | v1.5 | 8/8 | Complete   | 2026-07-21 |
 | 18. Query Tools | v1.5 | 0/TBD | Not started | - |
 | 19. Security Hardening & End-to-End Validation | v1.5 | 0/TBD | Not started | - |
 
