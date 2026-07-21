@@ -295,6 +295,16 @@ func TestMCPAuditReadonlyReachability(t *testing.T) {
 	// Stage 3: direct call-instruction scan of each cpg-owned reachable
 	// function's OWN body only — never recurse into a callee's body, even a
 	// cpg-owned one already covered by iterating cpgOwned itself.
+	//
+	// IN-01 (known completeness gap): this scan handles only
+	// common.StaticCallee() != nil (Property 2) and common.IsInvoke()
+	// (Property 1). A CallInstruction dispatched through a func value (e.g.
+	// `w := os.WriteFile; w(path, data, 0o644)`) has a nil StaticCallee()
+	// and is not an invoke, so it is scanned by neither property and would
+	// go undetected. No cpg code currently dispatches a filesystem/K8s
+	// write through a func value, so this is a soundness completeness gap
+	// rather than a live miss; a full fix would resolve func-value callees
+	// against the RTA graph's Out edges for the call site.
 	for f := range cpgOwned {
 		for _, b := range f.Blocks {
 			for _, instr := range b.Instrs {
