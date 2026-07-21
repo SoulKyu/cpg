@@ -18,6 +18,7 @@ package session
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -102,6 +103,15 @@ type Session struct {
 	// read by Status/Stop on the tool-handler goroutine — atomic.Pointer
 	// (not a bare field) keeps this race-free under `go test -race`.
 	final atomic.Pointer[hubble.SessionStats]
+
+	// pipelineErr holds the pipeline goroutine's terminal error captured on
+	// an autonomous/genuine-failure exit (relay connection reset, auth
+	// expiry, unreachable server — never a context.Canceled/
+	// DeadlineExceeded cancellation). Written once by Start's launch
+	// goroutine, read by Status and buildSummary. Same cross-goroutine
+	// rationale as final above: atomic.Pointer (not a bare field) keeps
+	// this race-free under `go test -race`.
+	pipelineErr atomic.Pointer[error]
 }
 
 // StartArgs are the already-validated, already-normalized inputs pkg/session
@@ -147,6 +157,10 @@ type StatusResult struct {
 	PolicyFileCount   int    `json:"policy_file_count"`
 	EvidenceFileCount int    `json:"evidence_file_count"`
 	TmpDir            string `json:"tmp_dir"`
+	// Error is the pipeline's terminal error if the capture ended on its
+	// own (relay reset, auth expiry, unreachable server); absent for a
+	// healthy capturing session or a cleanly stopped one.
+	Error string `json:"error,omitempty" jsonschema:"the pipeline's terminal error if the capture ended on its own (relay reset, auth expiry, unreachable server); absent for a healthy capturing session or a cleanly stopped one"`
 }
 
 // StopResult is the stop_session MCP tool's structuredContent shape (D-09):
@@ -155,6 +169,9 @@ type StatusResult struct {
 type StopResult struct {
 	SessionID string `json:"session_id"`
 	State     string `json:"state"`
+	// Error is the pipeline's terminal error if the session crashed rather
+	// than being stopped cleanly.
+	Error string `json:"error,omitempty" jsonschema:"the pipeline's terminal error if the session crashed rather than being stopped cleanly"`
 	// AlreadyStopped marks a second/idempotent stop_session call (D-03) —
 	// this is never an isError response; it carries the same summary as
 	// the first stop.
@@ -198,6 +215,13 @@ func (s *Session) buildSummary(alreadyStopped bool, clusterHealthPath string) St
 	}
 	result.Duration = elapsed.Round(time.Second).String()
 
+	// Surface the pipeline's terminal error (if any) before the stats==nil
+	// early return below — a crash frequently means OnFinal never fired, so
+	// the zeroed envelope still needs to carry the crash signal.
+	if p := s.pipelineErr.Load(); p != nil && *p != nil {
+		result.Error = (*p).Error()
+	}
+
 	stats := s.final.Load()
 	if stats == nil {
 		return result
@@ -212,7 +236,11 @@ func (s *Session) buildSummary(alreadyStopped bool, clusterHealthPath string) St
 	result.L7DNSCount = stats.L7DNSCount
 	result.InfraDropTotal = stats.InfraDropTotal
 	for reason, count := range stats.InfraDropsByReason {
-		result.InfraDropsByReason[flowpb.DropReason_name[int32(reason)]] = count
+		name, ok := flowpb.DropReason_name[int32(reason)]
+		if !ok {
+			name = fmt.Sprintf("UNKNOWN(%d)", reason)
+		}
+		result.InfraDropsByReason[name] = count
 	}
 
 	return result
