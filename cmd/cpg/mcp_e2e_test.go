@@ -658,3 +658,144 @@ func TestMCPE2EGracefulLifecycle(t *testing.T) {
 	// D-06 on real stdio (D-05).
 	assertStdoutPurity(t, e2e.rawTee.Bytes())
 }
+
+// TestMCPE2EUngracefulDisconnect proves the second half of SRV-04 (D-08):
+// killing the transport (stdin EOF -- standing in for any real-world
+// equivalent, e.g. a harness crash) while a session is still actively
+// capturing, with NO stop_session call, triggers the SAME bounded
+// session-cleanup fan-out Manager.Shutdown runs on every process-exit path
+// (SESS-05, Phase 17): the session ctx is cancelled, the pipeline's Hubble
+// stream is torn down, the process self-exits, and the session tmpdir is
+// removed. Reuses Plan 02's fake relay + subprocess/tee harness + fixtures
+// (Task 1's shared infra) with zero infrastructure edits.
+//
+// D-09: this e2e deliberately bypasses port-forward (D-06/D-07 -- no
+// cluster, that IS the fake-relay bypass's whole point), so there is no real
+// port-forward for this test to observe closing. The SAME Manager.Shutdown()
+// fan-out that would close a real port-forward is what cancels the fake
+// relay's GetFlows stream context here -- proving the fan-out fires on
+// transport death via stream-cancel + tmpdir removal IS the honest,
+// non-phantom proxy for "port-forward cleaned up" in a cluster-free e2e; it
+// is not a gap this test fails to cover.
+func TestMCPE2EUngracefulDisconnect(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real-subprocess e2e test in -short mode (one-time -race build + subprocess overhead)")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	relayAddr, relay := startFakeRelay(t, []*flowpb.Flow{buildPolicyDeniedFlow(), buildInfraClassDropFlow()})
+
+	e2e := startE2ESubprocess(t, ctx)
+	cs := e2e.cs
+
+	// Same setup as the graceful test, but only through get_status -- D-08
+	// requires NO stop_session call before the disconnect below. A short
+	// flush_interval (matching the graceful test) lets the aggregator flush
+	// the POLICY_DENIED fixture to disk quickly, which the synchronization
+	// step below depends on.
+	startResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name: "start_session",
+		Arguments: map[string]any{
+			"server":         relayAddr,
+			"tls":            false,
+			"flush_interval": "1s",
+		},
+	})
+	require.NoError(t, err)
+	require.False(t, startResp.IsError, "start_session against the fake relay must not error")
+
+	var startOut struct {
+		SessionID string `json:"session_id"`
+	}
+	decodeStructured(t, startResp.StructuredContent, &startOut)
+	require.NotEmpty(t, startOut.SessionID)
+
+	statusResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "get_status",
+		Arguments: map[string]any{"session_id": startOut.SessionID},
+	})
+	require.NoError(t, err)
+	require.False(t, statusResp.IsError)
+
+	var statusOut struct {
+		TmpDir string `json:"tmp_dir"`
+	}
+	decodeStructured(t, statusResp.StructuredContent, &statusOut)
+	require.NotEmpty(t, statusOut.TmpDir)
+	require.DirExists(t, statusOut.TmpDir, "Manager.Start must have created the session tmpdir")
+
+	// CRITICAL (Pitfall 3): Manager.Start returns as soon as its synchronous
+	// setup completes -- the pipeline's actual GetFlows call happens later,
+	// inside a detached background goroutine. get_status reporting
+	// "capturing" does NOT by itself guarantee GetFlows has been invoked yet:
+	// closing stdin before the relay is actually reached makes the
+	// stream-cancel assertion below flaky (empirically reproduced in
+	// research -- started=false cancelled=false despite a correct process
+	// self-exit and tmpdir removal). Block on the relay's own started
+	// signal, bounded, before disconnecting.
+	relay.waitStarted(t, 5*time.Second)
+
+	// A SECOND, stronger synchronization gate beyond waitStarted (Rule 1
+	// auto-fix, found empirically running this exact test): waitStarted
+	// only proves fakeRelay.GetFlows was INVOKED, not that its short
+	// in-memory fixture-send loop (both flows.Send calls, before it blocks
+	// on <-stream.Context().Done()) has FINISHED. Disconnecting immediately
+	// after waitStarted races that loop -- if the transport tears down
+	// mid-loop, stream.Send returns a non-nil error and GetFlows takes its
+	// early `return err` path, NEVER reaching (and never setting)
+	// `cancelled`. Reproduced empirically: closing stdin right after
+	// waitStarted produced a subprocess session summary of "flows_seen": 0
+	// and a 3ms session duration, and `cancelled` stayed false even 5s
+	// after the process had already exited cleanly. Waiting for the
+	// POLICY_DENIED fixture to actually land as a real policy file proves
+	// the relay's full fixture-send loop already completed -- an artifact
+	// reaching disk (network receive + classify + aggregate + flush-ticker
+	// write) takes far longer than the relay's two back-to-back in-memory
+	// Send() calls that precede its blocking wait, so disconnecting after
+	// this point reliably lets GetFlows reach <-stream.Context().Done()
+	// before any cancellation can race it again.
+	paths := session.DeriveSessionPaths(statusOut.TmpDir)
+	policyPath := filepath.Join(paths.OutputDir, "prod", "api.yaml")
+	require.Eventually(t, func() bool {
+		_, statErr := os.Stat(policyPath)
+		return statErr == nil
+	}, 15*time.Second, 200*time.Millisecond, "expected the POLICY_DENIED fixture to produce a real policy file before disconnecting")
+
+	// Ungraceful disconnect (D-08): abruptly close stdin with NO preceding
+	// stop_session call -- the session is still StateCapturing when the
+	// transport dies.
+	require.NoError(t, e2e.stdinW.Close())
+
+	// (1) the process self-exits within a bounded cap -- comfortably above
+	// the SESS-05 per-step deadlines (stopWait=5s + removeWait=2s in
+	// pkg/session/manager.go's Shutdown); observed self-exit in research was
+	// ~1s. waitExit's own t.Fatal covers the "never exits" DoS case
+	// (T-19-04b). The transport-level EOF is clean either way (jsonrpc2
+	// treats a peer-initiated io.EOF as not-an-error, exactly like the
+	// graceful variant), so the process still exits cleanly even though no
+	// stop_session preceded the disconnect.
+	exitErr := e2e.waitExit(t, 10*time.Second)
+	assert.NoError(t, exitErr, "an ungraceful peer-EOF disconnect must still exit cleanly (jsonrpc2 treats peer EOF as not-an-error regardless of in-flight session state)")
+
+	// (2) the session tmpdir was removed by the cleanup fan-out.
+	require.NoDirExists(t, statusOut.TmpDir, "Manager.Shutdown's bounded cleanup fan-out must remove the session tmpdir on transport death")
+
+	// (3) the fake relay's GetFlows stream context was cancelled -- proving
+	// the fan-out actually fired the session-ctx cancellation (T-19-06b),
+	// not merely that the process happened to exit. Still polled, not read
+	// instantaneously, even after the stronger synchronization above:
+	// delivering the client's cancellation to the relay's server-side
+	// stream is a genuine network event (an HTTP/2 stream-reset frame over
+	// the loopback gRPC connection), so a short bounded wait is the
+	// technically correct way to observe it rather than a same-instant
+	// assertion. D-09: in this cluster-free e2e there is no real
+	// port-forward to observe closing; this stream-cancel + tmpdir-removal
+	// pair together are the honest, non-phantom proxy for "the same
+	// Shutdown() fan-out that closes a real port-forward fired here".
+	require.Eventually(t, func() bool {
+		return relay.snapshot().cancelled
+	}, 5*time.Second, 50*time.Millisecond, "the fake relay's GetFlows stream context must be cancelled by the session-cleanup fan-out on transport death")
+	assert.True(t, relay.snapshot().started, "fake relay must have been reached before this assertion is meaningful")
+}
