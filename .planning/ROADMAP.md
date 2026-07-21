@@ -160,7 +160,7 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 
 **Wave 2** *(blocked on Wave 1)*
 
-- [ ] 18-03-PLAN.md — query composition root + list_policies/get_policy (QRY-02) + get_cluster_health 3-way branch (QRY-04)
+- [x] 18-03-PLAN.md — query composition root + list_policies/get_policy (QRY-02) + get_cluster_health 3-way branch (QRY-04)
 
 **Wave 3** *(blocked on Wave 2)*
 
@@ -205,7 +205,7 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 | 15. CI Trigger Fix + PR Delivery | v1.4 | n/a (direct workflow) | Complete | 2026-07-20 |
 | 16. MCP Server Foundation & Write Safety | v1.5 | 3/3 | Complete    | 2026-07-20 |
 | 17. Session Lifecycle | v1.5 | 9/9 | Complete    | 2026-07-21 |
-| 18. Query Tools | v1.5 | 2/5 | In Progress|  |
+| 18. Query Tools | v1.5 | 3/5 | In Progress|  |
 | 19. Security Hardening & End-to-End Validation | v1.5 | 0/TBD | Not started | - |
 
 **Milestone status:** v1.0 ✅ shipped · v1.1 ✅ shipped · v1.2 ✅ shipped · v1.3 ✅ shipped · v1.4 ✅ shipped · v1.5 📋 in progress
