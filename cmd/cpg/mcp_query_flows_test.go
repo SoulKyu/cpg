@@ -120,10 +120,10 @@ type listDroppedFlowsAggregatesOut struct {
 // per-record type rather than a parallel test-only shape.
 type listDroppedFlowsOut struct {
 	Samples    []DroppedFlowSample           `json:"samples"`
-	Aggregates listDroppedFlowsAggregatesOut  `json:"aggregates"`
-	TotalCount int                            `json:"total_count"`
-	HasMore    bool                           `json:"has_more"`
-	NextCursor string                         `json:"next_cursor"`
+	Aggregates listDroppedFlowsAggregatesOut `json:"aggregates"`
+	TotalCount int                           `json:"total_count"`
+	HasMore    bool                          `json:"has_more"`
+	NextCursor string                        `json:"next_cursor"`
 }
 
 // callListDroppedFlows invokes the list_dropped_flows tool and, on a
