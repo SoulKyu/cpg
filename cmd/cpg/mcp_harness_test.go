@@ -35,11 +35,17 @@ func startInMemoryMCPSession(ctx context.Context) (client *mcp.InMemoryTransport
 }
 
 // TestMCPStdoutPurity proves SRV-02 end-to-end on in-memory transports: two
-// independent simulated sessions — Session A (initialize handshake + empty
+// independent simulated sessions — Session A (initialize handshake +
 // tools/list) and Session B (unknown method) — each drive their own
 // single-Connect transport pair and server goroutine, while a SINGLE
 // os.Stdout os.Pipe capture spans both sessions. The final assertion proves
-// zero bytes leaked (D-06) across every Phase 16 protocol scenario at once.
+// zero bytes leaked (D-06) across every protocol scenario at once. Session
+// A's tools/list intentionally does not assert an exact/empty tool count:
+// Phase 16 registered zero tools, Phase 17+ register session/query tools —
+// this call's only job here is exercising a normal protocol round-trip
+// without leaking to stdout. The precise tool surface (names, required
+// schema fields) is asserted in mcp_session_test.go's
+// TestMCPSessionToolsListed.
 func TestMCPStdoutPurity(t *testing.T) {
 	r, w, err := os.Pipe()
 	require.NoError(t, err)
@@ -49,7 +55,7 @@ func TestMCPStdoutPurity(t *testing.T) {
 
 	initLoggerForTesting(t)
 
-	// --- Session A: initialize handshake + empty tools/list ---
+	// --- Session A: initialize handshake + tools/list ---
 	//
 	// clientA is Connect-ed exactly once, via mcp.NewClient(...).Connect
 	// below. Context cancellation is the shutdown mechanism, mirroring
@@ -67,7 +73,7 @@ func TestMCPStdoutPurity(t *testing.T) {
 
 	toolsResult, err := csA.ListTools(ctxA, nil)
 	require.NoError(t, err)
-	assert.Empty(t, toolsResult.Tools)
+	assert.NotEmpty(t, toolsResult.Tools, "Phase 17 registers session tools; TestMCPSessionToolsListed asserts the exact surface")
 
 	cancelA()
 	drainA()

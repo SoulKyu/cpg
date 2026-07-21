@@ -12,6 +12,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.uber.org/zap/exp/zapslog"
+
+	"github.com/SoulKyu/cpg/pkg/session"
 )
 
 // noopCloseWriter wraps a writer with a no-op Close, mirroring go-sdk's own
@@ -79,11 +81,28 @@ func runMCPServer(ctx context.Context, transport mcp.Transport) error {
 		&mcp.Implementation{Name: "cpg", Version: version},
 		&mcp.ServerOptions{Logger: bridgedSlogLogger()},
 	)
-	// Zero tools registered this phase: this is the composition root
-	// establishing the readonly discipline SEC-01 verifies structurally in
-	// Phase 19. Phase 17 adds session tools, Phase 18 adds query tools.
 
-	return server.Run(ctx, transport)
+	// Phase 17 registers the 3 session-lifecycle tools (start_session/
+	// get_status/stop_session); Phase 18 adds read-side query tools in the
+	// same composition-root style. The readonly discipline SEC-01 verifies
+	// structurally in Phase 19 continues to hold here: session tools reach
+	// only the session tmpdir plus the same K8s read/port-forward verbs
+	// generate.go already uses — no K8s write verb is introduced. ctx here
+	// MUST be this function's own server-root/signal ctx, never a per-call
+	// tool-handler ctx (Pitfall C) — Manager forks every session's
+	// background context from it.
+	mgr := session.NewManager(ctx, logger, mcpModeStdout(), version)
+	registerSessionTools(server, mgr)
+
+	err := server.Run(ctx, transport)
+	// SESS-05: synchronous, bounded cleanup fan-out for BOTH return paths —
+	// ctx.Done() (SIGTERM) and the transport session ending (stdin EOF,
+	// harness crash). This must run, and be waited on, before runMCPServer
+	// itself returns: sessionCtx being a descendant of ctx means SIGTERM
+	// *propagates* automatically, but propagation alone does not guarantee
+	// the pipeline goroutine has finished unwinding before the process exits.
+	mgr.Shutdown()
+	return err
 }
 
 // bridgedSlogLogger adapts the existing package-level zap logger (already
