@@ -485,12 +485,13 @@ func TestClusterHealthBranch(t *testing.T) {
 	})
 }
 
-// TestMCPQueryToolsListed proves the 3 non-paginated query tools registered
-// this plan are on the wire with the correct required-argument contract
-// (QRY-05). It deliberately does NOT assert an exact total tool count:
-// 18-04/18-05 register 2 more tools on this same server later in the
-// phase, and asserting an exact count here would break mid-phase. The
-// final exact 8-tool total is 18-05's own closing integration test.
+// TestMCPQueryToolsListed is Phase 18's closing tool-count assertion: now
+// that list_dropped_flows (18-05) is the 5th and last query tool, the
+// composition root's total is pinned exactly — 3 session tools (Phase 17)
+// plus 5 query tools (Phase 18). Earlier per-plan tests deliberately used
+// GreaterOrEqual/Contains while the tool table was still growing
+// (mcp_session_test.go's TestMCPSessionToolsListed, this file's own
+// pre-18-05 history) — this is the one place the exact total is checked.
 func TestMCPQueryToolsListed(t *testing.T) {
 	initLoggerForTesting(t)
 
@@ -499,14 +500,18 @@ func TestMCPQueryToolsListed(t *testing.T) {
 
 	toolsResult, err := cs.ListTools(ctx, nil)
 	require.NoError(t, err)
+	require.Len(t, toolsResult.Tools, 8, "3 session + 5 query tools")
 
 	byName := make(map[string]*mcp.Tool, len(toolsResult.Tools))
 	for _, tool := range toolsResult.Tools {
 		byName[tool.Name] = tool
 	}
-	assert.Contains(t, byName, "list_policies")
-	assert.Contains(t, byName, "get_policy")
-	assert.Contains(t, byName, "get_cluster_health")
+	for _, name := range []string{
+		"start_session", "get_status", "stop_session",
+		"list_dropped_flows", "list_policies", "get_policy", "get_evidence", "get_cluster_health",
+	} {
+		assert.Contains(t, byName, name)
+	}
 
 	assert.ElementsMatch(t, []string{"session_id"}, requiredFields(t, byName["list_policies"].InputSchema),
 		"list_policies must require only session_id")
@@ -514,14 +519,75 @@ func TestMCPQueryToolsListed(t *testing.T) {
 		"get_cluster_health must require only session_id")
 	assert.ElementsMatch(t, []string{"session_id", "namespace", "workload"}, requiredFields(t, byName["get_policy"].InputSchema),
 		"get_policy must require session_id, namespace, and workload (D-11, no omitempty)")
+	assert.ElementsMatch(t, []string{"session_id"}, requiredFields(t, byName["list_dropped_flows"].InputSchema),
+		"list_dropped_flows must require only session_id — every filter/pagination field is optional")
+}
+
+// TestMCPQueryToolsQRY05Contract centrally proves QRY-05's cross-cutting
+// discipline holds across all 5 query tools at once — individual tool test
+// files (mcp_query_tools_test.go's own TestMCPQueryGetPolicy/
+// TestMCPQueryGetClusterHealth, mcp_query_evidence_test.go's
+// TestMCPQueryGetEvidenceInputSchema, mcp_query_flows_test.go's own
+// description_and_schema_contract sub-test) already prove tool-specific
+// behavior in depth; this is the one place the SHARED contract is checked
+// for the whole set in one pass: truthful annotations (ReadOnlyHint true,
+// OpenWorldHint explicitly false — D-16) as observed over the wire, a
+// non-empty outputSchema for every data-returning tool (mcp.AddTool's typed
+// structs infer this automatically, D-17), and the dropclass/direction enum
+// constraints on the 2 tools that carry them (D-14).
+func TestMCPQueryToolsQRY05Contract(t *testing.T) {
+	initLoggerForTesting(t)
+
+	cs, ctx, cleanup := connectQueryTestClient(t)
+	defer cleanup()
+
+	toolsResult, err := cs.ListTools(ctx, nil)
+	require.NoError(t, err)
+	byName := make(map[string]*mcp.Tool, len(toolsResult.Tools))
+	for _, tool := range toolsResult.Tools {
+		byName[tool.Name] = tool
+	}
+
+	queryToolNames := []string{"list_dropped_flows", "list_policies", "get_policy", "get_evidence", "get_cluster_health"}
+	for _, name := range queryToolNames {
+		tool, ok := byName[name]
+		require.True(t, ok, "%s must be registered", name)
+		require.NotNil(t, tool.Annotations, "%s must carry annotations", name)
+		assert.True(t, tool.Annotations.ReadOnlyHint, "%s must be ReadOnlyHint (QRY-05/SEC-01)", name)
+		require.NotNil(t, tool.Annotations.OpenWorldHint, "%s must set OpenWorldHint explicitly — omission defaults to the spec's implicit true (D-16)", name)
+		assert.False(t, *tool.Annotations.OpenWorldHint, "%s must be OpenWorldHint=false", name)
+		assert.NotEmpty(t, tool.OutputSchema, "%s is data-returning and must expose a non-empty outputSchema (D-17)", name)
+	}
+
+	for _, name := range []string{"list_dropped_flows", "get_evidence"} {
+		schema, ok := byName[name].InputSchema.(map[string]any)
+		require.True(t, ok, "%s InputSchema must round-trip as map[string]any over the wire", name)
+		props, ok := schema["properties"].(map[string]any)
+		require.True(t, ok, "%s must have schema properties", name)
+		directionProp, ok := props["direction"].(map[string]any)
+		require.True(t, ok, "%s must have a direction schema property", name)
+		directionEnum, ok := directionProp["enum"].([]any)
+		require.True(t, ok, "%s direction must carry an enum constraint (D-14)", name)
+		assert.ElementsMatch(t, []any{"ingress", "egress"}, directionEnum)
+	}
+
+	dropclassSchema, ok := byName["list_dropped_flows"].InputSchema.(map[string]any)
+	require.True(t, ok)
+	dropclassProps, ok := dropclassSchema["properties"].(map[string]any)
+	require.True(t, ok)
+	dropclassProp, ok := dropclassProps["dropclass"].(map[string]any)
+	require.True(t, ok, "list_dropped_flows must have a dropclass schema property")
+	dropclassEnum, ok := dropclassProp["enum"].([]any)
+	require.True(t, ok, "list_dropped_flows dropclass must carry an enum constraint (D-14)")
+	assert.ElementsMatch(t, []any{"policy", "infra", "transient", "noise", "unknown"}, dropclassEnum)
 }
 
 // TestMCPQueryToolsErrorTexts centralizes D-16's actionable-error-text
-// contract across all 3 tools this plan registers: an unknown session_id
-// must resolve to a tool error carrying the verbatim SESS-06 phrase "not
-// found or expired" for every one of them, reusing Manager.Status's own
-// text untouched (D-08) rather than each handler inventing its own
-// wording.
+// contract across all 5 query tools (18-03/18-04/18-05): an unknown
+// session_id must resolve to a tool error carrying the verbatim SESS-06
+// phrase "not found or expired" for every one of them, reusing
+// Manager.Status's own text untouched (D-08) rather than each handler
+// inventing its own wording.
 func TestMCPQueryToolsErrorTexts(t *testing.T) {
 	initLoggerForTesting(t)
 
@@ -535,6 +601,8 @@ func TestMCPQueryToolsErrorTexts(t *testing.T) {
 		{"list_policies", map[string]any{"session_id": "sess_bogus"}},
 		{"get_policy", map[string]any{"session_id": "sess_bogus", "namespace": "prod", "workload": "api"}},
 		{"get_cluster_health", map[string]any{"session_id": "sess_bogus"}},
+		{"get_evidence", map[string]any{"session_id": "sess_bogus", "namespace": "prod", "workload": "api"}},
+		{"list_dropped_flows", map[string]any{"session_id": "sess_bogus"}},
 	}
 	for _, tc := range cases {
 		result, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: tc.name, Arguments: tc.args})
@@ -544,5 +612,63 @@ func TestMCPQueryToolsErrorTexts(t *testing.T) {
 		content, ok := result.Content[0].(*mcp.TextContent)
 		require.True(t, ok, "%s: error content must be TextContent, got %T", tc.name, result.Content[0])
 		assert.Contains(t, content.Text, "not found or expired", "%s: must reuse the SESS-06 phrase verbatim", tc.name)
+	}
+}
+
+// TestMCPQueryToolsNotFoundAndCursorErrorTexts centralizes D-16's remaining
+// two actionable-error-text families: an unknown namespace/workload pair
+// suggests list_policies (get_policy, get_evidence), and an invalid/
+// malformed cursor returns the shared D-05 text (get_evidence,
+// list_dropped_flows) — never a panic. get_policy/get_evidence each already
+// have deep per-tool coverage of these paths elsewhere in this package
+// (this file's own TestMCPQueryGetPolicy, mcp_query_evidence_test.go's
+// TestMCPQueryGetEvidence); this is the one place list_dropped_flows'
+// invalid-cursor text is proven too, and that all 3 tools agree on wording.
+// The not-found cases need no fixture: os.ReadFile's not-found path is
+// identical whether or not any sibling file/directory has ever been
+// written under the session tmpdir. The cursor cases DO need a real
+// evidence fixture at prod/api for get_evidence: its handler resolves the
+// evidence file BEFORE decoding the cursor (mcp_query_evidence.go), so an
+// unseeded target would surface the not-found text instead of the cursor
+// text this sub-test is actually proving.
+func TestMCPQueryToolsNotFoundAndCursorErrorTexts(t *testing.T) {
+	initLoggerForTesting(t)
+
+	cs, ctx, cleanup := connectQueryTestClient(t)
+	defer cleanup()
+
+	sessionID, tmpDir := startBypassSession(t, ctx, cs, "5s")
+	writeEvidenceFixture(t, tmpDir, "prod", "api", buildEvidenceFixture("prod", "api"))
+
+	notFoundCases := []struct {
+		name string
+		args map[string]any
+	}{
+		{"get_policy", map[string]any{"session_id": sessionID, "namespace": "prod", "workload": "missing"}},
+		{"get_evidence", map[string]any{"session_id": sessionID, "namespace": "prod", "workload": "missing"}},
+	}
+	for _, tc := range notFoundCases {
+		result, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: tc.name, Arguments: tc.args})
+		require.NoError(t, err, "%s: a tool error must not surface as a transport/protocol error", tc.name)
+		require.True(t, result.IsError, "%s: an unknown namespace/workload pair must be a tool error", tc.name)
+		content, ok := result.Content[0].(*mcp.TextContent)
+		require.True(t, ok, "%s: error content must be TextContent, got %T", tc.name, result.Content[0])
+		assert.Contains(t, content.Text, "list_policies", "%s: not-found text must suggest list_policies", tc.name)
+	}
+
+	cursorCases := []struct {
+		name string
+		args map[string]any
+	}{
+		{"get_evidence", map[string]any{"session_id": sessionID, "namespace": "prod", "workload": "api", "cursor": "garbage"}},
+		{"list_dropped_flows", map[string]any{"session_id": sessionID, "cursor": "garbage"}},
+	}
+	for _, tc := range cursorCases {
+		result, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: tc.name, Arguments: tc.args})
+		require.NoError(t, err, "%s: a tool error must not surface as a transport/protocol error", tc.name)
+		require.True(t, result.IsError, "%s: an invalid cursor must be a tool error, never a panic", tc.name)
+		content, ok := result.Content[0].(*mcp.TextContent)
+		require.True(t, ok, "%s: error content must be TextContent, got %T", tc.name, result.Content[0])
+		assert.Contains(t, content.Text, "invalid cursor", "%s: must carry the shared D-05 text", tc.name)
 	}
 }
