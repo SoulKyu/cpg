@@ -193,7 +193,7 @@ func policyRowFromCNP(namespace, workload, path string, cnp *ciliumv2.CiliumNetw
 	row := policyMetaRow{
 		Namespace:  namespace,
 		Workload:   workload,
-		Name:       cnp.ObjectMeta.Name,
+		Name:       cnp.Name,
 		Path:       path,
 		Directions: []string{},
 	}
@@ -263,7 +263,7 @@ func handleGetPolicy(mgr *session.Manager, args getPolicyArgs) (*mcp.CallToolRes
 	result := getPolicyResult{
 		Namespace: args.Namespace,
 		Workload:  args.Workload,
-		Name:      cnp.ObjectMeta.Name,
+		Name:      cnp.Name,
 		YAML:      string(yamlBytes),
 		Path:      path,
 	}
