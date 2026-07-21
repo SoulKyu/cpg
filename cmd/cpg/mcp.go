@@ -93,6 +93,7 @@ func runMCPServer(ctx context.Context, transport mcp.Transport) error {
 	// background context from it.
 	mgr := session.NewManager(ctx, logger, mcpModeStdout(), version)
 	registerSessionTools(server, mgr)
+	registerQueryTools(server, mgr)
 
 	err := server.Run(ctx, transport)
 	// SESS-05: synchronous, bounded cleanup fan-out for BOTH return paths —

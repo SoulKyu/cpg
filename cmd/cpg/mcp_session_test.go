@@ -52,11 +52,18 @@ func decodeStructured(t *testing.T, structuredContent any, out any) {
 }
 
 // TestMCPSessionToolsListed proves the composition-root registration
-// (Task 1): exactly the 3 session tools are on the wire, and their inferred
+// (Task 1): the 3 session tools are on the wire, and their inferred
 // schemas encode D-05's "every start_session arg is optional, session_id is
 // always required" contract (Pattern 0) — not just at the Go struct-tag
 // level (already covered by unit-level struct inspection), but as actually
 // observed by an MCP client over the transport.
+//
+// This does NOT assert an exact tool count: Phase 18 (18-03..18-05)
+// registers additional read-side query tools on this same server, so the
+// total grows across that phase. The exact cross-phase total (3 session +
+// 5 query = 8) is asserted once, at the end of Phase 18, by
+// cmd/cpg/mcp_query_tools_test.go's final integration test — this test's
+// job is only the 3 session tools' own presence/schema.
 func TestMCPSessionToolsListed(t *testing.T) {
 	initLoggerForTesting(t)
 
@@ -70,7 +77,7 @@ func TestMCPSessionToolsListed(t *testing.T) {
 
 	toolsResult, err := cs.ListTools(ctx, nil)
 	require.NoError(t, err)
-	require.Len(t, toolsResult.Tools, 3, "exactly start_session/get_status/stop_session must be registered")
+	require.GreaterOrEqual(t, len(toolsResult.Tools), 3, "at least start_session/get_status/stop_session must be registered")
 
 	byName := make(map[string]*mcp.Tool, len(toolsResult.Tools))
 	for _, tool := range toolsResult.Tools {
