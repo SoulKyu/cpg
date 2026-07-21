@@ -26,11 +26,11 @@ Requirements for milestone v1.5. Each maps to roadmap phases.
 
 ### Query Tools
 
-- [ ] **QRY-01**: LLM can `list_dropped_flows(session_id, …filters)` as a composed view over the existing capped evidence samples + aggregate health counts, paginated (`limit`/`cursor`/`total_count`/`has_more`); the tool description explicitly states it is a sampled/aggregated view, not a raw flow log
+- [x] **QRY-01**: LLM can `list_dropped_flows(session_id, …filters)` as a composed view over the existing capped evidence samples + aggregate health counts, paginated (`limit`/`cursor`/`total_count`/`has_more`); the tool description explicitly states it is a sampled/aggregated view, not a raw flow log
 - [x] **QRY-02**: LLM can `list_policies(session_id)` (metadata: name, workload, direction, rule counts) and `get_policy(session_id, name)` (full CNP YAML + absolute tmpdir path); reads are torn-read safe against the writing pipeline
 - [x] **QRY-03**: LLM can `get_evidence(session_id, …filters)` for per-rule flow attribution, reusing the promoted `pkg/explain` JSON renderer verbatim, paginated
 - [x] **QRY-04**: LLM can `get_cluster_health(session_id)`: passthrough of cluster-health.json including per-reason Cilium remediation URLs; while the session is still capturing it returns an explicit "available after stop_session" result (not an error)
-- [ ] **QRY-05**: Every data-returning tool ships `structuredContent` + `outputSchema` (typed Go structs), truthful annotations (`readOnlyHint` etc.), a description that teaches the dropclass taxonomy (policy-actionable vs infra/transient), and `isError` errors with specific actionable text
+- [x] **QRY-05**: Every data-returning tool ships `structuredContent` + `outputSchema` (typed Go structs), truthful annotations (`readOnlyHint` etc.), a description that teaches the dropclass taxonomy (policy-actionable vs infra/transient), and `isError` errors with specific actionable text
 
 ### Security & Hardening
 
@@ -84,11 +84,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SESS-04 | Phase 17 | Complete |
 | SESS-05 | Phase 17 | Complete |
 | SESS-06 | Phase 17 | Complete |
-| QRY-01 | Phase 18 | Pending |
+| QRY-01 | Phase 18 | Complete |
 | QRY-02 | Phase 18 | Complete |
 | QRY-03 | Phase 18 | Complete |
 | QRY-04 | Phase 18 | Complete |
-| QRY-05 | Phase 18 | Pending |
+| QRY-05 | Phase 18 | Complete |
 | SEC-01 | Phase 19 | Pending |
 | SEC-02 | Phase 16 | Complete |
 | SEC-03 | Phase 19 | Pending |
@@ -100,4 +100,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-07-20*
-*Last updated: 2026-07-20 after roadmap creation (Phases 16-19, full coverage)*
+*Last updated: 2026-07-21 after Phase 18 (query-tools) completion — QRY-01..05 all complete*
