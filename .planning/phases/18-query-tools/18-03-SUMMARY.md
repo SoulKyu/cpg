@@ -147,3 +147,16 @@ None - no external service configuration required.
 ---
 *Phase: 18-query-tools*
 *Completed: 2026-07-21*
+
+## Self-Check: PASSED
+
+- FOUND: cmd/cpg/mcp_query.go
+- FOUND: cmd/cpg/mcp_query_tools_test.go
+- FOUND: .planning/phases/18-query-tools/18-03-SUMMARY.md
+- FOUND commit: f9b3298 (test: failing tests for list_policies/get_policy)
+- FOUND commit: ee6a6c1 (feat: implement list_policies/get_policy)
+- FOUND commit: 7037e07 (test: failing 4-branch test for get_cluster_health)
+- FOUND commit: 1576330 (feat: implement get_cluster_health)
+- FOUND commit: 889d133 (test: tool-listing and error-text coverage)
+- FOUND commit: 79163a5 (style: lint fix)
+- FOUND commit: 78ae7c5 (docs: SUMMARY)
