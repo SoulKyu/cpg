@@ -305,20 +305,26 @@ func handleGetPolicy(mgr *session.Manager, args getPolicyArgs) (*mcp.CallToolRes
 		return nil, getPolicyResult{}, err
 	}
 
+	// WR-03: read the file exactly once and derive both the parsed metadata
+	// AND the raw YAML from the SAME bytes — Writer.Write's atomic
+	// temp+rename (pkg/output/writer.go) can rewrite this path between two
+	// separate reads during an active capture, which previously risked
+	// mixing Name/rule-count metadata from one version with YAML from
+	// another (internally inconsistent output).
 	path := filepath.Join(status.TmpDir, "policies", args.Namespace, args.Workload+".yaml")
-	cnp, err := output.ReadPolicyFile(path)
+	yamlBytes, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, getPolicyResult{}, fmt.Errorf(
 				"no policy found for %s/%s at %s; call list_policies to see available namespace/workload pairs",
 				args.Namespace, args.Workload, path)
 		}
-		return nil, getPolicyResult{}, err
+		return nil, getPolicyResult{}, fmt.Errorf("reading policy YAML %s: %w", path, err)
 	}
 
-	yamlBytes, err := os.ReadFile(path)
+	cnp, err := output.UnmarshalPolicy(yamlBytes)
 	if err != nil {
-		return nil, getPolicyResult{}, fmt.Errorf("reading policy YAML %s: %w", path, err)
+		return nil, getPolicyResult{}, fmt.Errorf("unmarshaling policy %s: %w", path, err)
 	}
 
 	result := getPolicyResult{

@@ -330,6 +330,33 @@ func TestReadPolicyFile_MalformedYAML(t *testing.T) {
 	assert.False(t, errors.Is(err, fs.ErrNotExist), "malformed YAML must not present as not-exist")
 }
 
+// TestUnmarshalPolicy_RoundTrips proves UnmarshalPolicy (WR-03: factored out
+// of ReadPolicyFile so a caller needing both the parsed struct and the raw
+// bytes, e.g. cmd/cpg's get_policy, can read a policy file exactly once)
+// parses the same bytes Writer.Write produces, independent of any file
+// access — the read/parse split's parse half in isolation.
+func TestUnmarshalPolicy_RoundTrips(t *testing.T) {
+	event := buildTestEvent("default", "server")
+	data, err := yaml.Marshal(event.Policy)
+	require.NoError(t, err)
+
+	cnp, err := UnmarshalPolicy(data)
+	require.NoError(t, err)
+	require.NotNil(t, cnp)
+	assert.Equal(t, event.Policy.Name, cnp.Name)
+	assert.Equal(t, event.Policy.Spec.Ingress, cnp.Spec.Ingress)
+	assert.Equal(t, event.Policy.Spec.Egress, cnp.Spec.Egress)
+}
+
+// TestUnmarshalPolicy_MalformedYAML mirrors TestReadPolicyFile_MalformedYAML
+// at the parse-only level: a genuine YAML syntax error must be a non-nil
+// error, never a panic.
+func TestUnmarshalPolicy_MalformedYAML(t *testing.T) {
+	cnp, err := UnmarshalPolicy([]byte("apiVersion: cilium.io/v2\nspec: [unterminated\n"))
+	require.Error(t, err)
+	assert.Nil(t, cnp)
+}
+
 // TestWriter_ConcurrentReaderNeverSeesPartialFile drives a writer goroutine
 // that repeatedly rewrites the same policy file -- varying the destination
 // port each iteration so every write is a genuine content change, forcing a

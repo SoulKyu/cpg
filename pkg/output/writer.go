@@ -125,7 +125,7 @@ func (w *Writer) ReadExisting(namespace, workload string) ([]byte, error) {
 }
 
 // ReadPolicyFile reads and unmarshals a CiliumNetworkPolicy from a YAML file
-// on disk, reusing the same unmarshal logic as readExistingPolicy. Unlike
+// on disk, delegating the parse step to UnmarshalPolicy. Unlike
 // readExistingPolicy's silent (nil, nil) contract (appropriate for Write's
 // internal "is there something to merge?" check), ReadPolicyFile wraps a
 // missing file's error with fs.ErrNotExist so callers can detect it via
@@ -138,11 +138,26 @@ func ReadPolicyFile(path string) (*ciliumv2.CiliumNetworkPolicy, error) {
 		return nil, fmt.Errorf("reading policy %s: %w", path, err)
 	}
 
+	cnp, err := UnmarshalPolicy(data)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return cnp, nil
+}
+
+// UnmarshalPolicy parses a CiliumNetworkPolicy from raw YAML bytes already
+// read off disk. Factored out of ReadPolicyFile (WR-03) so a caller that
+// also needs the raw bytes alongside the parsed struct (e.g. cmd/cpg's
+// get_policy, which returns both metadata AND the verbatim YAML) can read
+// the file exactly once via its own os.ReadFile and reuse this same parse
+// logic — instead of a second, independent os.ReadFile that risks observing
+// a different on-disk version if Writer.Write's atomic temp+rename lands in
+// between the two reads during an active capture.
+func UnmarshalPolicy(data []byte) (*ciliumv2.CiliumNetworkPolicy, error) {
 	var cnp ciliumv2.CiliumNetworkPolicy
 	if err := yaml.Unmarshal(data, &cnp); err != nil {
-		return nil, fmt.Errorf("unmarshaling policy %s: %w", path, err)
+		return nil, fmt.Errorf("unmarshaling policy: %w", err)
 	}
-
 	return &cnp, nil
 }
 
