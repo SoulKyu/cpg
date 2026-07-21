@@ -475,7 +475,7 @@ type DroppedFlowSample struct {
 
 **If this table is empty:** N/A — one assumption logged above; every other claim in this research was verified via direct source reads at the exact versions/commits in the working tree, not training-data recall or web search.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **How should `get_cluster_health`'s "stopped + file absent" branch actually be worded/gated, given Pitfall #1's finding?**
    - What we know: `finalize()` runs unconditionally; absence is overwhelmingly "zero drops," occasionally a genuine crash-with-no-prior-drops, rarely a silent finalize-write failure (no error to cite in that last sub-case) or a transient Stop-bounded-wait race.
