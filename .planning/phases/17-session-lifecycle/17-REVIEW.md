@@ -1,6 +1,6 @@
 ---
 phase: 17-session-lifecycle
-reviewed: 2026-07-21T05:44:34Z
+reviewed: 2026-07-21T08:03:58Z
 depth: standard
 files_reviewed: 12
 files_reviewed_list:
@@ -18,185 +18,187 @@ files_reviewed_list:
   - pkg/session/session_test.go
 findings:
   critical: 0
-  warning: 4
-  info: 1
+  warning: 2
+  info: 3
   total: 5
 status: issues_found
 ---
 
 # Phase 17: Code Review Report
 
-**Reviewed:** 2026-07-21T05:44:34Z
+**Reviewed:** 2026-07-21T08:03:58Z
 **Depth:** standard
 **Files Reviewed:** 12
 **Status:** issues_found
 
 ## Summary
 
-Reviewed the Phase 17 session-lifecycle implementation: the MCP composition root (`cmd/cpg/mcp.go`, `mcp_tools.go`), the `pkg/session` state machine (`Manager`, `Session`, `buildPipelineConfig`), and the `OnFinal` hook added to `pkg/hubble/pipeline.go`. `go build ./...`, `go vet`, and `golangci-lint` (govet/errcheck/staticcheck/unused/errorlint) are all clean on every file in scope, and the full test suite passes under `-race`, including the concurrency-focused suites in `manager_test.go`.
+Fresh re-review of the Phase 17 session-lifecycle implementation, performed against the current on-disk state — i.e. including the gap-closure waves (17-05/17-06/17-07) that landed since the prior `17-REVIEW.md`. This supersedes that file rather than amending it.
 
-The concurrency design (single-slot claim-before-setup, `sync.Once`-guarded idempotent stop, bounded-wait shutdown fan-out) is sound and well tested for the scenarios its own test suite exercises. Adversarial review focused on scenarios *outside* that suite: what happens to a pipeline that fails on its own (rather than being cancelled), and what happens when shutdown races the synchronous setup phase rather than the already-running pipeline. Both turned up real gaps, detailed below. WR-02's claim about the MCP SDK's request-context lifetime was verified directly against the pinned dependency source (`go-sdk@v1.6.1`) rather than assumed.
+Verified first: `go build ./...`, `go vet` and `golangci-lint run --new-from-rev=<phase-17 base>` are clean (0 issues) on every file in scope, and `go test ./pkg/session/... ./pkg/hubble/... ./cmd/cpg/... -race -count=1` passes in full. I independently re-audited the three previously-reported gaps and confirm all are now fixed as claimed:
+- **WR-01 (prior review)** — `pipelineErr`/autonomous `State` transition now exist (`pkg/session/manager.go:219-239`, `pkg/session/session.go:107-114`) and are exercised by `TestManager_PipelineErrorAutonomouslyStopsSession`.
+- **WR-02 (prior review)** — `setupCtx` is now merged with `sessionCtx` via `context.AfterFunc(sessionCtx, setupCancel)` (`pkg/session/manager.go:180-181`), verified against the real go-sdk request-context behavior and covered by `TestManager_Start_ShutdownCancelsSetupCtx`.
+- **WR-03 (prior review)** — `maxSessionDuration` (24h) ceiling added to `parseOptionalDuration` (`cmd/cpg/mcp_tools.go:52,76-78`), covered by `TestParseOptionalDuration`.
+- **WR-04 (prior review)** — `DropReason_name` lookup misses now render `UNKNOWN(%d)` instead of colliding on `""` (`pkg/session/session.go:238-243`).
 
-No security vulnerabilities, hardcoded secrets, injection vectors, or crashes were found. All findings below are Warning/Info tier — logic gaps and unhandled edge cases, not exploitable defects.
+Adversarial focus for this pass was on the fixes themselves — a fix that closes one gap can open an adjacent one — plus a check of the one function `pkg/session` calls into but that isn't in scope (`pkg/hubble/client.go`), since a called function's behavior directly determines whether `manager.go`'s new error-classification logic is correct. That check found a real, reproducible gap in the WR-01 fix (below): it correctly handles a raw crash error, but not a *scoped* `context.DeadlineExceeded` produced by a healthy, uncancelled `sessionCtx` — which is exactly what the code's own dial-timeout path produces for an unreachable `--server` address, one of the three scenarios the WR-01 fix's own comment names as its target. Both warnings below were reproduced with standalone Go tests run against the actual `pkg/session` package (not included in the diff — verification only) before being written up; the repo was left clean (`git status` empty) after each.
+
+No security vulnerabilities, hardcoded secrets, injection vectors, or crashes were found. All findings are Warning/Info tier.
 
 ## Warnings
 
-### WR-01: Pipeline's terminal error is read off the done channel and silently discarded — get_status can report "capturing" forever for a dead session
+### WR-01: A scoped `context.DeadlineExceeded` from a healthy `sessionCtx` is misclassified as "expected cancellation" — reopens the prior WR-01 gap for exactly the scenario it targeted (unreachable/typo'd `--server`)
 
-**File:** `pkg/session/manager.go:195-199, 339-350, 381-388`
+**File:** `pkg/session/manager.go:215-242` (classification check at line 228), interacting with `pkg/hubble/client.go:105-123` and `pkg/session/pipeline_config.go:76`
 **Issue:**
-The background goroutine started in `Start()` sends the pipeline's terminal error onto `s.done`:
+The launch goroutine's crash-detection guard treats *any* `context.Canceled`/`context.DeadlineExceeded` as "the session was torn down on purpose," and everything else as a genuine crash:
 ```go
+// manager.go:215-239
 go func() {
     err := m.runPipeline(sessionCtx, cfg)
     portForwardCleanup()
-    s.done <- err        // <-- err is never inspected again
-}()
-```
-Both consumers of that channel discard the value — they only use the receive to unblock a `select`:
-```go
-// Stop(), manager.go:341-345
-select {
-case <-s.done:
-case <-time.After(m.stopWait):
-    m.logger.Warn("session did not exit within deadline; proceeding", ...)
-}
-// Shutdown(), manager.go:383-387
-select {
-case <-done:
-case <-time.After(m.stopWait):
-    m.logger.Warn("shutdown: session did not exit within deadline; removing tmpdir anyway", ...)
-}
-```
-Neither branch logs, stores, or surfaces `err`. `pkg/hubble/pipeline.go` goes out of its way to surface genuine stream failures instead of draining to a clean exit 0 (Stage 0's comment, and `TestRunPipeline_SurfacesStreamError` in `pipeline_test.go`) — that work is thrown away at this layer.
 
-Two concrete, user-visible consequences:
-1. `StopResult` (`pkg/session/session.go:155-179`) has no error/failure field at all, so a session that crashed mid-capture (relay connection reset, auth expiry, unreachable D-07 bypass address) produces a `stop_session` response that is structurally indistinguishable from a clean stop — same shape, just smaller counters.
-2. `Session.State` is *only* ever set to `StateStopped` inside `Stop()`'s `stopOnce.Do`. Nothing updates it when the pipeline goroutine exits on its own. So if the pipeline dies immediately (e.g. connection refused against the D-07 bypass address) and the caller hasn't yet called `stop_session`, `get_status` keeps reporting `"state": "capturing"` indefinitely — directly contradicting the tool's own description, "Poll get_status to check progress" (`mcp_tools.go:82`), since there is no progress and no way to detect that from get_status.
-
-This path is untested: no test in `manager_test.go` uses a `runPipeline` stand-in that returns a real (non-context-cancellation) error, so this gap has never been exercised.
-
-**Fix:**
-```go
-// manager.go — capture err instead of discarding it
-go func() {
-    err := m.runPipeline(sessionCtx, cfg)
-    portForwardCleanup()
-    if err != nil {
-        m.logger.Warn("session pipeline exited with error", zap.String("session_id", s.ID), zap.Error(err))
+    if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+        s.pipelineErr.Store(&err)
+        m.logger.Warn("session pipeline exited with error", ...)
+        m.mu.Lock()
+        if m.session == s && s.State == StateCapturing {
+            s.State = StateStopped
+            s.StoppedAt = time.Now()
+        }
+        m.mu.Unlock()
     }
+
     s.done <- err
 }()
 ```
-Thread the received value through `Stop()`/`Shutdown()` into a stored field on `Session` (e.g. `atomic.Pointer[error]` alongside `final`), and surface it as an `error`/`failed` field on `StopResult` and/or a third state so `get_status` stops reporting "capturing" for a session whose pipeline has already exited.
-
----
-
-### WR-02: Shutdown() does not actually cancel an in-flight Start()'s synchronous setup phase — can orphan an empty session tmpdir past process exit
-
-**File:** `pkg/session/manager.go:130, 160`
-**Issue:**
-`sessionCtx` (what `Shutdown()` cancels via `s.cancel()`) and `setupCtx` (what bounds `resolveSetupFn` — kubeconfig load + port-forward + cluster-dedup) are derived from two different parents:
+This assumes `context.DeadlineExceeded` can only originate from `sessionCtx`/`m.rootCtx` being cancelled. It doesn't: `pkg/session/pipeline_config.go:76` sets `PipelineConfig.Timeout` to the *same* `args.Timeout` used for `setupCtx`, and `pkg/hubble/client.go`'s `waitForConnReady` (called from `StreamDroppedFlows`, itself called from `RunPipelineWithSource`, i.e. *after* `resolveSetupFn` has already succeeded and the goroutine has launched) derives its own, independent, scoped timeout directly from that same healthy `sessionCtx`:
 ```go
-// Start(), manager.go:130
-sessionCtx, sessionCancel := context.WithCancel(m.rootCtx)
-...
-// Start(), manager.go:159-161
-timeout := defaultDuration(args.Timeout, 10*time.Second)
-setupCtx, setupCancel := context.WithTimeout(reqCtx, timeout) // Pitfall H
-defer setupCancel()
+// client.go:109-111
+func waitForConnReady(ctx context.Context, conn *grpc.ClientConn, timeout time.Duration) error {
+    dialCtx, cancel := context.WithTimeout(ctx, timeout)
+    ...
+    return fmt.Errorf("connecting to hubble relay %q: %w", conn.Target(), dialCtx.Err())
 ```
-`setupCtx` is a child of `reqCtx` (the tool-handler's per-call context), not of `sessionCtx`/`m.rootCtx`. `Shutdown()` only ever calls `s.cancel()` (== `sessionCancel`), which has no effect on `setupCtx`.
+When the dial to an unreachable or misconfigured relay address doesn't complete before this scoped deadline, `dialCtx.Err()` is `context.DeadlineExceeded`, properly `%w`-wrapped all the way back up to `m.runPipeline`'s return — while `sessionCtx` itself is never cancelled (`sessionCtx.Err() == nil` throughout). `errors.Is(err, context.DeadlineExceeded)` is `true` for this error, so the classification guard treats it as "expected," and **never transitions `State`, never sets `pipelineErr`**. The pipeline goroutine has genuinely exited, but `get_status` reports `"state": "capturing"` indefinitely — a session cannot self-report its own death for this specific, realistic failure mode (a live/typo'd `--server` address, the exact scenario named in this same function's own comment two lines below at `manager.go:226-227` and in the tool description "Poll get_status to check progress," `cmd/cpg/mcp_tools.go:100`).
 
-I checked whether `reqCtx` itself gets cancelled when the server-root `ctx` is cancelled (SIGTERM) or the transport dies, since that would make this moot. It does not: the pinned go-sdk (`github.com/modelcontextprotocol/go-sdk@v1.6.1`) deliberately insulates every in-flight request context from the connection context. `internal/jsonrpc2/conn.go:199` wraps the root ctx in a `notDone{}` (`Done()` returns `nil`, `Err()` returns `nil`) before any request is dispatched, and `acceptRequest` (`conn.go:524`) derives every request's `ctx` via `context.WithCancel(notDone{...})`. Cancelling the outer ctx therefore never reaches an in-flight tool call's context — only an explicit per-request cancel (`$/cancelRequest`) or the call completing does.
+I reproduced this with a standalone test: a `runPipeline` stand-in that mirrors `waitForConnReady` exactly (derives `context.WithTimeout(sessionCtx, 20ms)` and returns `dialCtx.Err()` once it fires) leaves `Status().State == "capturing"` 300ms later, with `sessionCtx` never cancelled. No test in `manager_test.go` exercises this path — `TestManager_PipelineErrorAutonomouslyStopsSession` uses a plain `errors.New(...)` sentinel that is never mistaken for a context error, so it cannot catch this gap; `TestManager_Start_ShutdownCancelsSetupCtx` only exercises the pre-launch setup phase, not this post-launch dial phase.
 
-The implementation's own test suite corroborates this: `TestManager_Start_ShutdownRacesSetup` (`manager_test.go:563-625`) injects a `resolveSetupFn` that blocks on a plain, ctx-independent channel and can *only* be unblocked by the test manually calling `closeRelease()` — if `Shutdown()`'s cancellation actually reached `setupCtx`, that manual release wouldn't be necessary for the fake to unblock.
+Explicit `stop_session` still works correctly in this state (it doesn't depend on `State` being accurate to finalize), so this is not a hang or a stuck-forever session — but autonomous detection via `get_status`, the entire point of the original WR-01 fix, silently fails to fire for this scenario.
 
-Concrete consequence: `Start()` creates the session's tmpdir via `os.MkdirTemp` *before* calling `resolveSetupFn` (manager.go:154-157), i.e. before `s.TmpDir` is ever assigned. If SIGTERM arrives while `resolveSetupFn` is genuinely stuck (the code's own error message anticipates this exact scenario: "kubeconfig auth did not complete within the setup timeout... re-authenticate outside the MCP session", `manager.go:226-227`), then:
-- `Shutdown()` reads `tmpDir := s.TmpDir` while it's still `""`, and its own `os.RemoveAll("")` is a documented no-op (manager.go:390-394).
-- `Start()`'s own cleanup branch (the `m.session != s` check, manager.go:181-191) is the only code that would remove the *real* tmpdir — but it only runs after `resolveSetupFn` returns, which may never happen before the process exits (once `runMCPServer` returns, `main()` exits and the OS kills the still-blocked goroutine without it ever reaching that cleanup code).
-- Net effect: an orphaned, empty `cpg-session-*` directory left under `os.TempDir()` for every SIGTERM-during-setup occurrence — not reaped by `Shutdown()`, not reaped by `Start()`, not reaped by process exit.
-
-This contradicts the SESS-05 comment at the `mgr.Shutdown()` call site (`cmd/cpg/mcp.go:98-104`), which asserts synchronous, bounded cleanup for "BOTH return paths." `Shutdown()` *does* return bounded (that part is correctly tested), but it does not actually reach/cancel a mid-setup `Start()` — only a session whose pipeline has already launched.
-
-**Fix:** Derive `setupCtx` from `sessionCtx` (or merge both) so `Shutdown()`'s cancellation actually reaches it:
+**Fix:** Classify based on whether `sessionCtx` itself was actually cancelled, not on the identity of the returned error — a scoped timeout unrelated to session teardown can produce the identical sentinel:
 ```go
-setupCtx, setupCancel := context.WithTimeout(sessionCtx, timeout)
-defer setupCancel()
-```
-If per-call (`reqCtx`) cancellation must also still be honored, merge explicitly, e.g.:
-```go
-setupCtx, setupCancel := context.WithTimeout(reqCtx, timeout)
-defer setupCancel()
-context.AfterFunc(sessionCtx, setupCancel) // also abort setup if the session/manager is torn down
-```
+go func() {
+    err := m.runPipeline(sessionCtx, cfg)
+    portForwardCleanup()
 
----
-
-### WR-03: No upper-bound validation on MCP-supplied timeout/flush_interval
-
-**File:** `cmd/cpg/mcp_tools.go:50-62`
-**Issue:**
-```go
-func parseOptionalDuration(raw, field string) (time.Duration, error) {
-	if raw == "" {
-		return 0, nil
-	}
-	d, err := time.ParseDuration(raw)
-	if err != nil {
-		return 0, fmt.Errorf("%s: invalid duration %q: %w", field, raw, err)
-	}
-	if d <= 0 {
-		return 0, fmt.Errorf("%s must be positive, got %q", field, raw)
-	}
-	return d, nil
-}
-```
-Only `d <= 0` is rejected; there is no upper bound. An MCP client can pass e.g. `"timeout": "876000h"`, which flows straight into `setupCtx`'s deadline (`manager.go:160`). Combined with WR-02, this removes the only bound on how long a stuck `resolveSetupFn` call can run — the setup phase's own timeout is the sole safety net once ctx-based cancellation is shown not to reach it. An oversized `flush_interval` has a similar, lower-severity effect: `get_status`'s `policy_file_count` can stay 0 for the entire session even while flows are being observed, since nothing flushes to disk until the interval ticks.
-
-**Fix:**
-```go
-const maxSessionDuration = 24 * time.Hour // pick a product-appropriate ceiling
-
-if d > maxSessionDuration {
-    return 0, fmt.Errorf("%s must be <= %s, got %q", field, maxSessionDuration, raw)
-}
-```
-
----
-
-### WR-04: Unrecognized DropReason values collapse into a single map key, silently undercounting
-
-**File:** `pkg/session/session.go:214-216`
-**Issue:**
-```go
-for reason, count := range stats.InfraDropsByReason {
-    result.InfraDropsByReason[flowpb.DropReason_name[int32(reason)]] = count
-}
-```
-`flowpb.DropReason_name` is `map[int32]string` (confirmed in `github.com/cilium/cilium@v1.19.x/api/v1/flow/flow.pb.go:598`). A lookup miss returns Go's zero value, `""` — not an error, not a panic. If the observed cluster runs a Cilium version newer than the one `cpg` is compiled against (a realistic operational scenario, since `DropReason` enum values are added upstream over time), *every* unrecognized reason maps to the same `""` key. Because this is a plain map assignment (`=`, not `+=`), multiple distinct unrecognized reasons observed in the same session don't sum — each overwrites the previous one, and which one "wins" depends on Go's randomized map iteration order. The `stop_session` summary would then silently under-report `infra_drops_by_reason` with no indication anything was collapsed.
-
-**Fix:**
-```go
-for reason, count := range stats.InfraDropsByReason {
-    name, ok := flowpb.DropReason_name[int32(reason)]
-    if !ok {
-        name = fmt.Sprintf("UNKNOWN(%d)", reason)
+    // sessionCtx.Err() is nil unless Stop/Shutdown (or m.rootCtx) actually
+    // cancelled it — the only two "this was on purpose" cases. Any other
+    // non-nil err, INCLUDING a context.DeadlineExceeded from an unrelated
+    // scoped timeout (e.g. client.go's dial timeout), is a genuine failure.
+    if err != nil && sessionCtx.Err() == nil {
+        s.pipelineErr.Store(&err)
+        m.logger.Warn("session pipeline exited with error", zap.String("session_id", s.ID), zap.Error(err))
+        m.mu.Lock()
+        if m.session == s && s.State == StateCapturing {
+            s.State = StateStopped
+            s.StoppedAt = time.Now()
+        }
+        m.mu.Unlock()
     }
-    result.InfraDropsByReason[name] = count
+
+    s.done <- err
+}()
+```
+Add a regression test alongside `TestManager_PipelineErrorAutonomouslyStopsSession` using a `runPipeline` stand-in that derives its own `context.WithTimeout` from the passed-in (healthy) `ctx` and returns that scoped `ctx.Err()`, asserting `get_status` still autonomously transitions to `"stopped"`.
+
+---
+
+### WR-02: The first-ever `stop_session` call after an autonomous crash reports `already_stopped: true`, contradicting the documented "second/idempotent call" contract
+
+**File:** `pkg/session/manager.go:371-412` (specifically the early-return at 388-390), interacting with the autonomous transition at `manager.go:228-239`
+**Issue:**
+`Stop()` decides whether to report `AlreadyStopped: true` purely from `s.State`:
+```go
+// manager.go:371-403
+func (m *Manager) Stop(id string) (StopResult, error) {
+    ...
+    state := s.State
+    tmpDir := s.TmpDir
+    m.mu.Unlock()
+    ...
+    if state == StateStopped {
+        return s.buildSummary(true, healthPath), nil // D-03: idempotent, already-stopped marker, never isError
+    }
+
+    s.stopOnce.Do(func() { ... })
+    return s.buildSummary(false, healthPath), nil
 }
 ```
+But `State` can reach `StateStopped` two ways: an explicit prior `Stop()` call (via `stopOnce.Do`), *or* the WR-01 autonomous crash-handler (`manager.go:234-237`), which never calls `stopOnce` at all. Both produce `state == StateStopped` here, so both take the `alreadyStopped: true` branch — including the very first `stop_session` call a client ever makes for a session that happened to crash before they got around to calling it. The tool's own description says the opposite: "Idempotent — **a second stop** returns the same summary with an already-stopped marker" (`cmd/cpg/mcp_tools.go:158-159`); `StopResult.AlreadyStopped`'s doc comment says the same ("marks a second/idempotent stop_session call," `pkg/session/session.go:175-178`).
+
+Concretely, this makes the field's value **non-deterministic for the same client action**: whether a client's first-ever `stop_session` call reports `true` or `false` depends on whether it happens to race ahead of or behind the crash-handler's `m.mu` critical section — not on anything the client did differently. A client that keys behavior off this field (e.g. "only surface a stop notification when `!already_stopped`, since `true` means someone/something else already handled it") will incorrectly suppress the notification for a session that crashed on its own and was never actually reported as stopped to the caller before this call.
+
+I reproduced this with a standalone test: start a session, trigger a genuine crash via a `runPipeline` stand-in, poll until `Status().State == "stopped"` (proving the autonomous transition ran), then call `Stop()` for the first time — `StopResult.AlreadyStopped` is `true`.
+
+**Fix:** Decouple "was this call redundant" from "is the pipeline no longer running" — track whether an explicit `stop_session` call has previously completed, independent of why `State` is already `Stopped`:
+```go
+// session.go: new field alongside pipelineErr/final
+explicitStopSeen atomic.Bool // true once any Stop() call has returned a summary
+
+// manager.go Stop():
+if state == StateStopped {
+    return s.buildSummary(s.explicitStopSeen.Swap(true), healthPath), nil
+}
+s.stopOnce.Do(func() { ... })
+return s.buildSummary(s.explicitStopSeen.Swap(true), healthPath), nil
+```
+`atomic.Bool.Swap(true)` returns the *previous* value, so the first `Stop()` call for a given session — crash-preceded or not — reports `false`, and every call after that reports `true`, matching the documented contract.
 
 ## Info
 
-### IN-01: outputHash/healthPath formula duplicated between manager.go and pipeline_config.go
+### IN-01: `outputHash`/`healthPath` formula still duplicated between `manager.go` and `pipeline_config.go`
 
-**File:** `pkg/session/manager.go:329-333`, `pkg/session/pipeline_config.go:69-71`
-**Issue:** The same formula — `evidence.HashOutputDir(filepath.Join(tmpDir, "policies"))` followed by `filepath.Join(tmpDir, "evidence", outputHash, "cluster-health.json")` — is computed independently in two places. `manager.go`'s own comment acknowledges this is a deliberate inline recompute rather than a stored field ("Session carries no outputHash field... This is the exact formula buildPipelineConfig uses"). `HashOutputDir` is a pure function of the (deterministic) tmpDir path, so the two currently agree — but nothing enforces they stay in sync if either formula changes independently in the future (e.g. a path-layout change made at only one call site), which would silently produce a wrong `cluster_health_path` in `StopResult`.
-**Fix:** Store `OutputHash` (or the fully built `healthPath`) on `Session` once, at the point `s.TmpDir` is assigned in `Start()` (manager.go:192), and have `Stop()` read it back instead of recomputing it.
+**File:** `pkg/session/manager.go:385-386`, `pkg/session/pipeline_config.go:69-71`
+**Issue:** Carried over from the prior review (unaddressed by the gap-closure waves). `evidence.HashOutputDir(filepath.Join(tmpDir, "policies"))` followed by `filepath.Join(tmpDir, "evidence", outputHash, "cluster-health.json")` is computed independently in both files. `manager.go`'s own comment acknowledges this is a deliberate inline recompute rather than a stored field. `HashOutputDir` is a pure function of the deterministic `tmpDir` path, so the two currently agree, but nothing enforces they stay in sync if either formula changes independently later.
+**Fix:** Store `OutputHash` (or the fully-built `healthPath`) on `Session` once, at the point `s.TmpDir` is assigned in `Start()` (`manager.go:212`), and have `Stop()` read it back instead of recomputing it.
 
 ---
 
-_Reviewed: 2026-07-21T05:44:34Z_
+### IN-02: Stale `//nolint:unused` directives on `Session.cancel`/`done`/`stopOnce` — these fields are consumed within the same package
+
+**File:** `pkg/session/session.go:89,93,99`
+**Issue:**
+```go
+cancel context.CancelFunc //nolint:unused // consumed by plan 17-03's Manager
+...
+done chan error //nolint:unused // consumed by plan 17-03's Manager
+...
+stopOnce sync.Once //nolint:unused // consumed by plan 17-03's Manager
+```
+These comments date from when `session.go` (plan 17-02) was written standalone, before `manager.go` (plan 17-03) existed in the same package. `manager.go` now reads/writes all three fields directly (`s.cancel()`, `<-s.done`, `s.stopOnce.Do(...)`), so `staticcheck`'s `unused` check — which operates at the whole-package level, not per-file — no longer has any reason to flag them. I verified this directly: removing all three `//nolint:unused` comments and re-running `golangci-lint run ./pkg/session/...` still reports 0 issues. Left in place, the comments actively mislead a reader into thinking these fields are unused (they are the core of the Manager's concurrency model) and that the suppression is load-bearing, when it is not.
+**Fix:** Remove the three `//nolint:unused` directives (keep the plain doc comments describing what drives each field).
+
+---
+
+### IN-03: Tautological assertion provides no real coverage for `EvidenceFileCount`
+
+**File:** `pkg/session/manager_test.go:293`
+**Issue:**
+```go
+assert.GreaterOrEqual(t, status.EvidenceFileCount, 0)
+```
+`EvidenceFileCount` is an `int` populated from `len(matches)` (`countGlob`, `manager.go:461-464`), which can never be negative — this assertion is true unconditionally and would pass even if evidence-file counting were completely broken (e.g. always returning 0, or globbing the wrong path). Unlike the adjacent `PolicyFileCount` check a few lines above, which meaningfully waits for `status.PolicyFileCount > 0`, there is no test anywhere in scope that positively confirms evidence files are actually being counted for a capturing session (the fixture already used, `twoFlows()`, drives real policy writes, and `buildPipelineConfig` always sets `EvidenceEnabled: true` in MCP mode, so a meaningful assertion is achievable here).
+**Fix:**
+```go
+require.Eventually(t, func() bool {
+    status, err := m.Status(res.SessionID)
+    return err == nil && status.EvidenceFileCount > 0
+}, 5*time.Second, 5*time.Millisecond, "evidence file should eventually land under the session tmpdir")
+```
+
+---
+
+_Reviewed: 2026-07-21T08:03:58Z_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
