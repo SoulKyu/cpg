@@ -105,9 +105,9 @@ func (hw *healthWriter) finalize(stats *SessionStats) error {
 		return nameI < nameJ
 	})
 
-	dropsJSON := make([]healthDropJSON, 0, len(entries))
+	dropsJSON := make([]HealthDropJSON, 0, len(entries))
 	for _, e := range entries {
-		dropsJSON = append(dropsJSON, healthDropJSON{
+		dropsJSON = append(dropsJSON, HealthDropJSON{
 			Reason:      flowpb.DropReason_name[int32(e.reason)],
 			Class:       e.class.String(),
 			Count:       e.count,
@@ -118,10 +118,10 @@ func (hw *healthWriter) finalize(stats *SessionStats) error {
 	}
 
 	endedAt := time.Now()
-	report := clusterHealthReport{
+	report := ClusterHealthReport{
 		SchemaVersion:     1,
 		ClassifierVersion: dropclass.ClassifierVersion,
-		Session: healthSession{
+		Session: HealthSession{
 			Started:        hw.startedAt,
 			Ended:          endedAt,
 			FlowsSeen:      stats.FlowsSeen,
@@ -234,32 +234,37 @@ func shallowCopyMap(m map[string]uint64) map[string]uint64 {
 	return out
 }
 
-// JSON output structs — unexported, used only for marshaling.
+// JSON output structs — exported (D-12) so the MCP outputSchema (QRY-05) and
+// pkg/hubble.ReadClusterHealth (health_reader.go) can reflect over / decode
+// into them. Passthrough discipline: exported as-is, zero new/derived fields.
 
-type clusterHealthReport struct {
+// ClusterHealthReport is the top-level shape of cluster-health.json.
+type ClusterHealthReport struct {
 	SchemaVersion     int              `json:"schema_version"`
 	ClassifierVersion string           `json:"classifier_version"`
-	Session           healthSession    `json:"session"`
-	Drops             []healthDropJSON `json:"drops"`
+	Session           HealthSession    `json:"session"`
+	Drops             []HealthDropJSON `json:"drops"`
 }
 
-type healthSession struct {
+// HealthSession carries the session-level counters for a cluster-health report.
+type HealthSession struct {
 	Started        time.Time `json:"started"`
 	Ended          time.Time `json:"ended"`
 	FlowsSeen      uint64    `json:"flows_seen"`
 	InfraDropTotal uint64    `json:"infra_drops_total"`
 }
 
-type healthDropJSON struct {
-	Reason      string            `json:"reason"`
-	Class       string            `json:"class"`
-	Count       uint64            `json:"count"`
+// HealthDropJSON is the per-reason drop entry within a cluster-health report.
+type HealthDropJSON struct {
+	Reason string `json:"reason"`
+	Class  string `json:"class"`
+	Count  uint64 `json:"count"`
 	// Remediation is omitted (omitempty) when no deep-link Cilium docs URL is
 	// available — see pkg/dropclass/hints.go. Keeping it omitempty avoids
 	// surfacing the bare troubleshooting page URL, which adds no actionable
 	// value for the operator (M-1 from the prior patch enforces this in the
 	// hints map; this tag enforces it in the JSON schema).
-	Remediation string `json:"remediation,omitempty"`
+	Remediation string            `json:"remediation,omitempty"`
 	ByNode      map[string]uint64 `json:"by_node"`
 	ByWorkload  map[string]uint64 `json:"by_workload"`
 }

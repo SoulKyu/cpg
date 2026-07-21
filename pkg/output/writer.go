@@ -124,6 +124,28 @@ func (w *Writer) ReadExisting(namespace, workload string) ([]byte, error) {
 	return data, nil
 }
 
+// ReadPolicyFile reads and unmarshals a CiliumNetworkPolicy from a YAML file
+// on disk, reusing the same unmarshal logic as readExistingPolicy. Unlike
+// readExistingPolicy's silent (nil, nil) contract (appropriate for Write's
+// internal "is there something to merge?" check), ReadPolicyFile wraps a
+// missing file's error with fs.ErrNotExist so callers can detect it via
+// errors.Is — matching the evidence.Reader.Read / hubble.ReadClusterHealth
+// not-found convention the query tools (get_policy/list_policies) depend on
+// to distinguish "no such policy" from a genuine read/parse error.
+func ReadPolicyFile(path string) (*ciliumv2.CiliumNetworkPolicy, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading policy %s: %w", path, err)
+	}
+
+	var cnp ciliumv2.CiliumNetworkPolicy
+	if err := yaml.Unmarshal(data, &cnp); err != nil {
+		return nil, fmt.Errorf("unmarshaling policy %s: %w", path, err)
+	}
+
+	return &cnp, nil
+}
+
 // readExistingPolicy reads and unmarshals a CiliumNetworkPolicy from disk.
 // Returns nil, nil if the file does not exist.
 func readExistingPolicy(path string) (*ciliumv2.CiliumNetworkPolicy, error) {
