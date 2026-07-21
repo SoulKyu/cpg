@@ -37,6 +37,19 @@ var disallowedFSWrite = map[string]bool{
 	"os.Rename":     true,
 	"os.Remove":     true,
 	"os.RemoveAll":  true,
+	// WR-02: filesystem-mutating os.* calls that bypass a watched
+	// constructor. os.Chmod is already used in the write path
+	// (pkg/output/writer.go's allowlisted (*output.Writer).Write); the
+	// others (Truncate/Symlink/Link/Chown/Lchown/Chtimes) create, destroy,
+	// or mutate metadata on a caller-chosen path with no watched
+	// constructor in the chain.
+	"os.Chmod":    true,
+	"os.Truncate": true,
+	"os.Symlink":  true,
+	"os.Link":     true,
+	"os.Chown":    true,
+	"os.Lchown":   true,
+	"os.Chtimes":  true,
 }
 
 // k8sWriteVerbs is Property 1's (D-02) verb-name set, matched ONLY against
