@@ -44,6 +44,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/SoulKyu/cpg/pkg/policy/testdata"
+	"github.com/SoulKyu/cpg/pkg/session"
 )
 
 // fakeRelay is an in-process fake Hubble relay: a minimal
@@ -238,6 +239,43 @@ func buildE2EBinary(t *testing.T) string {
 	return e2eBinaryPath
 }
 
+// syncBuffer is a mutex-guarded byte buffer. A plain bytes.Buffer is NOT
+// safe here: exec.Cmd's internal stderr-copy goroutine writes into stderr
+// for the entire lifetime of the subprocess, and the MCP client's internal
+// stdout-read loop (driven via io.TeeReader below) writes into rawTee for as
+// long as the transport is connected -- both are background goroutines that
+// outlive any single CallTool round trip, so a diagnostic read (e.g. on a
+// failed require.NoError, or the final byte-purity check) can race a
+// still-in-flight write. Verified empirically: an earlier unguarded
+// bytes.Buffer version of this file failed `go test -race` on exactly this
+// read/write pair (Rule 1 auto-fix).
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// Bytes returns a snapshot copy -- never a slice aliasing the internal
+// buffer, which a concurrent Write may still mutate/reallocate.
+func (b *syncBuffer) Bytes() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([]byte, b.buf.Len())
+	copy(out, b.buf.Bytes())
+	return out
+}
+
 // e2eSession bundles the pieces the graceful (Task 2) and ungraceful (Plan
 // 04) e2e tests each need to drive a real `cpg mcp` subprocess and
 // independently verify its raw stdout bytes.
@@ -245,8 +283,8 @@ type e2eSession struct {
 	cs       *mcp.ClientSession
 	cmd      *exec.Cmd
 	stdinW   io.WriteCloser
-	rawTee   *bytes.Buffer
-	stderr   *bytes.Buffer
+	rawTee   *syncBuffer
+	stderr   *syncBuffer
 	exitedCh chan error
 }
 
@@ -269,12 +307,12 @@ func startE2ESubprocess(t *testing.T, ctx context.Context) *e2eSession {
 	require.NoError(t, err)
 	stdoutR, err := cmd.StdoutPipe()
 	require.NoError(t, err)
-	var stderrBuf bytes.Buffer
+	var stderrBuf syncBuffer
 	cmd.Stderr = &stderrBuf // subprocess zap/zapslog diagnostics on failure
 
 	require.NoError(t, cmd.Start())
 
-	var rawTee bytes.Buffer
+	var rawTee syncBuffer
 	teed := io.TeeReader(stdoutR, &rawTee)
 
 	transport := &mcp.IOTransport{Reader: io.NopCloser(teed), Writer: stdinW}
@@ -325,4 +363,298 @@ func assertStdoutPurity(t *testing.T, raw []byte) {
 		var js json.RawMessage
 		assert.NoError(t, json.Unmarshal(line, &js), "stdout purity violation: %q", line)
 	}
+}
+
+// TestMCPE2EGracefulLifecycle drives the full D-07 graceful lifecycle over a
+// real `cpg mcp` subprocess (built with -race) against the fake Hubble relay
+// (Task 1's shared infra): initialize -> tools/list -> start_session ->
+// get_status -> all 5 query tools mid-capture -> stop_session ->
+// get_cluster_health post-stop -> close stdin -> exit 0. It folds in SRV-01's
+// full handshake/schema/annotation proof (D-10) and the stdout byte-purity
+// re-validation that redeems 16-CONTEXT D-06 on real stdio (D-05).
+func TestMCPE2EGracefulLifecycle(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real-subprocess e2e test in -short mode (one-time -race build + subprocess overhead)")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	relayAddr, relay := startFakeRelay(t, []*flowpb.Flow{buildPolicyDeniedFlow(), buildInfraClassDropFlow()})
+
+	e2e := startE2ESubprocess(t, ctx)
+	cs := e2e.cs
+
+	// (1) initialize handshake (SRV-01).
+	initResult := cs.InitializeResult()
+	require.NotNil(t, initResult)
+	require.NotNil(t, initResult.ServerInfo)
+	assert.Equal(t, "cpg", initResult.ServerInfo.Name)
+	assert.NotEmpty(t, initResult.ServerInfo.Version)
+
+	// (2) tools/list: exactly 8 tools, schemas + annotations (D-10).
+	toolsResult, err := cs.ListTools(ctx, nil)
+	require.NoError(t, err)
+	require.Len(t, toolsResult.Tools, 8, "3 session + 5 query tools")
+
+	byName := make(map[string]*mcp.Tool, len(toolsResult.Tools))
+	for _, tool := range toolsResult.Tools {
+		byName[tool.Name] = tool
+	}
+
+	allToolNames := []string{
+		"start_session", "get_status", "stop_session",
+		"list_dropped_flows", "list_policies", "get_policy", "get_evidence", "get_cluster_health",
+	}
+	for _, name := range allToolNames {
+		tool, ok := byName[name]
+		require.True(t, ok, "%s must be registered", name)
+		assert.NotEmpty(t, tool.Description, "%s must have a non-empty description", name)
+		assert.NotNil(t, tool.InputSchema, "%s must have an inputSchema", name)
+	}
+
+	queryToolNames := []string{"list_dropped_flows", "list_policies", "get_policy", "get_evidence", "get_cluster_health"}
+	for _, name := range queryToolNames {
+		tool := byName[name]
+		assert.NotEmpty(t, tool.OutputSchema, "%s is data-returning and must expose a non-empty outputSchema", name)
+		require.NotNil(t, tool.Annotations, "%s must carry annotations", name)
+		assert.True(t, tool.Annotations.ReadOnlyHint, "%s must be ReadOnlyHint", name)
+		assert.True(t, tool.Annotations.IdempotentHint, "%s must be IdempotentHint", name)
+		require.NotNil(t, tool.Annotations.OpenWorldHint, "%s must set OpenWorldHint explicitly", name)
+		assert.False(t, *tool.Annotations.OpenWorldHint, "%s must be OpenWorldHint=false", name)
+	}
+
+	// Session tools: their own annotation truth -- NEVER assert OpenWorldHint,
+	// registration never sets it (D-10).
+	startTool := byName["start_session"]
+	require.NotNil(t, startTool.Annotations)
+	assert.False(t, startTool.Annotations.ReadOnlyHint, "start_session must be ReadOnlyHint=false")
+	assert.Nil(t, startTool.Annotations.OpenWorldHint, "start_session must never set OpenWorldHint")
+
+	statusTool := byName["get_status"]
+	require.NotNil(t, statusTool.Annotations)
+	assert.True(t, statusTool.Annotations.ReadOnlyHint, "get_status must be ReadOnlyHint=true")
+	assert.Nil(t, statusTool.Annotations.OpenWorldHint, "get_status must never set OpenWorldHint")
+
+	stopTool := byName["stop_session"]
+	require.NotNil(t, stopTool.Annotations)
+	assert.False(t, stopTool.Annotations.ReadOnlyHint, "stop_session must be ReadOnlyHint=false")
+	assert.True(t, stopTool.Annotations.IdempotentHint, "stop_session must be IdempotentHint=true")
+	assert.Nil(t, stopTool.Annotations.OpenWorldHint, "stop_session must never set OpenWorldHint")
+
+	// Dropclass enum: list_dropped_flows ONLY -- get_evidence's filter
+	// surface deliberately excludes dropclass (18-CONTEXT D-10).
+	dropSchema, ok := byName["list_dropped_flows"].InputSchema.(map[string]any)
+	require.True(t, ok, "list_dropped_flows InputSchema must round-trip as map[string]any")
+	dropProps, ok := dropSchema["properties"].(map[string]any)
+	require.True(t, ok)
+	dropProp, ok := dropProps["dropclass"].(map[string]any)
+	require.True(t, ok, "list_dropped_flows must have a dropclass schema property")
+	dropEnum, ok := dropProp["enum"].([]any)
+	require.True(t, ok, "list_dropped_flows dropclass must carry an enum constraint")
+	assert.ElementsMatch(t, []any{"policy", "infra", "transient", "noise", "unknown"}, dropEnum)
+
+	evidenceSchema, ok := byName["get_evidence"].InputSchema.(map[string]any)
+	require.True(t, ok)
+	evidenceProps, ok := evidenceSchema["properties"].(map[string]any)
+	require.True(t, ok)
+	_, hasDropclass := evidenceProps["dropclass"]
+	assert.False(t, hasDropclass, "get_evidence must NOT carry a dropclass property (18-CONTEXT D-10)")
+
+	// (3) start_session against the real fake relay (D-06/D-07 bypass --
+	// the real listener from Task 1, not the in-memory tests' unreachable
+	// "127.0.0.1:1").
+	startResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name: "start_session",
+		Arguments: map[string]any{
+			"server":         relayAddr,
+			"tls":            false,
+			"timeout":        "5s",
+			"flush_interval": "1s",
+		},
+	})
+	require.NoError(t, err)
+	require.False(t, startResp.IsError, "start_session against the fake relay must not error")
+
+	var startOut struct {
+		SessionID string `json:"session_id"`
+	}
+	decodeStructured(t, startResp.StructuredContent, &startOut)
+	require.NotEmpty(t, startOut.SessionID)
+
+	// (4) get_status.
+	statusResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "get_status",
+		Arguments: map[string]any{"session_id": startOut.SessionID},
+	})
+	require.NoError(t, err)
+	require.False(t, statusResp.IsError)
+
+	var statusOut struct {
+		TmpDir string `json:"tmp_dir"`
+	}
+	decodeStructured(t, statusResp.StructuredContent, &statusOut)
+	require.NotEmpty(t, statusOut.TmpDir)
+	require.DirExists(t, statusOut.TmpDir, "Manager.Start must have created the session tmpdir")
+
+	// The pipeline's GetFlows call happens in a detached background
+	// goroutine relative to start_session's synchronous response (Pitfall
+	// 3) -- wait for the relay to actually be reached before relying on its
+	// fixture flows having been sent.
+	relay.waitStarted(t, 10*time.Second)
+	midSnapshot := relay.snapshot()
+	assert.True(t, midSnapshot.started, "fake relay must have been reached by now")
+	assert.False(t, midSnapshot.cancelled, "fake relay's stream must not be cancelled while still capturing")
+
+	// (5) all 5 query tools mid-capture. The aggregator flushes to disk on
+	// its own flush_interval ticker (1s here), so the artifact-dependent
+	// tools are polled with require.Eventually rather than asserted on the
+	// very first call -- avoiding a flaky race against the flush tick while
+	// still proving the fixtures flowed through mid-capture (not merely
+	// after stop_session).
+	type policyRow struct {
+		Namespace string `json:"namespace"`
+		Workload  string `json:"workload"`
+	}
+	var policyRows []policyRow
+	require.Eventually(t, func() bool {
+		listResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "list_policies",
+			Arguments: map[string]any{"session_id": startOut.SessionID},
+		})
+		if err != nil || listResp.IsError {
+			return false
+		}
+		var out struct {
+			Policies []policyRow `json:"policies"`
+		}
+		decodeStructured(t, listResp.StructuredContent, &out)
+		if len(out.Policies) == 0 {
+			return false
+		}
+		policyRows = out.Policies
+		return true
+	}, 15*time.Second, 200*time.Millisecond, "expected list_policies to observe the POLICY_DENIED fixture mid-capture")
+	require.Len(t, policyRows, 1)
+	assert.Equal(t, "prod", policyRows[0].Namespace)
+	assert.Equal(t, "api", policyRows[0].Workload)
+
+	getPolicyResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name: "get_policy",
+		Arguments: map[string]any{
+			"session_id": startOut.SessionID,
+			"namespace":  "prod",
+			"workload":   "api",
+		},
+	})
+	require.NoError(t, err)
+	require.False(t, getPolicyResp.IsError)
+	var getPolicyOut struct {
+		YAML string `json:"yaml"`
+	}
+	decodeStructured(t, getPolicyResp.StructuredContent, &getPolicyOut)
+	assert.NotEmpty(t, getPolicyOut.YAML, "get_policy must return the full CNP YAML")
+
+	require.Eventually(t, func() bool {
+		flowsResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "list_dropped_flows",
+			Arguments: map[string]any{"session_id": startOut.SessionID},
+		})
+		if err != nil || flowsResp.IsError {
+			return false
+		}
+		var out struct {
+			Samples []struct {
+				Namespace string `json:"namespace"`
+			} `json:"samples"`
+		}
+		decodeStructured(t, flowsResp.StructuredContent, &out)
+		return len(out.Samples) > 0
+	}, 15*time.Second, 200*time.Millisecond, "expected list_dropped_flows to return live samples mid-capture")
+
+	require.Eventually(t, func() bool {
+		evidenceResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+			Name: "get_evidence",
+			Arguments: map[string]any{
+				"session_id": startOut.SessionID,
+				"namespace":  "prod",
+				"workload":   "api",
+			},
+		})
+		if err != nil || evidenceResp.IsError {
+			return false
+		}
+		var out struct {
+			TotalCount int `json:"total_count"`
+		}
+		decodeStructured(t, evidenceResp.StructuredContent, &out)
+		return out.TotalCount > 0
+	}, 15*time.Second, 200*time.Millisecond, "expected get_evidence to return live matched rules mid-capture")
+
+	healthMidResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "get_cluster_health",
+		Arguments: map[string]any{"session_id": startOut.SessionID},
+	})
+	require.NoError(t, err)
+	require.False(t, healthMidResp.IsError, "get_cluster_health mid-capture must be a non-error available_after_stop marker")
+	var healthMidOut struct {
+		AvailableAfterStop bool `json:"available_after_stop"`
+	}
+	decodeStructured(t, healthMidResp.StructuredContent, &healthMidOut)
+	assert.True(t, healthMidOut.AvailableAfterStop, "get_cluster_health must return the available_after_stop marker while capturing")
+
+	// Pitfall 4 proof: a real policy file landed on disk under
+	// DeriveSessionPaths(tmp_dir).
+	paths := session.DeriveSessionPaths(statusOut.TmpDir)
+	require.FileExists(t, filepath.Join(paths.OutputDir, "prod", "api.yaml"),
+		"the POLICY_DENIED fixture must have produced a real policy file on disk")
+
+	// (6) stop_session.
+	stopResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "stop_session",
+		Arguments: map[string]any{"session_id": startOut.SessionID},
+	})
+	require.NoError(t, err)
+	require.False(t, stopResp.IsError)
+
+	var stopOut struct {
+		FlowsSeen       uint64 `json:"flows_seen"`
+		PoliciesWritten uint64 `json:"policies_written"`
+	}
+	decodeStructured(t, stopResp.StructuredContent, &stopOut)
+	assert.Greater(t, stopOut.FlowsSeen, uint64(0), "stop_session summary must report flows_seen > 0")
+	assert.Greater(t, stopOut.PoliciesWritten, uint64(0), "stop_session summary must report policies_written > 0")
+
+	// (7) get_cluster_health post-stop: full report + remediation URLs.
+	healthPostResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "get_cluster_health",
+		Arguments: map[string]any{"session_id": startOut.SessionID},
+	})
+	require.NoError(t, err)
+	require.False(t, healthPostResp.IsError)
+
+	var healthPostOut struct {
+		Report *struct {
+			Drops []struct {
+				Reason      string `json:"reason"`
+				Remediation string `json:"remediation"`
+			} `json:"drops"`
+		} `json:"report"`
+	}
+	decodeStructured(t, healthPostResp.StructuredContent, &healthPostOut)
+	require.NotNil(t, healthPostOut.Report, "the infra-class fixture must produce a real cluster-health report post-stop")
+	require.NotEmpty(t, healthPostOut.Report.Drops)
+	assert.NotEmpty(t, healthPostOut.Report.Drops[0].Remediation, "post-stop report must include a per-reason remediation URL")
+
+	// (8) graceful shutdown: close stdin ONLY AFTER stop_session, then
+	// require a clean, bounded self-exit (jsonrpc2 treats a peer-initiated
+	// clean io.EOF as not an error, so server.Run/RunE/main all return nil ->
+	// exit 0).
+	require.NoError(t, e2e.stdinW.Close())
+	exitErr := e2e.waitExit(t, 10*time.Second)
+	assert.NoError(t, exitErr, "a clean peer-EOF disconnect must exit 0")
+
+	// (9) stdout byte-purity re-validation -- the redemption of 16-CONTEXT
+	// D-06 on real stdio (D-05).
+	assertStdoutPurity(t, e2e.rawTee.Bytes())
 }
