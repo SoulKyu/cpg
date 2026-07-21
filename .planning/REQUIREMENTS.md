@@ -17,12 +17,12 @@ Requirements for milestone v1.5. Each maps to roadmap phases.
 
 ### Session Lifecycle
 
-- [ ] **SESS-01**: LLM can `start_session` (namespace / all-namespaces + existing generate filters) and receives an opaque `session_id`; the capture pipeline runs in a background goroutine on a detached cancellable context, writing all artifacts to an ephemeral session tmpdir (`os.MkdirTemp`)
-- [ ] **SESS-02**: Exactly one concurrent session: a second `start_session` while one is active is rejected with an actionable error naming the active `session_id` — never queued, never silently replaced
-- [ ] **SESS-03**: LLM can `get_status(session_id)` and gets coarse state — capturing/stopped, elapsed time, artifact file counts on disk (no live pipeline counters in v1.5; documented behavior)
-- [ ] **SESS-04**: LLM can `stop_session(session_id)`: pipeline context cancelled, artifacts finalized (cluster-health.json, session stats), final summary returned
-- [ ] **SESS-05**: Transport termination for any reason (stdin EOF, harness crash) triggers full cleanup fan-out — cancel session context, close port-forward, remove tmpdir — each step with a bounded deadline so one wedged cleanup cannot block process exit
-- [ ] **SESS-06**: Any session-scoped tool called with an unknown or stopped `session_id` returns a crisp "session not found or expired" error (SEP-2567 handle semantics)
+- [x] **SESS-01**: LLM can `start_session` (namespace / all-namespaces + existing generate filters) and receives an opaque `session_id`; the capture pipeline runs in a background goroutine on a detached cancellable context, writing all artifacts to an ephemeral session tmpdir (`os.MkdirTemp`)
+- [x] **SESS-02**: Exactly one concurrent session: a second `start_session` while one is active is rejected with an actionable error naming the active `session_id` — never queued, never silently replaced
+- [x] **SESS-03**: LLM can `get_status(session_id)` and gets coarse state — capturing/stopped, elapsed time, artifact file counts on disk (no live pipeline counters in v1.5; documented behavior)
+- [x] **SESS-04**: LLM can `stop_session(session_id)`: pipeline context cancelled, artifacts finalized (cluster-health.json, session stats), final summary returned
+- [x] **SESS-05**: Transport termination for any reason (stdin EOF, harness crash) triggers full cleanup fan-out — cancel session context, close port-forward, remove tmpdir — each step with a bounded deadline so one wedged cleanup cannot block process exit
+- [x] **SESS-06**: Any session-scoped tool called with an unknown or stopped `session_id` returns a crisp "session not found or expired" error (SEP-2567 handle semantics)
 
 ### Query Tools
 
@@ -78,12 +78,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SRV-02 | Phase 16 | Complete |
 | SRV-03 | Phase 16 | Complete |
 | SRV-04 | Phase 19 | Pending |
-| SESS-01 | Phase 17 | Pending |
-| SESS-02 | Phase 17 | Pending |
-| SESS-03 | Phase 17 | Pending |
-| SESS-04 | Phase 17 | Pending |
-| SESS-05 | Phase 17 | Pending |
-| SESS-06 | Phase 17 | Pending |
+| SESS-01 | Phase 17 | Complete |
+| SESS-02 | Phase 17 | Complete |
+| SESS-03 | Phase 17 | Complete |
+| SESS-04 | Phase 17 | Complete |
+| SESS-05 | Phase 17 | Complete |
+| SESS-06 | Phase 17 | Complete |
 | QRY-01 | Phase 18 | Pending |
 | QRY-02 | Phase 18 | Pending |
 | QRY-03 | Phase 18 | Pending |
