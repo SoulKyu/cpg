@@ -26,9 +26,9 @@ type startSessionArgs struct {
 	IgnoreProtocols   []string `json:"ignore_protocols,omitempty" jsonschema:"drop flows whose L4 protocol matches: tcp, udp, icmpv4, icmpv6, sctp"`
 	Server            string   `json:"server,omitempty" jsonschema:"explicit Hubble Relay address; bypasses auto port-forward when set"`
 	TLS               bool     `json:"tls,omitempty" jsonschema:"enable TLS for the gRPC connection"`
-	Timeout           string   `json:"timeout,omitempty" jsonschema:"Go duration string, e.g. \"30s\" (default: 10s) — bounds kubeconfig+port-forward+dial setup"`
+	Timeout           string   `json:"timeout,omitempty" jsonschema:"Go duration string, e.g. \"30s\" (default: 10s; max 24h) — bounds kubeconfig+port-forward+dial setup"`
 	ClusterDedup      bool     `json:"cluster_dedup,omitempty" jsonschema:"skip policies that already exist in cluster"`
-	FlushInterval     string   `json:"flush_interval,omitempty" jsonschema:"Go duration string, e.g. \"5s\" (default: 5s)"`
+	FlushInterval     string   `json:"flush_interval,omitempty" jsonschema:"Go duration string, e.g. \"5s\" (default: 5s; max 24h)"`
 }
 
 // sessionRef is the input to get_status/stop_session. Unlike every
@@ -39,6 +39,18 @@ type sessionRef struct {
 	SessionID string `json:"session_id" jsonschema:"the opaque session_id returned by start_session"`
 }
 
+// maxSessionDuration is the upper bound (WR-03) on any MCP-supplied
+// timeout/flush_interval value, enforced by parseOptionalDuration below.
+// Prior to this bound, an MCP client could pass an arbitrarily large
+// duration (e.g. "876000h") straight into setupCtx's deadline
+// (pkg/session/manager.go's Start) — the sole remaining backstop on setup
+// duration once WR-02's ctx-cancellation merge is in place for the
+// ctx-observing path — or into the aggregator's flush ticker, leaving
+// policy_file_count at 0 for the entire session. 24h is a
+// product-appropriate ceiling: no real capture session is expected to run
+// longer.
+const maxSessionDuration = 24 * time.Hour
+
 // parseOptionalDuration parses raw as a Go duration string for the named
 // field. An empty string means the MCP arg was omitted: that is valid and
 // returns the zero Duration, letting Manager.Start/buildPipelineConfig apply
@@ -46,7 +58,10 @@ type sessionRef struct {
 // timeout/flush_interval is never an error here. A non-empty value must
 // parse via time.ParseDuration and be strictly positive: time.ParseDuration
 // accepts a syntactically valid negative string ("-5s"), which must still be
-// rejected explicitly rather than silently reaching PipelineConfig.
+// rejected explicitly rather than silently reaching PipelineConfig. A
+// positive value above maxSessionDuration is also rejected (WR-03) — this
+// bounds both timeout and flush_interval, since both flow through this one
+// parser.
 func parseOptionalDuration(raw, field string) (time.Duration, error) {
 	if raw == "" {
 		return 0, nil
@@ -57,6 +72,9 @@ func parseOptionalDuration(raw, field string) (time.Duration, error) {
 	}
 	if d <= 0 {
 		return 0, fmt.Errorf("%s must be positive, got %q", field, raw)
+	}
+	if d > maxSessionDuration {
+		return 0, fmt.Errorf("%s must be <= %s, got %q", field, maxSessionDuration, raw)
 	}
 	return d, nil
 }
