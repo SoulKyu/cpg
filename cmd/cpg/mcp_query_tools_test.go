@@ -19,6 +19,7 @@ import (
 	"github.com/SoulKyu/cpg/pkg/output"
 	"github.com/SoulKyu/cpg/pkg/policy"
 	"github.com/SoulKyu/cpg/pkg/policy/testdata"
+	"github.com/SoulKyu/cpg/pkg/session"
 )
 
 // startBypassSession starts a session against the D-07 bypass address
@@ -422,5 +423,64 @@ func TestMCPQueryGetClusterHealth(t *testing.T) {
 		tc, ok := healthResp.Content[0].(*mcp.TextContent)
 		require.True(t, ok)
 		assert.NotEmpty(t, tc.Text)
+	})
+}
+
+// TestClusterHealthBranch directly unit-tests clusterHealthBranch's 4-case
+// D-13 branch logic — a pure function over an already-resolved
+// session.StatusResult plus a filesystem path — without needing a real
+// session or pipeline. This complements TestMCPQueryGetClusterHealth's
+// end-to-end wire-level coverage with fast, fully deterministic coverage of
+// the exact same branch logic the handler calls.
+func TestClusterHealthBranch(t *testing.T) {
+	t.Run("capturing", func(t *testing.T) {
+		result, err := clusterHealthBranch(session.StatusResult{State: "capturing"}, "/nonexistent/cluster-health.json")
+		require.NoError(t, err)
+		assert.True(t, result.AvailableAfterStop)
+		assert.NotEmpty(t, result.Message)
+		assert.False(t, result.NoDrops)
+		assert.Nil(t, result.Report)
+	})
+
+	t.Run("stopped_present", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "cluster-health.json")
+		report := hubble.ClusterHealthReport{
+			SchemaVersion: 1,
+			Drops: []hubble.HealthDropJSON{{
+				Reason:     "NO_MAPPING",
+				Class:      "infra",
+				Count:      1,
+				ByNode:     map[string]uint64{"node-1": 1},
+				ByWorkload: map[string]uint64{"prod/api": 1},
+			}},
+		}
+		data, err := json.Marshal(report)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(path, data, 0o644))
+
+		result, err := clusterHealthBranch(session.StatusResult{State: "stopped"}, path)
+		require.NoError(t, err)
+		require.NotNil(t, result.Report)
+		assert.Equal(t, "NO_MAPPING", result.Report.Drops[0].Reason)
+		assert.False(t, result.AvailableAfterStop)
+		assert.False(t, result.NoDrops)
+	})
+
+	t.Run("stopped_absent_no_error", func(t *testing.T) {
+		dir := t.TempDir()
+		result, err := clusterHealthBranch(session.StatusResult{State: "stopped", Error: ""}, filepath.Join(dir, "missing.json"))
+		require.NoError(t, err)
+		assert.True(t, result.NoDrops)
+		assert.False(t, result.AvailableAfterStop)
+		assert.Nil(t, result.Report)
+	})
+
+	t.Run("stopped_absent_with_error", func(t *testing.T) {
+		dir := t.TempDir()
+		result, err := clusterHealthBranch(session.StatusResult{State: "stopped", Error: "relay connection reset by peer"}, filepath.Join(dir, "missing.json"))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "relay connection reset by peer")
+		assert.Equal(t, getClusterHealthResult{}, result)
 	})
 }

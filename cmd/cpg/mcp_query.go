@@ -15,18 +15,18 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/SoulKyu/cpg/pkg/evidence"
+	"github.com/SoulKyu/cpg/pkg/hubble"
 	"github.com/SoulKyu/cpg/pkg/output"
 	"github.com/SoulKyu/cpg/pkg/session"
 )
 
 // registerQueryTools registers Phase 18's read-side query MCP tools —
-// list_policies and get_policy (QRY-02) this task — on server, wired to
-// mgr. get_cluster_health (QRY-04) is added to this same function by this
-// plan's Task 2; get_evidence (18-04) and list_dropped_flows (18-05)
-// register alongside these later. This is the Phase 18 composition-root
-// entry point cmd/cpg/mcp.go's runMCPServer calls right after
-// registerSessionTools (Phase 17); the same readonly discipline applies
-// unchanged — every handler here reaches only mgr.Status (via
+// list_policies, get_policy (QRY-02), and get_cluster_health (QRY-04) —
+// on server, wired to mgr. get_evidence (18-04) and list_dropped_flows
+// (18-05) register alongside these later. This is the Phase 18
+// composition-root entry point cmd/cpg/mcp.go's runMCPServer calls right
+// after registerSessionTools (Phase 17); the same readonly discipline
+// applies unchanged — every handler here reaches only mgr.Status (via
 // resolveSession) plus pkg/output/pkg/hubble filesystem readers over the
 // session tmpdir, never a K8s write verb, never new pkg/session API (D-08).
 func registerQueryTools(server *mcp.Server, mgr *session.Manager) {
@@ -65,6 +65,27 @@ func registerQueryTools(server *mcp.Server, mgr *session.Manager) {
 		},
 	}, func(_ context.Context, _ *mcp.CallToolRequest, args getPolicyArgs) (*mcp.CallToolResult, getPolicyResult, error) {
 		return handleGetPolicy(mgr, args)
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "get_cluster_health",
+		Description: "Returns the session's finalized cluster-health report — per-drop-reason " +
+			"counts (by node and workload) and Cilium-docs remediation URLs — for infra/transient " +
+			"drops the classifier deliberately excluded from policy generation (list_policies/" +
+			"get_policy only ever cover policy-actionable drops; infra/transient noise never " +
+			"produces a CiliumNetworkPolicy). Health is finalize-only: while capturing, this " +
+			"returns a non-error marker asking you to call stop_session first, never a live/" +
+			"partial count. After stop, an absent report is the common case and means zero " +
+			"infra/transient drops were observed this session — not a failure; only a session " +
+			"that crashed with a genuine pipeline error before any drop was recorded returns an " +
+			"isError.",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:   true,
+			IdempotentHint: true,
+			OpenWorldHint:  jsonschema.Ptr(false),
+		},
+	}, func(_ context.Context, _ *mcp.CallToolRequest, args sessionRef) (*mcp.CallToolResult, getClusterHealthResult, error) {
+		return handleGetClusterHealth(mgr, args)
 	})
 }
 
@@ -251,4 +272,81 @@ func handleGetPolicy(mgr *session.Manager, args getPolicyArgs) (*mcp.CallToolRes
 		result.EgressRuleCount = len(cnp.Spec.Egress)
 	}
 	return nil, result, nil
+}
+
+// ---- get_cluster_health (QRY-04/D-13) ----
+
+// getClusterHealthResult is get_cluster_health's structuredContent shape
+// (D-17): exactly one of Report (state=stopped+file present, passthrough),
+// AvailableAfterStop (state=capturing), or NoDrops (state=stopped+file
+// absent+no pipeline error) is populated per call — one typed struct so the
+// SDK infers a single outputSchema, never a hand-crafted dual preview/
+// content block.
+type getClusterHealthResult struct {
+	availableAfterStopMarker
+	// NoDrops is true for the common "session stopped, cluster-health.json
+	// was never written because zero infra/transient drops occurred" case
+	// (D-13's corrected 3-way branch) — never an error.
+	NoDrops bool                        `json:"no_drops,omitempty" jsonschema:"true when no infra/transient drops were observed this session (not a failure)"`
+	Report  *hubble.ClusterHealthReport `json:"report,omitempty" jsonschema:"the finalized cluster-health report; present only once the session is stopped and drops were observed"`
+}
+
+func handleGetClusterHealth(mgr *session.Manager, args sessionRef) (*mcp.CallToolResult, getClusterHealthResult, error) {
+	status, err := resolveSession(mgr, args.SessionID)
+	if err != nil {
+		return nil, getClusterHealthResult{}, err
+	}
+
+	// Inline recompute of pkg/session/manager.go Stop's exact formula — D-08:
+	// zero new Manager API, the outputHash/healthPath derivation is
+	// deterministic and shared with Stop's own StopResult.ClusterHealthPath.
+	outputHash := evidence.HashOutputDir(filepath.Join(status.TmpDir, "policies"))
+	healthPath := filepath.Join(status.TmpDir, "evidence", outputHash, "cluster-health.json")
+
+	result, err := clusterHealthBranch(status, healthPath)
+	return nil, result, err
+}
+
+// clusterHealthBranch implements D-13's corrected 3-way branch (4 states
+// counting "capturing") as a pure function over already-resolved session
+// state plus a filesystem read — factored out of the tool handler so the
+// branch logic itself is directly unit-testable without a real session or
+// pipeline (see TestClusterHealthBranch).
+func clusterHealthBranch(status session.StatusResult, healthPath string) (getClusterHealthResult, error) {
+	if status.State == session.StateCapturing.String() {
+		return getClusterHealthResult{
+			availableAfterStopMarker: availableAfterStopMarker{
+				AvailableAfterStop: true,
+				Message:            "cluster health is finalized only after stop_session; call stop_session first",
+			},
+		}, nil
+	}
+
+	report, err := hubble.ReadClusterHealth(healthPath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			if status.Error == "" {
+				// The common case: a healthy session with zero infra/
+				// transient drops never writes cluster-health.json at all
+				// (pkg/hubble/health_writer.go's finalize() no-ops when
+				// zero drops were accumulated) — not a failure, the
+				// Pitfall-1 correction to a naive binary framing.
+				return getClusterHealthResult{
+					NoDrops: true,
+					availableAfterStopMarker: availableAfterStopMarker{
+						Message: "no infra/transient drops observed this session",
+					},
+				}, nil
+			}
+			// Genuine crash-before-any-drop: cite the pipeline's own
+			// terminal error (SESS-06-adjacent surfacing, D-16).
+			return getClusterHealthResult{}, fmt.Errorf(
+				"cluster health unavailable: session ended with error before any drop was recorded: %s", status.Error)
+		}
+		// Any other error (parse failure, unsupported schema_version) —
+		// return it as-is, isError (D-16).
+		return getClusterHealthResult{}, err
+	}
+
+	return getClusterHealthResult{Report: report}, nil
 }
