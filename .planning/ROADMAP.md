@@ -124,7 +124,7 @@ Full details: [milestones/v1.4-ROADMAP.md](milestones/v1.4-ROADMAP.md)
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 17-03-PLAN.md — pkg/session Manager: single-active state machine, retention, idempotent stop, bounded shutdown fan-out (SESS-01..06, D-01..04)
+- [x] 17-03-PLAN.md — pkg/session Manager: single-active state machine, retention, idempotent stop, bounded shutdown fan-out (SESS-01..06, D-01..04)
 
 **Wave 4** *(blocked on Wave 3)*
 
@@ -179,7 +179,7 @@ Full details: [milestones/v1.4-ROADMAP.md](milestones/v1.4-ROADMAP.md)
 | 14. Fix Verification + Quality Gates | v1.4 | n/a (direct workflow) | Complete | 2026-07-20 |
 | 15. CI Trigger Fix + PR Delivery | v1.4 | n/a (direct workflow) | Complete | 2026-07-20 |
 | 16. MCP Server Foundation & Write Safety | v1.5 | 3/3 | Complete    | 2026-07-20 |
-| 17. Session Lifecycle | v1.5 | 2/4 | In Progress|  |
+| 17. Session Lifecycle | v1.5 | 3/4 | In Progress|  |
 | 18. Query Tools | v1.5 | 0/TBD | Not started | - |
 | 19. Security Hardening & End-to-End Validation | v1.5 | 0/TBD | Not started | - |
 
