@@ -92,7 +92,16 @@ _No REFACTOR commits: this was a direct mechanical move (`gofmt -l` and `go vet`
 
 ## Deviations from Plan
 
-None - plan executed exactly as written. The one self-correction (fixture-helper naming, noted above) was caught and fixed before committing, so it never reached a commit — not tracked as a deviation.
+None in the code itself - plan executed exactly as written. The one self-correction (fixture-helper naming, noted above) was caught and fixed before committing, so it never reached a commit.
+
+### Process correction (not a code deviation)
+
+**REQUIREMENTS.md QRY-03 checkbox left as `[ ] Pending`, not marked complete.**
+- **Found during:** state-update step (after SUMMARY self-check)
+- **Issue:** This plan's frontmatter declares `requirements: [QRY-03]`, and the generic state-update instructions say to mark all of a plan's declared requirements complete in `.planning/REQUIREMENTS.md`. I ran `gsd-sdk query requirements.mark-complete QRY-03`, which flipped the checkbox to `[x]` and the traceability table to `Complete`. Re-reading REQUIREMENTS.md's actual QRY-03 text — "LLM can `get_evidence(session_id, …filters)` for per-rule flow attribution... paginated" — that describes the MCP tool handler itself, which does not exist yet: no `get_evidence`/`mcp_query_evidence.go` file exists in `cmd/cpg` at this commit. `18-04-PLAN.md` (not yet executed) also declares `requirements: [QRY-03, QRY-05]` and is the plan that actually implements the handler. This plan's own `<success_criteria>` says it explicitly: "QRY-03's shared-renderer **foundation** is in place for the get_evidence tool (plan 18-04)" — foundation, not completion.
+- **Fix:** Reverted `.planning/REQUIREMENTS.md` via `git checkout -- .planning/REQUIREMENTS.md` (targeted single-file revert, no blanket reset) before it was committed. QRY-03 stays `[ ] Pending` / `Phase 18 | Pending` until 18-04 lands and its executor runs the mark-complete step for real.
+- **Files affected:** `.planning/REQUIREMENTS.md` (reverted, never committed — working tree is clean on this file)
+- **Note for 18-04's executor:** when 18-04 completes, run `gsd-sdk query requirements.mark-complete QRY-03` then (and QRY-05, shared with 18-03).
 
 ## Issues Encountered
 None.
@@ -104,6 +113,14 @@ None - no external service configuration required. Pure intra-repo code promotio
 ## Next Phase Readiness
 - `pkg/explain` is ready for 18-04's `get_evidence` MCP tool handler to import directly — `explain.Filter.Match`, `explain.RenderJSON`, and `explain.ParsePeerLabel` are all exported and byte-identical to the pre-promotion CLI behavior (QRY-03's foundation is in place).
 - Full `go test ./... -race -count=1` green across all 12 packages; no blockers for 18-02/18-03/18-04/18-05.
+
+## Self-Check: PASSED
+
+All created files verified present, all deleted files verified absent, all 5 commit hashes verified present in `git log`:
+- `pkg/explain/{doc,filter,render,filter_test,render_test}.go` — FOUND
+- `cmd/cpg/{explain.go,explain_test.go}` — FOUND (modified)
+- `cmd/cpg/{explain_filter.go,explain_render.go,explain_filter_test.go}` — CONFIRMED DELETED
+- Commits `3215c25`, `667f5ba`, `9dde6e5`, `ca5b920`, `8281adc` — all FOUND
 
 ---
 *Phase: 18-query-tools*
