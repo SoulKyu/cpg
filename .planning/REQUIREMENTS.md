@@ -22,7 +22,7 @@ Requirements for milestone v1.5. Each maps to roadmap phases.
 - [x] **SESS-03**: LLM can `get_status(session_id)` and gets coarse state — capturing/stopped, elapsed time, artifact file counts on disk (no live pipeline counters in v1.5; documented behavior)
 - [x] **SESS-04**: LLM can `stop_session(session_id)`: pipeline context cancelled, artifacts finalized (cluster-health.json, session stats), final summary returned
 - [x] **SESS-05**: Transport termination for any reason (stdin EOF, harness crash) triggers full cleanup fan-out — cancel session context, close port-forward, remove tmpdir — each step with a bounded deadline so one wedged cleanup cannot block process exit
-- [x] **SESS-06**: Any session-scoped tool called with an unknown or stopped `session_id` returns a crisp "session not found or expired" error (SEP-2567 handle semantics)
+- [x] **SESS-06**: Any session-scoped tool called with an unknown, purged, or replaced `session_id` returns a crisp "session not found or expired" error (SEP-2567 handle semantics); a retained STOPPED session stays queryable per D-02 (17-CONTEXT.md), resolving the SESS-06 ↔ QRY-04 (Phase 18) tension
 
 ### Query Tools
 

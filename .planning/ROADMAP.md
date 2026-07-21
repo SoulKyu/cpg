@@ -110,7 +110,7 @@ Full details: [milestones/v1.4-ROADMAP.md](milestones/v1.4-ROADMAP.md)
   2. LLM calls `get_status(session_id)` at any point and receives coarse state — capturing/stopped, elapsed time, artifact file counts on disk
   3. LLM calls `stop_session(session_id)` and the pipeline context is cancelled, artifacts are finalized (`cluster-health.json`, session stats), and a final summary is returned
   4. Killing the transport for any reason (stdin EOF, harness crash) during an active session cancels the session context, closes the port-forward, and removes the tmpdir — each step bounded by its own deadline so one wedged cleanup cannot block process exit
-  5. Any session-scoped tool called with an unknown or already-stopped `session_id` returns a crisp "session not found or expired" error, never a generic failure
+  5. Any session-scoped tool called with an unknown, purged, or replaced `session_id` returns a crisp "session not found or expired" error, never a generic failure — a retained STOPPED session stays queryable (`get_status`/`stop_session` succeed against it, per D-02) and does not trigger this error
 
 **Plans**: 4 plans in 4 waves (linear — each layer consumes the prior)
 
