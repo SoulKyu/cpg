@@ -182,7 +182,17 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
   3. An end-to-end stdio integration test drives `initialize → start_session → get_status → each query tool → stop_session → exit` under `-race`, plus an ungraceful-disconnect variant proving the port-forward and tmpdir are cleaned up within a bounded deadline
   4. README's MCP section documents harness `env` configuration (`KUBECONFIG`/`PATH`/`TMPDIR`), the secrets posture (HTTP paths/labels reach the LLM context, headers never captured), and the exec-credential-plugin non-interactive hang caveat, so an SRE can configure a harness correctly on first try
 
-**Plans**: TBD
+**Plans**: 4 plans in 2 waves
+
+**Wave 1** *(parallel — zero file overlap)*
+
+- [ ] 19-01-PLAN.md — SEC-01 structural readonly audit (RTA reachability + BFS cpg-owned filter + direct-call scan + 5-function allowlist) + `golang.org/x/tools` promotion
+- [ ] 19-02-PLAN.md — SRV-04/SRV-01 e2e infra (fake Hubble relay + `-race` subprocess harness) + graceful lifecycle + handshake/schema proof (byte-pure stdout)
+- [ ] 19-03-PLAN.md — SEC-03 README `## MCP Server (cpg mcp)` section (harness env, secrets posture, exec-credential caveat)
+
+**Wave 2** *(blocked on 19-02 — same test file)*
+
+- [ ] 19-04-PLAN.md — SRV-04 ungraceful-disconnect variant (bounded self-exit + tmpdir removal + relay stream cancel)
 
 ## Progress
 
@@ -206,6 +216,6 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 | 16. MCP Server Foundation & Write Safety | v1.5 | 3/3 | Complete    | 2026-07-20 |
 | 17. Session Lifecycle | v1.5 | 9/9 | Complete    | 2026-07-21 |
 | 18. Query Tools | v1.5 | 5/5 | Complete    | 2026-07-21 |
-| 19. Security Hardening & End-to-End Validation | v1.5 | 0/TBD | Not started | - |
+| 19. Security Hardening & End-to-End Validation | v1.5 | 0/4 | Planned | - |
 
 **Milestone status:** v1.0 ✅ shipped · v1.1 ✅ shipped · v1.2 ✅ shipped · v1.3 ✅ shipped · v1.4 ✅ shipped · v1.5 📋 in progress
