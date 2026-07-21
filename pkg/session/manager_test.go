@@ -806,6 +806,42 @@ func TestManager_ScopedDialTimeoutAutonomouslyStopsSession(t *testing.T) {
 	m.Shutdown()
 }
 
+// TestManager_CleanDrainAutonomouslyStopsSession proves WR-01 (this round /
+// Truth 2 / SESS-03 gap): a pipeline that drains cleanly (nil error) while
+// sessionCtx is still healthy — the exact shape produced by a Hubble Relay
+// closing its gRPC stream on a harmless io.EOF (pkg/hubble/client.go:157-159)
+// and the phase's own primary "successful capture" test fixture,
+// closedFlowSource — must still autonomously transition the session to
+// stopped via get_status, with zero stop_session calls and no crash error.
+// It also proves the single-slot un-wedge: once stopped, a subsequent
+// start_session succeeds via the D-04 silent purge instead of being
+// rejected "already running".
+//
+// Load-bearing property: the require.Eventually assertion below is FALSE
+// under the pre-fix launch-goroutine guard (`if err != nil &&
+// sessionCtx.Err() == nil`), which never fires for a nil error — State
+// stays StateCapturing forever and get_status reports "capturing"
+// indefinitely for a pipeline that has already fully exited. This test
+// fails against that old behavior, which is the point.
+func TestManager_CleanDrainAutonomouslyStopsSession(t *testing.T) {
+	m := newTestManager(t, &closedFlowSource{flows: twoFlows()})
+
+	first, err := m.Start(context.Background(), StartArgs{Server: "bypass:1"})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		status, statusErr := m.Status(first.SessionID)
+		return statusErr == nil && status.State == "stopped" && status.Error == ""
+	}, 5*time.Second, 5*time.Millisecond,
+		"a clean nil-error drain (sessionCtx never cancelled) must autonomously transition to stopped with zero stop_session calls and no crash error")
+
+	second, err := m.Start(context.Background(), StartArgs{Server: "bypass:1"})
+	require.NoError(t, err, "the single slot must be freed by the clean autonomous transition, not wedged as 'already running'")
+	assert.Equal(t, first.SessionID, second.DiscardedSession, "D-04: the stopped-but-clean first session must be silently purged")
+
+	m.Shutdown()
+}
+
 // TestManager_Start_ShutdownCancelsSetupCtx proves WR-02 (Truth 4 / SESS-05
 // reopened gap): Shutdown's s.cancel() now reaches a mid-setup Start call's
 // setupCtx via the Task 1 context.AfterFunc(sessionCtx, setupCancel) merge,
