@@ -61,6 +61,9 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 - ✓ `cpg mcp` protocol-safe stdio skeleton: pure JSON-RPC stdout (IOTransport pre-swap capture + global os.Stdout→stderr backstop), zero tools registered (SRV-02) — v1.5 Phase 16
 - ✓ Unified stderr logging: zap + go-sdk logs bridged via zapslog (SRV-03) — v1.5 Phase 16
 - ✓ Atomic temp+rename policy writes in `pkg/output/writer.go` (torn-read safe for future concurrent MCP readers, SEC-02) — v1.5 Phase 16
+- ✓ `pkg/session` single-slot Manager: `capturing → stopped → gone` lifecycle with retention, idempotent stop, autonomous transition on both crash and clean pipeline exit (SESS-02, SESS-03) — v1.5 Phase 17
+- ✓ `start_session`/`get_status`/`stop_session` MCP tools wired into `cpg mcp`, opaque session_id, "session not found or expired" contract with D-02 stopped-session queryability (SESS-01, SESS-04, SESS-06) — v1.5 Phase 17
+- ✓ Bounded transport-kill cleanup: `Shutdown()` cancels session + setup contexts, per-step deadlines so one wedged cleanup cannot block process exit, tmpdir removal (SESS-05) — v1.5 Phase 17
 
 ### Active
 
@@ -163,9 +166,9 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 
 **Shipped:** v1.0 (2026-03-08), v1.1 (2026-04-24), v1.2 (2026-04-25), v1.3 (2026-04-26), and v1.4 (2026-07-20).
 
-**Codebase:** 10 packages (`pkg/{labels,policy,output,hubble,k8s,dedup,flowsource,evidence,diff,dropclass}` + `cmd/`). **484 tests passing with `-race`** across 10 packages (up from 418 at v1.3 close). CI green and operational for the first time (build + race tests + lint + govulncheck). Deps: cilium v1.19.4, toolchain go1.25.12. Known debt: 26 lint issues (16 errcheck + 10 SA1019) gated by `only-new-issues`, scoped to v1.5. Release-please continues to handle product SemVer tagging.
+**Codebase:** 11 packages (`pkg/{labels,policy,output,hubble,k8s,dedup,flowsource,evidence,diff,dropclass,session}` + `cmd/`). **539 tests passing with `-race`** across 11 packages (up from 484 at v1.4 close). CI green and operational (build + race tests + lint + govulncheck). Deps: cilium v1.19.4, go-sdk v1.6.1, toolchain go1.25.12. Known debt: 26 lint issues (16 errcheck + 10 SA1019) gated by `only-new-issues`, scoped to v1.5. Release-please continues to handle product SemVer tagging.
 
-**Current milestone:** v1.5 MCP Integration — Phase 16 (MCP Server Foundation & Write Safety) complete 2026-07-20: `cpg mcp` skeleton (go-sdk v1.6.1, zero tools), stdout purity + zapslog stderr bridge, atomic policy writer. Next: Phase 17 (Session Lifecycle) — MUST wire `PipelineConfig.Stdout = mcpModeStdout()`. Debt candidates (lint zero, release hardening, replay exit parity) tracked as v2 requirements.
+**Current milestone:** v1.5 MCP Integration — Phase 17 (Session Lifecycle) complete 2026-07-21: `pkg/session` single-slot Manager (`capturing → stopped → gone`, autonomous exit on crash and clean drain), `start_session`/`get_status`/`stop_session` tools wired into `cpg mcp`, bounded SESS-05 shutdown. Verified 5/5 must-haves after 4 gap-closure rounds (17-05..17-09). Next: Phase 18 (Query Tools) — paginated readonly tools over dropped flows, generated policies, evidence, cluster health.
 
 ## Evolution
 
@@ -185,4 +188,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-20 — v1.5 Phase 16 (MCP Server Foundation & Write Safety) completed and verified (12/12 must-haves).*
+*Last updated: 2026-07-21 — v1.5 Phase 17 (Session Lifecycle) completed and verified (5/5 must-haves).*
