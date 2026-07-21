@@ -21,15 +21,21 @@ import (
 )
 
 // registerQueryTools registers Phase 18's read-side query MCP tools —
-// list_policies, get_policy (QRY-02), and get_cluster_health (QRY-04) —
-// on server, wired to mgr. get_evidence (18-04) and list_dropped_flows
-// (18-05) register alongside these later. This is the Phase 18
+// list_policies, get_policy (QRY-02), get_cluster_health (QRY-04), and
+// get_evidence (QRY-03, 18-04) — on server, wired to mgr. list_dropped_flows
+// (18-05) registers alongside these last. This is the Phase 18
 // composition-root entry point cmd/cpg/mcp.go's runMCPServer calls right
 // after registerSessionTools (Phase 17); the same readonly discipline
 // applies unchanged — every handler here reaches only mgr.Status (via
-// resolveSession) plus pkg/output/pkg/hubble filesystem readers over the
-// session tmpdir, never a K8s write verb, never new pkg/session API (D-08).
+// resolveSession) plus pkg/output/pkg/hubble/pkg/explain filesystem readers
+// over the session tmpdir, never a K8s write verb, never new pkg/session API
+// (D-08). get_evidence's registration lives in its own function
+// (registerGetEvidenceTool, mcp_query_evidence.go) because its InputSchema
+// needs the mustQuerySchema enum-patching mechanism (D-14); the other 3
+// tools stay inline below since their schemas need no such treatment.
 func registerQueryTools(server *mcp.Server, mgr *session.Manager) {
+	registerGetEvidenceTool(server, mgr)
+
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "list_policies",
 		Description: "Lists metadata for every generated CiliumNetworkPolicy in this session: " +
