@@ -1,6 +1,8 @@
 package output
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -276,6 +278,56 @@ func TestWriter_AtomicNoLeftoverTempFiles(t *testing.T) {
 
 	var cnp ciliumv2.CiliumNetworkPolicy
 	require.NoError(t, yaml.Unmarshal(data, &cnp), "written file must be valid CNP YAML")
+}
+
+// TestReadPolicyFile_RoundTrips builds a CNP on disk via buildTestEvent/w.Write,
+// then reads it back with ReadPolicyFile and asserts the round-tripped fields
+// match what was written.
+func TestReadPolicyFile_RoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	logger := zap.NewNop()
+	w := NewWriter(dir, logger)
+
+	event := buildTestEvent("default", "server")
+	require.NoError(t, w.Write(event))
+
+	path := filepath.Join(dir, "default", "server.yaml")
+	cnp, err := ReadPolicyFile(path)
+	require.NoError(t, err)
+	require.NotNil(t, cnp)
+
+	assert.Equal(t, event.Policy.ObjectMeta.Name, cnp.ObjectMeta.Name)
+	assert.Equal(t, event.Policy.Spec.Ingress, cnp.Spec.Ingress)
+	assert.Equal(t, event.Policy.Spec.Egress, cnp.Spec.Egress)
+}
+
+// TestReadPolicyFile_MissingFile asserts a missing path returns a wrapped
+// fs.ErrNotExist error -- the wrapped-error convention ReadPolicyFile adopts,
+// deliberately NOT readExistingPolicy's silent (nil, nil) contract.
+func TestReadPolicyFile_MissingFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "missing", "workload.yaml")
+
+	cnp, err := ReadPolicyFile(path)
+	require.Error(t, err)
+	assert.Nil(t, cnp)
+	assert.True(t, errors.Is(err, fs.ErrNotExist), "expected wrapped fs.ErrNotExist, got: %v", err)
+}
+
+// TestReadPolicyFile_MalformedYAML asserts a genuine YAML syntax error
+// produces a non-nil error that is NOT fs.ErrNotExist -- distinguishable from
+// the missing-file case so callers never confuse "not found" with "corrupt".
+func TestReadPolicyFile_MalformedYAML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "garbage.yaml")
+	// Unterminated flow-collection bracket: a genuine YAML syntax error, not
+	// merely a wrong-shaped-but-parseable document.
+	require.NoError(t, os.WriteFile(path, []byte("apiVersion: cilium.io/v2\nspec: [unterminated\n"), 0644))
+
+	cnp, err := ReadPolicyFile(path)
+	require.Error(t, err)
+	assert.Nil(t, cnp)
+	assert.False(t, errors.Is(err, fs.ErrNotExist), "malformed YAML must not present as not-exist")
 }
 
 // TestWriter_ConcurrentReaderNeverSeesPartialFile drives a writer goroutine
