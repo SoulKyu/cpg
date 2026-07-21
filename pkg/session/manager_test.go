@@ -3,6 +3,7 @@ package session
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -73,6 +74,23 @@ func wedgedRunPipeline(release <-chan struct{}) func(context.Context, hubble.Pip
 	return func(_ context.Context, _ hubble.PipelineConfig) error {
 		<-release
 		return nil
+	}
+}
+
+// failingRunPipeline returns a Manager.runPipeline replacement that blocks
+// until either release closes (returning err, a genuine non-context error)
+// or ctx is cancelled (returning ctx.Err(), a context.Canceled/
+// DeadlineExceeded cancellation). Unlike wedgedRunPipeline above, this
+// stand-in DOES observe ctx cancellation, so a cleanup Shutdown can still
+// unblock it even if the test never closes release itself.
+func failingRunPipeline(release <-chan struct{}, err error) func(context.Context, hubble.PipelineConfig) error {
+	return func(ctx context.Context, _ hubble.PipelineConfig) error {
+		select {
+		case <-release:
+			return err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 }
 
@@ -331,6 +349,7 @@ func TestManager_Stop(t *testing.T) {
 	assert.Equal(t, uint64(2), stopRes.FlowsSeen, "OnFinal must have fed the summary")
 	assert.NotEmpty(t, stopRes.ClusterHealthPath)
 	assert.True(t, strings.HasSuffix(stopRes.ClusterHealthPath, "cluster-health.json"))
+	assert.Empty(t, stopRes.Error, "a clean drain must carry no error")
 
 	_, statErr := os.Stat(stopRes.TmpDir)
 	assert.NoError(t, statErr, "tmpdir must survive stop (D-01 retention)")
@@ -652,6 +671,47 @@ func TestManager_Start_SetupFailureRollsBackSlot(t *testing.T) {
 	res, err := m.Start(context.Background(), StartArgs{Server: "bypass:1"})
 	require.NoError(t, err, "the failed setup must release the slot, not wedge it")
 	assert.True(t, strings.HasPrefix(res.SessionID, "sess_"))
+
+	m.Shutdown()
+}
+
+// TestManager_PipelineErrorAutonomouslyStopsSession proves WR-01 (Truth 2 /
+// SESS-03 reopened gap): a pipeline that exits on its own with a genuine
+// (non-context-cancellation) error autonomously transitions the session to
+// stopped and surfaces the error on both get_status and stop_session, with
+// zero stop_session calls required to observe the transition.
+//
+// Load-bearing property: the post-close(fail) assertion state == "stopped"
+// is FALSE under the pre-fix launch goroutine, which discarded the pipeline
+// error onto s.done and never transitioned State — this test fails against
+// that old behavior, which is the point.
+func TestManager_PipelineErrorAutonomouslyStopsSession(t *testing.T) {
+	m := newTestManager(t, &blockingFlowSource{flow: someFlow()})
+
+	fail := make(chan struct{})
+	sentinel := errors.New("relay connection reset by peer")
+	m.runPipeline = failingRunPipeline(fail, sentinel)
+
+	res, err := m.Start(context.Background(), StartArgs{Server: "bypass:1"})
+	require.NoError(t, err)
+
+	status, err := m.Status(res.SessionID)
+	require.NoError(t, err)
+	assert.Equal(t, "capturing", status.State, "session must be live before the pipeline fails")
+	assert.Empty(t, status.Error, "no crash has occurred yet")
+
+	close(fail)
+
+	require.Eventually(t, func() bool {
+		status, statusErr := m.Status(res.SessionID)
+		return statusErr == nil && status.State == "stopped" && strings.Contains(status.Error, "relay connection reset")
+	}, 5*time.Second, 5*time.Millisecond,
+		"session must autonomously transition to stopped and surface the pipeline error, with zero stop_session calls")
+
+	stopRes, err := m.Stop(res.SessionID)
+	require.NoError(t, err)
+	assert.Contains(t, stopRes.Error, "relay connection reset",
+		"stop_session must surface the same crash error, distinguishable from a clean stop")
 
 	m.Shutdown()
 }
