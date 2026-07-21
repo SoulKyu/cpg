@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
@@ -45,15 +46,17 @@ func registerQueryTools(server *mcp.Server, mgr *session.Manager) {
 			"rule counts, and the absolute YAML path on disk. Every listed policy is, by " +
 			"construction, for a policy-actionable drop — infra/transient/noise drops the " +
 			"classifier suppressed never produce a policy file (see get_cluster_health for " +
-			"infra/transient counts instead). Unpaginated and best-effort: policy files may be " +
-			"added or updated between calls during an active capture, so call again for the " +
-			"latest view.",
+			"infra/transient counts instead). Paginated (limit/cursor/total_count/has_more, " +
+			"WR-02 — the same mechanism get_evidence/list_dropped_flows use, so a session with " +
+			"many namespaces/workloads degrades via has_more rather than an unbounded response) " +
+			"and best-effort: policy files may be added or updated between calls during an " +
+			"active capture, so call again for the latest view.",
 		Annotations: &mcp.ToolAnnotations{
 			ReadOnlyHint:   true,
 			IdempotentHint: true,
 			OpenWorldHint:  jsonschema.Ptr(false),
 		},
-	}, func(_ context.Context, _ *mcp.CallToolRequest, args sessionRef) (*mcp.CallToolResult, listPoliciesResult, error) {
+	}, func(_ context.Context, _ *mcp.CallToolRequest, args listPoliciesArgs) (*mcp.CallToolResult, listPoliciesResult, error) {
 		return handleListPolicies(mgr, args)
 	})
 
@@ -86,7 +89,10 @@ func registerQueryTools(server *mcp.Server, mgr *session.Manager) {
 			"partial count. After stop, an absent report is the common case and means zero " +
 			"infra/transient drops were observed this session — not a failure; only a session " +
 			"that crashed with a genuine pipeline error before any drop was recorded returns an " +
-			"isError.",
+			"isError. Each drop reason's by_node/by_workload breakdown is capped server-side " +
+			"(WR-02) to stay under the MCP output size limit on a cluster spanning many nodes/" +
+			"workloads; truncated=true signals a capped breakdown, keeping the highest-count " +
+			"entries — the reason's own count total is always the true, uncapped figure.",
 		Annotations: &mcp.ToolAnnotations{
 			ReadOnlyHint:   true,
 			IdempotentHint: true,
@@ -134,15 +140,46 @@ type policyMetaRow struct {
 	Path             string   `json:"path" jsonschema:"absolute path to the policy YAML file on disk"`
 }
 
-// listPoliciesResult is list_policies' structuredContent shape (D-17).
-type listPoliciesResult struct {
-	Policies []policyMetaRow `json:"policies"`
+// listPoliciesArgs is list_policies' argument surface: session_id is
+// required; limit/cursor add pagination (WR-02) so a session with many
+// policy-actionable namespaces/workloads degrades via has_more instead of
+// returning an unbounded response that can exceed the MCP output cap.
+type listPoliciesArgs struct {
+	SessionID string `json:"session_id" jsonschema:"the opaque session_id returned by start_session"`
+	Limit     int    `json:"limit,omitempty" jsonschema:"max policies per page (default 50, max 200)"`
+	Cursor    string `json:"cursor,omitempty" jsonschema:"opaque pagination token from a previous call's next_cursor"`
 }
 
-func handleListPolicies(mgr *session.Manager, args sessionRef) (*mcp.CallToolResult, listPoliciesResult, error) {
+// listPoliciesResult is list_policies' structuredContent shape (D-17).
+// Policies is the PAGE (WR-02): pagination reuses the same paginate +
+// paginateBoundaryKey mechanism get_evidence/list_dropped_flows use, since
+// rows already sort naturally by (namespace, workload) — os.ReadDir's own
+// sorted-by-filename order at both the namespace and per-namespace-file
+// level (see handleListPolicies).
+type listPoliciesResult struct {
+	Policies   []policyMetaRow `json:"policies"`
+	TotalCount int             `json:"total_count" jsonschema:"count of every policy in this session, not just this page"`
+	HasMore    bool            `json:"has_more"`
+	NextCursor string          `json:"next_cursor,omitempty" jsonschema:"pass verbatim as cursor to fetch the next page; absent on the last page"`
+}
+
+func handleListPolicies(mgr *session.Manager, args listPoliciesArgs) (*mcp.CallToolResult, listPoliciesResult, error) {
 	status, err := resolveSession(mgr, args.SessionID)
 	if err != nil {
 		return nil, listPoliciesResult{}, err
+	}
+
+	// Decode the cursor before any filesystem access (D-16: validate input
+	// before doing I/O) — an invalid cursor must be an actionable error
+	// regardless of whether this session happens to have zero policies yet,
+	// exactly like get_evidence/list_dropped_flows.
+	var after *paginateBoundaryKey
+	if args.Cursor != "" {
+		key, err := decodeCursor(args.Cursor)
+		if err != nil {
+			return nil, listPoliciesResult{}, err
+		}
+		after = &key
 	}
 
 	policiesDir := filepath.Join(status.TmpDir, "policies")
@@ -191,7 +228,23 @@ func handleListPolicies(mgr *session.Manager, args sessionRef) (*mcp.CallToolRes
 		}
 	}
 
-	return nil, listPoliciesResult{Policies: rows}, nil
+	// WR-02: rows are already sorted (namespace, workload) — the exact order
+	// paginate requires its caller to have pre-sorted (see paginate's own
+	// doc, mcp_query_pagination.go). Index is always 0: each (namespace,
+	// workload) pair yields exactly one row (one policy file per pair), so
+	// there is nothing to disambiguate within a pair — unlike get_evidence's
+	// multiple-rules-per-file case.
+	keyOf := func(r policyMetaRow) paginateBoundaryKey {
+		return paginateBoundaryKey{Namespace: r.Namespace, Workload: r.Workload, Index: 0}
+	}
+	page, nextCursor, hasMore, totalCount := paginate(rows, keyOf, after, args.Limit, defaultFlowLimit, maxFlowLimit)
+
+	return nil, listPoliciesResult{
+		Policies:   page,
+		TotalCount: totalCount,
+		HasMore:    hasMore,
+		NextCursor: nextCursor,
+	}, nil
 }
 
 // policyRowFromCNP builds one list_policies row from a parsed CNP. cnp.Spec
@@ -289,7 +342,8 @@ func handleGetPolicy(mgr *session.Manager, args getPolicyArgs) (*mcp.CallToolRes
 // AvailableAfterStop (state=capturing), or NoDrops (state=stopped+file
 // absent+no pipeline error) is populated per call — one typed struct so the
 // SDK infers a single outputSchema, never a hand-crafted dual preview/
-// content block.
+// content block. Truncated is orthogonal to that 3-way split: it only ever
+// accompanies a populated Report (WR-02).
 type getClusterHealthResult struct {
 	availableAfterStopMarker
 	// NoDrops is true for the common "session stopped, cluster-health.json
@@ -297,6 +351,72 @@ type getClusterHealthResult struct {
 	// (D-13's corrected 3-way branch) — never an error.
 	NoDrops bool                        `json:"no_drops,omitempty" jsonschema:"true when no infra/transient drops were observed this session (not a failure)"`
 	Report  *hubble.ClusterHealthReport `json:"report,omitempty" jsonschema:"the finalized cluster-health report; present only once the session is stopped and drops were observed"`
+	// Truncated (WR-02) signals that capClusterHealthReport capped one or
+	// more Report.Drops[].ByNode/ByWorkload maps to maxHealthMapEntries
+	// entries to stay under the MCP output size limit on a cluster spanning
+	// many nodes/workloads. Each drop reason's Count total is never affected
+	// — only the breakdown's cardinality — so a truncated response never
+	// misrepresents totals, only omits the long tail of the breakdown.
+	Truncated bool `json:"truncated,omitempty" jsonschema:"true when one or more drop reasons' by_node/by_workload maps were capped; report counts remain the true totals regardless"`
+}
+
+// maxHealthMapEntries bounds each drop reason's by_node/by_workload map
+// (WR-02): get_cluster_health passes through the entire ClusterHealthReport,
+// and a report spanning many nodes/workloads per drop reason can otherwise
+// exceed the ~25k-token MCP output cap the rest of this phase's paginated
+// tools deliberately respect (mcp_query_pagination.go). Drops[] itself needs
+// no such cap — its cardinality is bounded by the fixed pkg/dropclass reason
+// taxonomy (well under 100 entries) — only the per-reason node/workload
+// breakdown genuinely scales with cluster size.
+const maxHealthMapEntries = 100
+
+// capClusterHealthReport truncates each of report.Drops[]'s ByNode/
+// ByWorkload maps to at most maxHealthMapEntries entries in place, keeping
+// the highest-count entries (ties broken alphabetically for determinism) so
+// a capped response still surfaces the most significant contributors. Each
+// drop reason's own Count total is never altered — only the breakdown's
+// cardinality. report is always a freshly hubble.ReadClusterHealth-decoded
+// value private to this call (never shared/cached), so mutating it in place
+// is safe. Returns whether any map was actually truncated.
+func capClusterHealthReport(report *hubble.ClusterHealthReport) bool {
+	truncated := false
+	for i := range report.Drops {
+		if capHealthCountMap(&report.Drops[i].ByNode) {
+			truncated = true
+		}
+		if capHealthCountMap(&report.Drops[i].ByWorkload) {
+			truncated = true
+		}
+	}
+	return truncated
+}
+
+// capHealthCountMap replaces *m in place with a copy holding at most
+// maxHealthMapEntries entries — the highest-count keys, ties broken
+// alphabetically for a deterministic, reproducible result across repeated
+// calls against the same underlying data. Returns whether *m was actually
+// truncated (false, and *m left untouched, when already within bounds).
+func capHealthCountMap(m *map[string]uint64) bool {
+	if len(*m) <= maxHealthMapEntries {
+		return false
+	}
+	keys := make([]string, 0, len(*m))
+	for k := range *m {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		vi, vj := (*m)[keys[i]], (*m)[keys[j]]
+		if vi != vj {
+			return vi > vj
+		}
+		return keys[i] < keys[j]
+	})
+	capped := make(map[string]uint64, maxHealthMapEntries)
+	for _, k := range keys[:maxHealthMapEntries] {
+		capped[k] = (*m)[k]
+	}
+	*m = capped
+	return true
 }
 
 func handleGetClusterHealth(mgr *session.Manager, args sessionRef) (*mcp.CallToolResult, getClusterHealthResult, error) {
@@ -356,5 +476,8 @@ func clusterHealthBranch(status session.StatusResult, healthPath string) (getClu
 		return getClusterHealthResult{}, err
 	}
 
-	return getClusterHealthResult{Report: report}, nil
+	// WR-02: cap the per-reason breakdown before returning — never the
+	// report's own reason-level Count totals.
+	truncated := capClusterHealthReport(report)
+	return getClusterHealthResult{Report: report, Truncated: truncated}, nil
 }

@@ -20,9 +20,11 @@ import (
 //     single page well under the cap.
 const (
 	// defaultFlowLimit/maxFlowLimit are consumed by list_dropped_flows
-	// (18-05, mcp_query_flows.go) — defined here, per D-07, as the single
-	// source of truth every flow-scale paginated tool references instead of
-	// hand-copying its own numbers.
+	// (18-05, mcp_query_flows.go) and list_policies (WR-02, mcp_query.go) —
+	// defined here, per D-07, as the single source of truth every
+	// flow-scale paginated tool references instead of hand-copying its own
+	// numbers. Both tools' rows are compact scalar/string fields with no
+	// embedded arrays, so they share the same scale bucket.
 	defaultFlowLimit = 50
 	maxFlowLimit     = 200
 

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -166,10 +167,16 @@ func TestMCPQueryListPolicies(t *testing.T) {
 	require.False(t, listResp.IsError)
 
 	var listOut struct {
-		Policies []policyRowOut `json:"policies"`
+		Policies   []policyRowOut `json:"policies"`
+		TotalCount int            `json:"total_count"`
+		HasMore    bool           `json:"has_more"`
+		NextCursor string         `json:"next_cursor"`
 	}
 	decodeStructured(t, listResp.StructuredContent, &listOut)
 	require.Len(t, listOut.Policies, 2)
+	assert.Equal(t, 2, listOut.TotalCount, "WR-02: total_count reflects every policy in this session")
+	assert.False(t, listOut.HasMore, "WR-02: 2 policies fit well under the default page size")
+	assert.Empty(t, listOut.NextCursor)
 
 	api := findPolicyRow(t, listOut.Policies, "api")
 	assert.Equal(t, "prod", api.Namespace)
@@ -185,6 +192,67 @@ func TestMCPQueryListPolicies(t *testing.T) {
 	assert.ElementsMatch(t, []string{"egress"}, web.Directions)
 	assert.Equal(t, 0, web.IngressRuleCount)
 	assert.Equal(t, 1, web.EgressRuleCount)
+}
+
+// TestMCPQueryListPoliciesPagination proves WR-02's fix end to end: 3 seeded
+// policies (spanning 2 namespaces so the (namespace, workload) boundary-key
+// sort order is exercised, not just the workload dimension) walked one page
+// at a time via limit=1, mirroring TestMCPQueryListDroppedFlows'
+// "pagination_over_combined_view" sub-test's page-by-page trace pattern —
+// proving total_count/has_more/next_cursor behave correctly and that no
+// policy is skipped or duplicated across pages.
+func TestMCPQueryListPoliciesPagination(t *testing.T) {
+	initLoggerForTesting(t)
+
+	cs, ctx, cleanup := connectQueryTestClient(t)
+	defer cleanup()
+
+	sessionID, tmpDir := startBypassSession(t, ctx, cs, "5s")
+	policiesDir := filepath.Join(tmpDir, "policies")
+
+	writeTestPolicy(t, policiesDir, "prod", "api",
+		[]*flowpb.Flow{testdata.IngressTCPFlow([]string{"k8s:app=client"}, []string{"k8s:app=api"}, "prod", 8080)})
+	writeTestPolicy(t, policiesDir, "prod", "web",
+		[]*flowpb.Flow{testdata.EgressUDPFlow([]string{"k8s:app=web"}, []string{"k8s:app=dns"}, "prod", 53)})
+	writeTestPolicy(t, policiesDir, "staging", "worker",
+		[]*flowpb.Flow{testdata.IngressTCPFlow([]string{"k8s:app=client"}, []string{"k8s:app=worker"}, "staging", 9090)})
+
+	type page struct {
+		Policies   []policyRowOut `json:"policies"`
+		TotalCount int            `json:"total_count"`
+		HasMore    bool           `json:"has_more"`
+		NextCursor string         `json:"next_cursor"`
+	}
+	callPage := func(args map[string]any) page {
+		t.Helper()
+		resp, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "list_policies", Arguments: args})
+		require.NoError(t, err)
+		require.False(t, resp.IsError)
+		var out page
+		decodeStructured(t, resp.StructuredContent, &out)
+		return out
+	}
+
+	// namespace ("prod" < "staging") then workload ("api" < "web") ordering.
+	p1 := callPage(map[string]any{"session_id": sessionID, "limit": 1})
+	require.Len(t, p1.Policies, 1)
+	assert.Equal(t, "api", p1.Policies[0].Workload)
+	assert.Equal(t, 3, p1.TotalCount)
+	assert.True(t, p1.HasMore)
+	require.NotEmpty(t, p1.NextCursor)
+
+	p2 := callPage(map[string]any{"session_id": sessionID, "limit": 1, "cursor": p1.NextCursor})
+	require.Len(t, p2.Policies, 1)
+	assert.Equal(t, "web", p2.Policies[0].Workload)
+	assert.Equal(t, 3, p2.TotalCount)
+	assert.True(t, p2.HasMore)
+
+	p3 := callPage(map[string]any{"session_id": sessionID, "limit": 1, "cursor": p2.NextCursor})
+	require.Len(t, p3.Policies, 1)
+	assert.Equal(t, "worker", p3.Policies[0].Workload)
+	assert.Equal(t, 3, p3.TotalCount)
+	assert.False(t, p3.HasMore, "the third page exhausts all 3 policies")
+	assert.Empty(t, p3.NextCursor)
 }
 
 // TestMCPQueryGetPolicy proves QRY-02/D-11's get_policy over the in-memory
@@ -361,6 +429,59 @@ func TestMCPQueryGetClusterHealth(t *testing.T) {
 		assert.Equal(t, uint64(3), out.Report.Drops[0].Count)
 	})
 
+	t.Run("stopped_present_truncates_large_workload_breakdown", func(t *testing.T) {
+		cs, ctx, cleanup := connectQueryTestClient(t)
+		defer cleanup()
+
+		sessionID, tmpDir := startBypassSession(t, ctx, cs, "5s")
+
+		// WR-02: 150 by_workload entries (> maxHealthMapEntries=100) with
+		// distinct counts (1..150) so the "keep the highest-count entries"
+		// truncation rule is unambiguously checkable: the lowest-count key
+		// must be dropped, the highest-count key must survive.
+		byWorkload := make(map[string]uint64, 150)
+		for i := 1; i <= 150; i++ {
+			byWorkload[fmt.Sprintf("prod/w%03d", i)] = uint64(i)
+		}
+		writeClusterHealthFixture(t, tmpDir, hubble.ClusterHealthReport{
+			SchemaVersion: 1,
+			Drops: []hubble.HealthDropJSON{{
+				Reason:     "CT_MAP_INSERTION_FAILED",
+				Class:      "infra",
+				Count:      5000,
+				ByNode:     map[string]uint64{"node-1": 5000},
+				ByWorkload: byWorkload,
+			}},
+		})
+		stopBypassSession(t, ctx, cs, sessionID)
+
+		healthResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "get_cluster_health",
+			Arguments: map[string]any{"session_id": sessionID},
+		})
+		require.NoError(t, err)
+		require.False(t, healthResp.IsError)
+
+		var out struct {
+			Truncated bool `json:"truncated"`
+			Report    *struct {
+				Drops []struct {
+					Count      uint64            `json:"count"`
+					ByWorkload map[string]uint64 `json:"by_workload"`
+				} `json:"drops"`
+			} `json:"report"`
+		}
+		decodeStructured(t, healthResp.StructuredContent, &out)
+		require.NotNil(t, out.Report)
+		require.Len(t, out.Report.Drops, 1)
+
+		assert.True(t, out.Truncated, "WR-02: truncated must be true when a by_workload map exceeds maxHealthMapEntries")
+		assert.Equal(t, uint64(5000), out.Report.Drops[0].Count, "WR-02: the reason's own count total must never be affected by breakdown truncation")
+		assert.Len(t, out.Report.Drops[0].ByWorkload, 100, "WR-02: by_workload must be capped at maxHealthMapEntries")
+		assert.Contains(t, out.Report.Drops[0].ByWorkload, "prod/w150", "the highest-count entry must survive truncation")
+		assert.NotContains(t, out.Report.Drops[0].ByWorkload, "prod/w001", "the lowest-count entry must be dropped by truncation")
+	})
+
 	t.Run("stopped_absent_no_error", func(t *testing.T) {
 		cs, ctx, cleanup := connectQueryTestClient(t)
 		defer cleanup()
@@ -482,6 +603,68 @@ func TestClusterHealthBranch(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "relay connection reset by peer")
 		assert.Equal(t, getClusterHealthResult{}, result)
+	})
+}
+
+// TestCapClusterHealthReport directly unit-tests capClusterHealthReport/
+// capHealthCountMap (WR-02) as pure functions over an in-memory report,
+// without a real session or MCP round-trip — complementing
+// TestMCPQueryGetClusterHealth's end-to-end "stopped_present_truncates_
+// large_workload_breakdown" coverage of the exact same code path.
+func TestCapClusterHealthReport(t *testing.T) {
+	t.Run("under_the_cap_is_untouched", func(t *testing.T) {
+		report := &hubble.ClusterHealthReport{
+			Drops: []hubble.HealthDropJSON{{
+				Reason:     "POLICY_DENIED",
+				Count:      2,
+				ByNode:     map[string]uint64{"node-1": 1, "node-2": 1},
+				ByWorkload: map[string]uint64{"prod/api": 2},
+			}},
+		}
+		truncated := capClusterHealthReport(report)
+		assert.False(t, truncated)
+		assert.Len(t, report.Drops[0].ByNode, 2)
+		assert.Len(t, report.Drops[0].ByWorkload, 1)
+	})
+
+	t.Run("over_the_cap_keeps_highest_count_entries", func(t *testing.T) {
+		byNode := make(map[string]uint64, maxHealthMapEntries+10)
+		for i := 1; i <= maxHealthMapEntries+10; i++ {
+			byNode[fmt.Sprintf("node-%03d", i)] = uint64(i)
+		}
+		report := &hubble.ClusterHealthReport{
+			Drops: []hubble.HealthDropJSON{{
+				Reason: "CT_MAP_INSERTION_FAILED",
+				Count:  99999,
+				ByNode: byNode,
+			}},
+		}
+		truncated := capClusterHealthReport(report)
+		assert.True(t, truncated)
+		assert.Len(t, report.Drops[0].ByNode, maxHealthMapEntries)
+		assert.Equal(t, uint64(99999), report.Drops[0].Count, "Count must never be affected by breakdown truncation")
+		assert.Contains(t, report.Drops[0].ByNode, fmt.Sprintf("node-%03d", maxHealthMapEntries+10), "the highest-count entry must survive")
+		assert.NotContains(t, report.Drops[0].ByNode, "node-001", "the lowest-count entry must be dropped")
+	})
+
+	t.Run("tie_break_alphabetical_for_determinism", func(t *testing.T) {
+		// Every entry tied at the same count: the sort degenerates to pure
+		// alphabetical order, making the deterministic tie-break rule
+		// (capHealthCountMap's own doc) directly checkable at the exact
+		// keys[:maxHealthMapEntries] boundary.
+		byWorkload := make(map[string]uint64, maxHealthMapEntries+10)
+		for i := 0; i < maxHealthMapEntries+10; i++ {
+			byWorkload[fmt.Sprintf("node-%03d", i)] = 1
+		}
+		report := &hubble.ClusterHealthReport{
+			Drops: []hubble.HealthDropJSON{{Reason: "X", ByWorkload: byWorkload}},
+		}
+		truncated := capClusterHealthReport(report)
+		require.True(t, truncated)
+		require.Len(t, report.Drops[0].ByWorkload, maxHealthMapEntries)
+		assert.Contains(t, report.Drops[0].ByWorkload, "node-000", "the alphabetically-first tied key must survive")
+		assert.Contains(t, report.Drops[0].ByWorkload, fmt.Sprintf("node-%03d", maxHealthMapEntries-1), "the 100th alphabetical tied key must survive")
+		assert.NotContains(t, report.Drops[0].ByWorkload, fmt.Sprintf("node-%03d", maxHealthMapEntries), "the 101st alphabetical tied key must be dropped")
 	})
 }
 
@@ -662,6 +845,11 @@ func TestMCPQueryToolsNotFoundAndCursorErrorTexts(t *testing.T) {
 	}{
 		{"get_evidence", map[string]any{"session_id": sessionID, "namespace": "prod", "workload": "api", "cursor": "garbage"}},
 		{"list_dropped_flows", map[string]any{"session_id": sessionID, "cursor": "garbage"}},
+		// list_policies (WR-02): this session has zero policies (only the
+		// prod/api evidence fixture above), proving the cursor is validated
+		// before the policies directory is touched — not skipped when the
+		// directory doesn't exist yet (mcp_query.go's handleListPolicies).
+		{"list_policies", map[string]any{"session_id": sessionID, "cursor": "garbage"}},
 	}
 	for _, tc := range cursorCases {
 		result, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: tc.name, Arguments: tc.args})
