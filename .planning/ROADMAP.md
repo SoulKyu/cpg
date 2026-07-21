@@ -216,6 +216,6 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 | 16. MCP Server Foundation & Write Safety | v1.5 | 3/3 | Complete    | 2026-07-20 |
 | 17. Session Lifecycle | v1.5 | 9/9 | Complete    | 2026-07-21 |
 | 18. Query Tools | v1.5 | 5/5 | Complete    | 2026-07-21 |
-| 19. Security Hardening & End-to-End Validation | v1.5 | 4/4 | Complete   | 2026-07-21 |
+| 19. Security Hardening & End-to-End Validation | v1.5 | 4/4 | Complete    | 2026-07-21 |
 
 **Milestone status:** v1.0 ✅ shipped · v1.1 ✅ shipped · v1.2 ✅ shipped · v1.3 ✅ shipped · v1.4 ✅ shipped · v1.5 📋 in progress

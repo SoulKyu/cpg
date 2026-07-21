@@ -100,4 +100,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-07-20*
-*Last updated: 2026-07-21 after Phase 18 (query-tools) completion — QRY-01..05 all complete*
+*Last updated: 2026-07-21 after Phase 19 (security-hardening-end-to-end-validation) completion — SRV-01, SRV-04, SEC-01, SEC-03 all complete; all 18 v1.5 requirements closed*
