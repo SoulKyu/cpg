@@ -716,6 +716,48 @@ func TestManager_PipelineErrorAutonomouslyStopsSession(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, stopRes.Error, "relay connection reset",
 		"stop_session must surface the same crash error, distinguishable from a clean stop")
+	assert.False(t, stopRes.AlreadyStopped,
+		"the first explicit stop_session after an autonomous crash must not be marked already-stopped (D-03 / WR-02)")
+
+	m.Shutdown()
+}
+
+// TestManager_FirstStopAfterAutonomousCrashIsNotAlreadyStopped proves WR-02
+// (a regression against the D-03 idempotency contract, tied to SESS-04):
+// the FIRST explicit stop_session call after an autonomous crash transition
+// must report AlreadyStopped==false — State already being StateStopped (set
+// by the launch goroutine's crash transition, not by Stop) must not be
+// conflated with "stop_session was already called". A genuine SECOND Stop()
+// call for the same session must report AlreadyStopped==true.
+//
+// Load-bearing property: first.AlreadyStopped is TRUE under the pre-fix
+// code — Stop's early-return keys purely off state == StateStopped, which
+// the autonomous crash transition already set before Stop was ever called —
+// this test fails against that old behavior, which is the point.
+func TestManager_FirstStopAfterAutonomousCrashIsNotAlreadyStopped(t *testing.T) {
+	m := newTestManager(t, &blockingFlowSource{flow: someFlow()})
+
+	fail := make(chan struct{})
+	m.runPipeline = failingRunPipeline(fail, errors.New("relay connection reset by peer"))
+
+	res, err := m.Start(context.Background(), StartArgs{Server: "bypass:1"})
+	require.NoError(t, err)
+
+	close(fail)
+
+	require.Eventually(t, func() bool {
+		status, statusErr := m.Status(res.SessionID)
+		return statusErr == nil && status.State == "stopped"
+	}, 5*time.Second, 5*time.Millisecond, "the autonomous crash transition must have run before Stop is ever called")
+
+	first, err := m.Stop(res.SessionID)
+	require.NoError(t, err)
+	assert.False(t, first.AlreadyStopped,
+		"the first explicit stop_session after an autonomous crash must not be marked already-stopped (D-03)")
+
+	second, err := m.Stop(res.SessionID)
+	require.NoError(t, err)
+	assert.True(t, second.AlreadyStopped, "a genuine second stop_session call must report already-stopped")
 
 	m.Shutdown()
 }
