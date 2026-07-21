@@ -1,0 +1,263 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	flowpb "github.com/cilium/cilium/api/v1/flow"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+
+	"github.com/SoulKyu/cpg/pkg/evidence"
+	"github.com/SoulKyu/cpg/pkg/hubble"
+	"github.com/SoulKyu/cpg/pkg/output"
+	"github.com/SoulKyu/cpg/pkg/policy"
+	"github.com/SoulKyu/cpg/pkg/policy/testdata"
+)
+
+// startBypassSession starts a session against the D-07 bypass address
+// ("127.0.0.1:1" — an explicit server address that skips kubeconfig/auto
+// port-forward entirely, mcp_session_test.go's own pattern) so query-tool
+// tests get a real session tmpdir without a live cluster. It returns the
+// opaque session_id and the absolute tmp_dir, both read off
+// start_session/get_status's structuredContent exactly as
+// TestMCPSessionLifecycleWiringAndStdoutPurity does.
+func startBypassSession(t *testing.T, ctx context.Context, cs *mcp.ClientSession, timeout string) (sessionID, tmpDir string) {
+	t.Helper()
+
+	startResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name: "start_session",
+		Arguments: map[string]any{
+			"server":         "127.0.0.1:1",
+			"timeout":        timeout,
+			"flush_interval": "1s",
+		},
+	})
+	require.NoError(t, err)
+	require.False(t, startResp.IsError, "start_session against the D-07 bypass address must not error")
+
+	var startOut struct {
+		SessionID string `json:"session_id"`
+	}
+	decodeStructured(t, startResp.StructuredContent, &startOut)
+	require.NotEmpty(t, startOut.SessionID)
+
+	statusResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "get_status",
+		Arguments: map[string]any{"session_id": startOut.SessionID},
+	})
+	require.NoError(t, err)
+	require.False(t, statusResp.IsError)
+
+	var statusOut struct {
+		TmpDir string `json:"tmp_dir"`
+	}
+	decodeStructured(t, statusResp.StructuredContent, &statusOut)
+	require.NotEmpty(t, statusOut.TmpDir)
+
+	return startOut.SessionID, statusOut.TmpDir
+}
+
+// connectQueryTestClient wires up one independent in-memory MCP session and
+// returns the connected client session plus the ctx/cancel/drain triple the
+// caller must invoke on cleanup — mirroring the exact
+// startInMemoryMCPSession + mcp.NewClient + Connect sequence every test in
+// this package already uses (mcp_session_test.go).
+func connectQueryTestClient(t *testing.T) (cs *mcp.ClientSession, ctx context.Context, cleanup func()) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+
+	clientT, drain := startInMemoryMCPSession(ctx)
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
+	cs, err := client.Connect(ctx, clientT, nil)
+	require.NoError(t, err)
+
+	return cs, ctx, func() {
+		cancel()
+		drain()
+		_ = cs.Close()
+	}
+}
+
+// writeTestPolicy builds a real CiliumNetworkPolicy from flows via
+// policy.BuildPolicy and writes it to policiesDir/ns/workload.yaml via
+// pkg/output.Writer — the same production writer path start_session's
+// pipeline uses — so list_policies/get_policy are exercised against a
+// realistic, schema-correct fixture rather than a hand-rolled YAML string.
+func writeTestPolicy(t *testing.T, policiesDir, ns, workload string, flows []*flowpb.Flow) string {
+	t.Helper()
+	cnp, _ := policy.BuildPolicy(ns, workload, flows, nil, policy.AttributionOptions{})
+	w := output.NewWriter(policiesDir, zap.NewNop())
+	require.NoError(t, w.Write(policy.PolicyEvent{Namespace: ns, Workload: workload, Policy: cnp}))
+	return filepath.Join(policiesDir, ns, workload+".yaml")
+}
+
+// writeClusterHealthFixture marshals report as cluster-health.json at the
+// exact path get_cluster_health derives (evidence/<hash>/cluster-health.json,
+// hash = evidence.HashOutputDir(<tmpDir>/policies)) so tests can seed the
+// "stopped + file present" branch without a real pipeline (finalize() only
+// ever writes this file when at least one infra/transient drop was
+// accumulated — never reachable from a fixture-free D-07 bypass session).
+func writeClusterHealthFixture(t *testing.T, tmpDir string, report hubble.ClusterHealthReport) string {
+	t.Helper()
+	outputHash := evidence.HashOutputDir(filepath.Join(tmpDir, "policies"))
+	dir := filepath.Join(tmpDir, "evidence", outputHash)
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	path := filepath.Join(dir, "cluster-health.json")
+	data, err := json.MarshalIndent(report, "", "  ")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, data, 0o644))
+	return path
+}
+
+// policyRowOut mirrors list_policies' policyMetaRow JSON shape for
+// decodeStructured round-tripping in tests.
+type policyRowOut struct {
+	Namespace        string   `json:"namespace"`
+	Workload         string   `json:"workload"`
+	Name             string   `json:"name"`
+	Directions       []string `json:"directions"`
+	IngressRuleCount int      `json:"ingress_rule_count"`
+	EgressRuleCount  int      `json:"egress_rule_count"`
+	Path             string   `json:"path"`
+}
+
+func findPolicyRow(t *testing.T, rows []policyRowOut, workload string) policyRowOut {
+	t.Helper()
+	for _, r := range rows {
+		if r.Workload == workload {
+			return r
+		}
+	}
+	t.Fatalf("workload %q not found in list_policies rows: %+v", workload, rows)
+	return policyRowOut{}
+}
+
+// TestMCPQueryListPolicies proves QRY-02's list_policies over the in-memory
+// transport: two seeded policies (one ingress-only, one egress-only) yield
+// two rows whose namespace/workload/name/directions/rule-counts/path are
+// all correct.
+func TestMCPQueryListPolicies(t *testing.T) {
+	initLoggerForTesting(t)
+
+	cs, ctx, cleanup := connectQueryTestClient(t)
+	defer cleanup()
+
+	sessionID, tmpDir := startBypassSession(t, ctx, cs, "5s")
+	policiesDir := filepath.Join(tmpDir, "policies")
+
+	writeTestPolicy(t, policiesDir, "prod", "api",
+		[]*flowpb.Flow{testdata.IngressTCPFlow([]string{"k8s:app=client"}, []string{"k8s:app=api"}, "prod", 8080)})
+	writeTestPolicy(t, policiesDir, "prod", "web",
+		[]*flowpb.Flow{testdata.EgressUDPFlow([]string{"k8s:app=web"}, []string{"k8s:app=dns"}, "prod", 53)})
+
+	listResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "list_policies",
+		Arguments: map[string]any{"session_id": sessionID},
+	})
+	require.NoError(t, err)
+	require.False(t, listResp.IsError)
+
+	var listOut struct {
+		Policies []policyRowOut `json:"policies"`
+	}
+	decodeStructured(t, listResp.StructuredContent, &listOut)
+	require.Len(t, listOut.Policies, 2)
+
+	api := findPolicyRow(t, listOut.Policies, "api")
+	assert.Equal(t, "prod", api.Namespace)
+	assert.Equal(t, "cpg-api", api.Name)
+	assert.ElementsMatch(t, []string{"ingress"}, api.Directions)
+	assert.Equal(t, 1, api.IngressRuleCount)
+	assert.Equal(t, 0, api.EgressRuleCount)
+	assert.Equal(t, filepath.Join(policiesDir, "prod", "api.yaml"), api.Path)
+
+	web := findPolicyRow(t, listOut.Policies, "web")
+	assert.Equal(t, "prod", web.Namespace)
+	assert.Equal(t, "cpg-web", web.Name)
+	assert.ElementsMatch(t, []string{"egress"}, web.Directions)
+	assert.Equal(t, 0, web.IngressRuleCount)
+	assert.Equal(t, 1, web.EgressRuleCount)
+}
+
+// TestMCPQueryGetPolicy proves QRY-02/D-11's get_policy over the in-memory
+// transport: the full YAML + metadata round-trips for a seeded policy; an
+// unknown workload returns an actionable isError naming list_policies; and
+// a path-traversal namespace ("..") is rejected before any file access.
+func TestMCPQueryGetPolicy(t *testing.T) {
+	initLoggerForTesting(t)
+
+	cs, ctx, cleanup := connectQueryTestClient(t)
+	defer cleanup()
+
+	sessionID, tmpDir := startBypassSession(t, ctx, cs, "5s")
+	policiesDir := filepath.Join(tmpDir, "policies")
+	policyPath := writeTestPolicy(t, policiesDir, "prod", "api",
+		[]*flowpb.Flow{testdata.IngressTCPFlow([]string{"k8s:app=client"}, []string{"k8s:app=api"}, "prod", 8080)})
+
+	rawYAML, err := os.ReadFile(policyPath)
+	require.NoError(t, err)
+
+	getResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name: "get_policy",
+		Arguments: map[string]any{
+			"session_id": sessionID,
+			"namespace":  "prod",
+			"workload":   "api",
+		},
+	})
+	require.NoError(t, err)
+	require.False(t, getResp.IsError)
+
+	var getOut struct {
+		Namespace        string `json:"namespace"`
+		Workload         string `json:"workload"`
+		Name             string `json:"name"`
+		YAML             string `json:"yaml"`
+		Path             string `json:"path"`
+		IngressRuleCount int    `json:"ingress_rule_count"`
+		EgressRuleCount  int    `json:"egress_rule_count"`
+	}
+	decodeStructured(t, getResp.StructuredContent, &getOut)
+	assert.Equal(t, "prod", getOut.Namespace)
+	assert.Equal(t, "api", getOut.Workload)
+	assert.Equal(t, "cpg-api", getOut.Name)
+	assert.Equal(t, string(rawYAML), getOut.YAML)
+	assert.Equal(t, policyPath, getOut.Path)
+	assert.Equal(t, 1, getOut.IngressRuleCount)
+	assert.Equal(t, 0, getOut.EgressRuleCount)
+
+	missingResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name: "get_policy",
+		Arguments: map[string]any{
+			"session_id": sessionID,
+			"namespace":  "prod",
+			"workload":   "missing",
+		},
+	})
+	require.NoError(t, err)
+	require.True(t, missingResp.IsError, "an unknown namespace/workload pair must be a tool error")
+	missingText, ok := missingResp.Content[0].(*mcp.TextContent)
+	require.True(t, ok)
+	assert.Contains(t, missingText.Text, "list_policies")
+
+	traversalResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name: "get_policy",
+		Arguments: map[string]any{
+			"session_id": sessionID,
+			"namespace":  "..",
+			"workload":   "x",
+		},
+	})
+	require.NoError(t, err)
+	require.True(t, traversalResp.IsError, "a directory-traversal namespace must be rejected")
+	traversalText, ok := traversalResp.Content[0].(*mcp.TextContent)
+	require.True(t, ok)
+	assert.Contains(t, traversalText.Text, "directory-traversal")
+}
