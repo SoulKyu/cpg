@@ -19,14 +19,12 @@ import (
 //     (pkg/session/pipeline_config.go), so a smaller default/max keeps a
 //     single page well under the cap.
 const (
-	// defaultFlowLimit/maxFlowLimit have no consumer until 18-05
-	// (list_dropped_flows) lands later in this phase — defined here now,
-	// per D-07, so that plan references this single source of truth instead
-	// of hand-copying its own numbers.
-	//nolint:unused // consumed by 18-05 (list_dropped_flows), landing next in this phase
+	// defaultFlowLimit/maxFlowLimit are consumed by list_dropped_flows
+	// (18-05, mcp_query_flows.go) — defined here, per D-07, as the single
+	// source of truth every flow-scale paginated tool references instead of
+	// hand-copying its own numbers.
 	defaultFlowLimit = 50
-	//nolint:unused // consumed by 18-05 (list_dropped_flows), landing next in this phase
-	maxFlowLimit = 200
+	maxFlowLimit     = 200
 
 	defaultEvidenceLimit = 20
 	maxEvidenceLimit     = 100
