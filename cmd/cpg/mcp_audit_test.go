@@ -162,6 +162,19 @@ func callPathFrom(res bfsResult, root, target *ssa.Function) string {
 	return strings.Join(parts, " -> ")
 }
 
+// symbolSet renders a set of *ssa.Function values as their SSA symbol
+// strings ((*ssa.Function).String()) so a specific function's presence in a
+// reachable set (e.g. cpgOwned) can be asserted on by name — used by WR-01's
+// floor check to pin a known-reachable deep writer, making a vacuous audit
+// impossible to pass silently.
+func symbolSet(fns map[*ssa.Function]bool) []string {
+	out := make([]string, 0, len(fns))
+	for f := range fns {
+		out = append(out, f.String())
+	}
+	return out
+}
+
 // TestMCPAuditReadonlyReachability is the SEC-01 structural audit: it proves,
 // at go test time over the SSA form of the actually-compiled program, that
 // no K8s write verb (D-02) and no filesystem write outside the 5 allowlisted
@@ -231,8 +244,16 @@ func TestMCPAuditReadonlyReachability(t *testing.T) {
 	require.NotNil(t, rtaRes, "rta.Analyze returned nil (no roots supplied?)")
 	require.NotNil(t, rtaRes.CallGraph, "rta.Analyze(roots, buildCallGraph=true) must populate CallGraph")
 
+	// WR-01: prove root is genuinely a node in the RTA callgraph BEFORE
+	// trusting the BFS below. bfsFromRoot unconditionally seeds its result
+	// with {root: true} and returns exactly that seed when
+	// cg.Nodes[root] == nil (see its early-return above), so a self-check of
+	// bfsRes.visited[root] is always true regardless of whether root ever
+	// reached the graph — this is the real guard against that vacuous case.
+	require.NotNil(t, rtaRes.CallGraph.Nodes[root],
+		"runMCPServer must be a node in the RTA callgraph — otherwise the BFS scans nothing and this audit passes vacuously")
+
 	bfsRes := bfsFromRoot(rtaRes.CallGraph, root)
-	require.True(t, bfsRes.visited[root], "runMCPServer must be reachable from itself (BFS root)")
 
 	// Restrict to cpg's own package tree — this is what keeps Stage 3 small
 	// and precise; third-party functions in the visited set are never
@@ -243,7 +264,15 @@ func TestMCPAuditReadonlyReachability(t *testing.T) {
 			cpgOwned[f] = true
 		}
 	}
-	require.NotEmpty(t, cpgOwned, "expected at least runMCPServer itself to be a cpg-owned reachable function")
+	// WR-01: a floor of exactly {runMCPServer} (len == 1) would mean the BFS
+	// never descended past the root — the audit would be scanning nothing.
+	// Pinning a known-reachable deep writer additionally proves the BFS
+	// descended all the way into the session/output writer subsystem, not
+	// merely into some unrelated cpg-owned function.
+	require.Greater(t, len(cpgOwned), 1,
+		"expected runMCPServer to transitively reach cpg-owned functions; a size of 1 means the audit is vacuous")
+	require.Contains(t, symbolSet(cpgOwned), "(*github.com/SoulKyu/cpg/pkg/session.Manager).Start",
+		"the session writer subsystem must be reachable from runMCPServer for this audit to be meaningful")
 
 	// Stage 3: direct call-instruction scan of each cpg-owned reachable
 	// function's OWN body only — never recurse into a callee's body, even a
