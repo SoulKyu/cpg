@@ -216,16 +216,22 @@ func (m *Manager) Start(reqCtx context.Context, args StartArgs) (StartResult, er
 		err := m.runPipeline(sessionCtx, cfg)
 		portForwardCleanup() // non-blocking (close(stopCh)) — before signaling done, so an
 
-		// WR-01: a GENUINE failure (never a context.Canceled/DeadlineExceeded
-		// cancellation) means the pipeline died on its own — relay
-		// connection reset, auth expiry, an unreachable/typo'd --server
-		// address. Autonomously transition the session to stopped so
-		// get_status stops reporting "capturing" forever for a dead
-		// session. A clean drain (nil) or a cancellation-driven
-		// stop/shutdown is deliberately left untouched — Stop/Shutdown
-		// remain the sole state drivers for those paths, so every
-		// pre-existing test keeps passing unchanged.
-		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		// WR-01 (17-08): a GENUINE failure is classified on whether the
+		// session's OWN ctx (sessionCtx) was cancelled, not on the kind of
+		// error runPipeline returned. sessionCtx.Err() is non-nil ONLY when
+		// Stop/Shutdown (or m.rootCtx) actually cancelled this session —
+		// the sole "this was on purpose" signal — so any other non-nil err
+		// is a genuine failure: relay connection reset, auth expiry, an
+		// unreachable/typo'd --server address, INCLUDING a
+		// context.DeadlineExceeded produced by an unrelated SCOPED timeout
+		// such as pkg/hubble/client.go's dial timeout, which derives its
+		// own child ctx from this still-healthy sessionCtx. Autonomously
+		// transition the session to stopped so get_status stops reporting
+		// "capturing" forever for a dead session. A clean drain (nil) or a
+		// genuine sessionCtx cancellation (Stop/Shutdown) is deliberately
+		// left untouched — Stop/Shutdown remain the sole state drivers for
+		// those paths, so every pre-existing test keeps passing unchanged.
+		if err != nil && sessionCtx.Err() == nil {
 			s.pipelineErr.Store(&err)
 			m.logger.Warn("session pipeline exited with error", zap.String("session_id", s.ID), zap.Error(err))
 			m.mu.Lock()
@@ -236,6 +242,14 @@ func (m *Manager) Start(reqCtx context.Context, args StartArgs) (StartResult, er
 				s.StoppedAt = time.Now()
 			}
 			m.mu.Unlock()
+			// INFO (17-08): release sessionCtx's registration on m.rootCtx
+			// now that the pipeline has autonomously exited — s.cancel is
+			// idempotent and a no-op for the already-exited pipeline, and
+			// safe w.r.t. Start's context.AfterFunc(sessionCtx,
+			// setupCancel): Start's own deferred stopSetupOnShutdown()
+			// already un-registered that AfterFunc before this goroutine's
+			// runPipeline call returned.
+			s.cancel()
 		}
 
 		s.done <- err // observer of done also knows the port-forward is already closing
