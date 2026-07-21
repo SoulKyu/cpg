@@ -91,6 +91,14 @@ type PipelineConfig struct {
 	// Stdout is the writer for human-readable output (session summary block).
 	// Nil defaults to os.Stdout. Use bytes.Buffer in tests.
 	Stdout io.Writer
+
+	// OnFinal, if non-nil, is called exactly once after g.Wait() with the
+	// fully populated SessionStats, before ew/hw.finalize. Nil-safe: every
+	// existing CLI path (generate/replay) never sets it, so this is a pure
+	// no-op there. Added for cpg mcp's session manager (D-08) because
+	// cluster-health.json alone does not carry PoliciesWritten/Skipped/Failed,
+	// LostEvents, or L7 counts.
+	OnFinal func(SessionStats)
 }
 
 // SessionStats tracks pipeline metrics for the session summary.
@@ -320,6 +328,14 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 	stats.IgnoredByProtocol = agg.IgnoredByProtocol()
 	stats.InfraDropTotal = agg.InfraDropTotal()
 	stats.InfraDropsByReason = agg.InfraDrops()
+
+	// Fire the end-of-run stats hook with a value copy: *stats, never the live
+	// stats pointer. In MCP mode the callee stores this on a different
+	// goroutine (the tool-handler); sharing the mutable pointer would be a
+	// data race.
+	if cfg.OnFinal != nil {
+		cfg.OnFinal(*stats)
+	}
 
 	// VIS-01: passive empty-L7-records detection. Single warning per pipeline
 	// run, fired only when --l7 was requested AND at least one flow was
