@@ -1,0 +1,328 @@
+package main
+
+// This file is the real-transport counterpart to the in-memory MCP tests in
+// mcp_harness_test.go / mcp_session_test.go / mcp_query_tools_test.go (which
+// stay in place as the fast-feedback layer, D-11). It builds the actual
+// `cpg` binary with `go build -race` and drives `cpg mcp` as a subprocess
+// over real OS stdin/stdout pipes, against an in-process fake Hubble relay
+// -- no cluster, no kubeconfig required (D-05/D-06).
+//
+// Shared infrastructure (this file, built once here so Plan 04's
+// ungraceful-disconnect variant is a pure consumer with no infra edits):
+//   - fakeRelay: an in-process observerpb.ObserverServer implementing only
+//     GetFlows, with started/cancelled signaling for Pitfall 3's async race.
+//   - buildE2EBinary: the one `go build -race` invocation this test suite
+//     performs, guarded by sync.Once so every e2e test in this package
+//     shares one compiled binary.
+//   - e2eSession / startE2ESubprocess: the subprocess + pipe + tee +
+//     mcp.IOTransport client harness (never mcp.CommandTransport -- see the
+//     doc comment on startE2ESubprocess for why).
+//   - buildPolicyDeniedFlow / buildInfraClassDropFlow: drop-flow fixtures
+//     that set Verdict/DropReasonDesc so they actually flow through the real
+//     classifier (Pitfall 4 -- the base testdata helpers deliberately don't
+//     set these fields themselves).
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sync"
+	"testing"
+	"time"
+
+	flowpb "github.com/cilium/cilium/api/v1/flow"
+	observerpb "github.com/cilium/cilium/api/v1/observer"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+
+	"github.com/SoulKyu/cpg/pkg/policy/testdata"
+)
+
+// fakeRelay is an in-process fake Hubble relay: a minimal
+// observerpb.ObserverServer implementing ONLY GetFlows -- RESEARCH.md
+// confirms pkg/hubble.Client's waitForConnReady is a pure gRPC channel-state
+// check that makes no RPC, and the ONLY RPC subsequently invoked is
+// GetFlows. UnimplementedObserverServer is embedded BY VALUE (never by
+// pointer -- the SDK's own doc comment warns that embedding by pointer
+// nil-panics if an unimplemented method is ever invoked).
+//
+// GetFlows signals startedCh (closed exactly once, sync.Once-guarded) the
+// instant the handler fires -- BEFORE sending any fixture flow -- so a
+// caller can synchronize on "the relay was actually reached" instead of
+// racing the pipeline's asynchronous background goroutine (Pitfall 3: the
+// pipeline's GetFlows call happens in a detached goroutine relative to
+// start_session's synchronous response, so get_status reporting "capturing"
+// does not by itself guarantee GetFlows has been invoked yet). This plan
+// (19-02) builds and exposes the signal even though only Plan 04's
+// ungraceful variant consumes it directly for its own pass/fail assertion --
+// interface-first, so Plan 04 is a pure consumer with no infra edits.
+//
+// After sending its fixture flows, GetFlows blocks on stream.Context().Done()
+// and records cancelled=true when it fires -- the fan-out proof Plan 04's
+// ungraceful-disconnect variant asserts on.
+type fakeRelay struct {
+	observerpb.UnimplementedObserverServer
+
+	flows []*flowpb.Flow
+
+	mu        sync.Mutex
+	started   bool
+	cancelled bool
+
+	startedCh chan struct{}
+	startOnce sync.Once
+}
+
+// newFakeRelay constructs a fakeRelay that serves flows (in order, then
+// blocks) to the GetFlows caller.
+func newFakeRelay(flows []*flowpb.Flow) *fakeRelay {
+	return &fakeRelay{
+		flows:     flows,
+		startedCh: make(chan struct{}),
+	}
+}
+
+// GetFlows implements observerpb.ObserverServer. See the fakeRelay doc
+// comment for the started/cancelled signaling contract.
+func (f *fakeRelay) GetFlows(_ *observerpb.GetFlowsRequest, stream observerpb.Observer_GetFlowsServer) error {
+	f.startOnce.Do(func() {
+		f.mu.Lock()
+		f.started = true
+		f.mu.Unlock()
+		close(f.startedCh)
+	})
+
+	for _, flow := range f.flows {
+		if err := stream.Send(&observerpb.GetFlowsResponse{
+			ResponseTypes: &observerpb.GetFlowsResponse_Flow{Flow: flow},
+		}); err != nil {
+			return err
+		}
+	}
+
+	// Hold the stream open until the client disconnects (transport death or
+	// context cancellation) -- exactly what keeps a real session "capturing"
+	// until stop_session, and what a disconnect must cancel.
+	<-stream.Context().Done()
+
+	f.mu.Lock()
+	f.cancelled = true
+	f.mu.Unlock()
+
+	return nil
+}
+
+// relaySnapshot is the {started, cancelled} pair fakeRelay.snapshot()
+// returns -- a single mutex-guarded read of both flags at once.
+type relaySnapshot struct {
+	started   bool
+	cancelled bool
+}
+
+// snapshot returns a consistent read of the started/cancelled flags.
+func (f *fakeRelay) snapshot() relaySnapshot {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return relaySnapshot{started: f.started, cancelled: f.cancelled}
+}
+
+// waitStarted blocks until the relay's GetFlows handler has been reached (or
+// timeout elapses), defeating Pitfall 3's async race: the pipeline's
+// StreamDroppedFlows -> GetFlows call happens in a background goroutine
+// detached from start_session's synchronous response, so get_status
+// reporting "capturing" does NOT guarantee GetFlows has been invoked yet.
+func (f *fakeRelay) waitStarted(t *testing.T, timeout time.Duration) {
+	t.Helper()
+	select {
+	case <-f.startedCh:
+	case <-time.After(timeout):
+		t.Fatal("fake relay's GetFlows was never reached within the deadline")
+	}
+}
+
+// startFakeRelay stands up an in-process fake Hubble relay (D-06) on an
+// OS-assigned free port (127.0.0.1:0 avoids CI port collisions) serving
+// flows via GetFlows, and returns its dialable address plus the relay itself
+// so callers can inspect started/cancelled. The gRPC server is stopped via
+// t.Cleanup.
+func startFakeRelay(t *testing.T, flows []*flowpb.Flow) (addr string, relay *fakeRelay) {
+	t.Helper()
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	relay = newFakeRelay(flows)
+	grpcServer := grpc.NewServer()
+	observerpb.RegisterObserverServer(grpcServer, relay)
+
+	go func() {
+		_ = grpcServer.Serve(lis)
+	}()
+	t.Cleanup(grpcServer.Stop)
+
+	return lis.Addr().String(), relay
+}
+
+// buildPolicyDeniedFlow returns an ingress TCP flow fixture wired through the
+// real classifier as a POLICY_DENIED (dropclass.DropClassPolicy) drop.
+// testdata.IngressTCPFlow deliberately does NOT set Verdict/DropReasonDesc
+// (Pitfall 4 -- it's built for tests that call policy.BuildPolicy directly,
+// already past classification); without these two fields the real pipeline
+// silently writes zero policy/evidence files for this flow.
+func buildPolicyDeniedFlow() *flowpb.Flow {
+	flow := testdata.IngressTCPFlow([]string{"k8s:app=client"}, []string{"k8s:app=api"}, "prod", 8080)
+	flow.Verdict = flowpb.Verdict_DROPPED
+	flow.DropReasonDesc = flowpb.DropReason_POLICY_DENIED
+	return flow
+}
+
+// buildInfraClassDropFlow returns an egress UDP flow fixture wired through
+// the real classifier as an infra-class drop (CT_MAP_INSERTION_FAILED ->
+// dropclass.DropClassInfra, pkg/dropclass/classifier.go) so the session's
+// cluster-health aggregates are non-empty. Same Pitfall 4 requirement as
+// buildPolicyDeniedFlow.
+func buildInfraClassDropFlow() *flowpb.Flow {
+	flow := testdata.EgressUDPFlow([]string{"k8s:app=web"}, []string{"k8s:app=dns"}, "prod", 53)
+	flow.Verdict = flowpb.Verdict_DROPPED
+	flow.DropReasonDesc = flowpb.DropReason_CT_MAP_INSERTION_FAILED
+	return flow
+}
+
+var (
+	e2eBinaryOnce sync.Once
+	e2eBinaryPath string
+	e2eBinaryErr  error
+)
+
+// buildE2EBinary builds this package (".", i.e. ./cmd/cpg -- `go test` sets
+// the test binary's working directory to the package's own source
+// directory) into a temp dir via `go build -race`, once per test-binary
+// invocation (D-05) -- the first `go build` invocation from within this
+// test suite. Guarded by a package-level sync.Once (rather than TestMain,
+// which would change semantics for every other test in this package) so
+// Plan 04's ungraceful-disconnect variant -- added later, same package --
+// reuses this exact helper with zero infra edits. The built binary is
+// intentionally left in its own OS temp dir for the lifetime of the test
+// process rather than t.TempDir()-scoped: a per-test TempDir would be
+// removed at the end of whichever test first triggers the build, breaking
+// any later test in the same binary run that also calls this helper.
+func buildE2EBinary(t *testing.T) string {
+	t.Helper()
+	e2eBinaryOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "cpg-e2e-bin-")
+		if err != nil {
+			e2eBinaryErr = fmt.Errorf("creating build temp dir: %w", err)
+			return
+		}
+		binPath := filepath.Join(dir, "cpg")
+
+		buildCmd := exec.Command("go", "build", "-race", "-o", binPath, ".")
+		var buildOutput bytes.Buffer
+		buildCmd.Stdout = &buildOutput
+		buildCmd.Stderr = &buildOutput
+		if err := buildCmd.Run(); err != nil {
+			e2eBinaryErr = fmt.Errorf("go build -race -o %s .: %w\n%s", binPath, err, buildOutput.String())
+			return
+		}
+		e2eBinaryPath = binPath
+	})
+	require.NoError(t, e2eBinaryErr)
+	return e2eBinaryPath
+}
+
+// e2eSession bundles the pieces the graceful (Task 2) and ungraceful (Plan
+// 04) e2e tests each need to drive a real `cpg mcp` subprocess and
+// independently verify its raw stdout bytes.
+type e2eSession struct {
+	cs       *mcp.ClientSession
+	cmd      *exec.Cmd
+	stdinW   io.WriteCloser
+	rawTee   *bytes.Buffer
+	stderr   *bytes.Buffer
+	exitedCh chan error
+}
+
+// startE2ESubprocess builds (once) and spawns the real cpg binary as `cpg
+// mcp`, wires an mcp.IOTransport over its real stdin/stdout OS pipes --
+// deliberately NOT mcp.CommandTransport, whose Close() cascade conflates a
+// clean self-exit with a forced SIGTERM/SIGKILL escalation and which hands
+// stdout straight to the JSON-RPC decoder with no independent byte-purity
+// tee -- tees the raw stdout bytes into rawTee for the explicit purity
+// re-validation, and connects an MCP client (the same client call shape
+// every existing in-memory test already uses). The caller drives the
+// session, then closes stdinW (gracefully, only AFTER stop_session; or
+// abruptly, for the ungraceful variant) and waits on exitedCh via waitExit.
+func startE2ESubprocess(t *testing.T, ctx context.Context) *e2eSession {
+	t.Helper()
+	binPath := buildE2EBinary(t)
+
+	cmd := exec.Command(binPath, "mcp")
+	stdinW, err := cmd.StdinPipe()
+	require.NoError(t, err)
+	stdoutR, err := cmd.StdoutPipe()
+	require.NoError(t, err)
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf // subprocess zap/zapslog diagnostics on failure
+
+	require.NoError(t, cmd.Start())
+
+	var rawTee bytes.Buffer
+	teed := io.TeeReader(stdoutR, &rawTee)
+
+	transport := &mcp.IOTransport{Reader: io.NopCloser(teed), Writer: stdinW}
+	client := mcp.NewClient(&mcp.Implementation{Name: "e2e-client", Version: "0.0.0"}, nil)
+	cs, err := client.Connect(ctx, transport, nil)
+	require.NoError(t, err, "connect failed; subprocess stderr:\n%s", stderrBuf.String())
+
+	exitedCh := make(chan error, 1)
+	go func() { exitedCh <- cmd.Wait() }()
+
+	return &e2eSession{
+		cs:       cs,
+		cmd:      cmd,
+		stdinW:   stdinW,
+		rawTee:   &rawTee,
+		stderr:   &stderrBuf,
+		exitedCh: exitedCh,
+	}
+}
+
+// waitExit blocks until the subprocess exits or timeout elapses, returning
+// cmd.Wait()'s result -- T-19-04's DoS mitigation: a subprocess that never
+// exits is a t.Fatal, never an infinite hang. Shared by the graceful (Task
+// 2) and ungraceful (Plan 04) variants. Must be called from the test's own
+// goroutine (never from inside a spawned `go func`) -- t.Fatal only unwinds
+// correctly on the goroutine actually running the test.
+func (s *e2eSession) waitExit(t *testing.T, timeout time.Duration) error {
+	t.Helper()
+	select {
+	case err := <-s.exitedCh:
+		return err
+	case <-time.After(timeout):
+		t.Fatalf("subprocess did not exit within %s; stderr:\n%s", timeout, s.stderr.String())
+		return nil // unreachable: t.Fatalf stops this goroutine via runtime.Goexit
+	}
+}
+
+// assertStdoutPurity independently re-validates that every non-empty line of
+// raw stdout bytes parses as a JSON-RPC frame -- the redemption of
+// 16-CONTEXT D-06's deliberately deferred assertion, now proven on real
+// stdio (D-05) rather than the in-memory transport.
+func assertStdoutPurity(t *testing.T, raw []byte) {
+	t.Helper()
+	for _, line := range bytes.Split(raw, []byte("\n")) {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var js json.RawMessage
+		assert.NoError(t, json.Unmarshal(line, &js), "stdout purity violation: %q", line)
+	}
+}
