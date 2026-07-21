@@ -242,6 +242,55 @@ func TestMCPQueryListDroppedFlows(t *testing.T) {
 		assert.Empty(t, out.Samples, "noise never reaches evidence either — structurally always empty")
 	})
 
+	// WR-01 regression: a DROPPED flow whose stored DropReason is the literal
+	// string "DROP_REASON_UNKNOWN" only ever reaches evidence via the
+	// aggregator's policy/evidence fall-through (pkg/hubble/aggregator.go's
+	// classification gate excludes reason==0 from infra/transient
+	// suppression) — it is policy-actionable-by-construction. Pinning that
+	// classifyDropReasonName maps it to "unknown", never "transient"
+	// (dropclass.Classify(0)'s own bucket, which would misrepresent how the
+	// pipeline actually routed this sample).
+	t.Run("dropclass_unknown_reason_sample_classifies_unknown_not_transient", func(t *testing.T) {
+		cs, ctx, cleanup := connectQueryTestClient(t)
+		defer cleanup()
+
+		sessionID, tmpDir := startBypassSession(t, ctx, cs, "5s")
+		now := time.Now()
+		writeEvidenceFixture(t, tmpDir, "prod", "api", evidence.PolicyEvidence{
+			SchemaVersion: evidence.SchemaVersion,
+			Policy:        evidence.PolicyRef{Name: "cpg-api", Namespace: "prod", Workload: "api"},
+			Rules: []evidence.RuleEvidence{{
+				Key:       "egress-53",
+				Direction: "egress",
+				Peer:      evidence.PeerRef{Type: "cidr", CIDR: "10.0.0.5/32"},
+				Port:      "53",
+				Protocol:  "udp",
+				FlowCount: 1,
+				FirstSeen: now.Add(-time.Hour),
+				LastSeen:  now,
+				Samples: []evidence.FlowSample{{
+					Time:       now,
+					Src:        evidence.FlowEndpoint{Namespace: "prod", Workload: "api"},
+					Dst:        evidence.FlowEndpoint{IP: "10.0.0.5"},
+					Port:       53,
+					Protocol:   "udp",
+					Verdict:    "DROPPED",
+					DropReason: "DROP_REASON_UNKNOWN",
+				}},
+			}},
+		})
+		stopBypassSession(t, ctx, cs, sessionID)
+
+		transientResp, transientOut := callListDroppedFlows(t, ctx, cs, map[string]any{"session_id": sessionID, "dropclass": "transient"})
+		require.False(t, transientResp.IsError)
+		assert.Empty(t, transientOut.Samples, "a DROP_REASON_UNKNOWN sample must never surface under dropclass=transient — it is policy-actionable-by-construction (WR-01)")
+
+		unknownResp, unknownOut := callListDroppedFlows(t, ctx, cs, map[string]any{"session_id": sessionID, "dropclass": "unknown"})
+		require.False(t, unknownResp.IsError)
+		require.Len(t, unknownOut.Samples, 1, "the DROP_REASON_UNKNOWN sample must surface under dropclass=unknown, matching the aggregator's actual routing")
+		assert.Equal(t, "DROP_REASON_UNKNOWN", unknownOut.Samples[0].DropReason)
+	})
+
 	t.Run("namespace_filter_narrows_both_halves", func(t *testing.T) {
 		cs, ctx, cleanup := connectQueryTestClient(t)
 		defer cleanup()

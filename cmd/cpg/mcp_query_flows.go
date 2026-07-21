@@ -423,16 +423,28 @@ func matchesDropClass(class dropclass.DropClass, filter string) bool {
 // DropReason string (e.g. "POLICY_DENIED") by reversing it through
 // flowpb.DropReason_value — the exact inverse of how evidence_writer.go
 // populated it in the first place (f.GetDropReasonDesc().String()) — then
-// running it through the single canonical classifier (D-14). An empty or
-// unrecognized name classifies as Unknown rather than silently matching
-// DROP_REASON_UNKNOWN(0)'s own "transient" bucket, since "no reason
-// recorded" and "explicitly DROP_REASON_UNKNOWN" are different situations.
+// running it through the single canonical classifier (D-14), EXCEPT for
+// DROP_REASON_UNKNOWN(0) (WR-01): the aggregator's classification gate
+// (pkg/hubble/aggregator.go) excludes reason==0 from the infra/transient
+// suppression branch, so every DROP_REASON_UNKNOWN sample that reaches
+// evidence got there via the policy/evidence fall-through — it is
+// policy-actionable-by-construction, never transient-suppressed.
+// dropclass.Classify(0) would return DropClassTransient (that taxonomy
+// mirrors Cilium's own reason-code semantics, not this aggregator's
+// routing behavior), so the mismatch is corrected here — at the call
+// site — rather than in pkg/dropclass, which stays reason-code-taxonomy
+// only. An empty name (no reason recorded at all) also classifies as
+// Unknown, for the same "never silently Transient" reasoning.
 func classifyDropReasonName(name string) dropclass.DropClass {
 	if name == "" {
 		return dropclass.DropClassUnknown
 	}
 	if val, ok := flowpb.DropReason_value[name]; ok {
-		return dropclass.Classify(flowpb.DropReason(val))
+		reason := flowpb.DropReason(val)
+		if reason == flowpb.DropReason_DROP_REASON_UNKNOWN {
+			return dropclass.DropClassUnknown
+		}
+		return dropclass.Classify(reason)
 	}
 	return dropclass.DropClassUnknown
 }
