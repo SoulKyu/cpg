@@ -136,7 +136,7 @@ Full details: [milestones/v1.4-ROADMAP.md](milestones/v1.4-ROADMAP.md)
 
 The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reopened SESS-03 a third time, narrower still — the landed guard only fires for a non-nil error, so a CLEAN nil pipeline exit (relay io.EOF / the closedFlowSource fixture) still wedges the session at "capturing" forever and blocks the single slot:
 
-- [ ] 17-09-PLAN.md — WR-01 this round (clean/nil-exit autonomous stop, SESS-03 / Truth 2): broaden the guard to fire on any exit while sessionCtx.Err()==nil, keeping error-surfacing conditional on err!=nil
+- [x] 17-09-PLAN.md — WR-01 this round (clean/nil-exit autonomous stop, SESS-03 / Truth 2): broaden the guard to fire on any exit while sessionCtx.Err()==nil, keeping error-surfacing conditional on err!=nil
 
 ### Phase 18: Query Tools
 
@@ -187,7 +187,7 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 | 14. Fix Verification + Quality Gates | v1.4 | n/a (direct workflow) | Complete | 2026-07-20 |
 | 15. CI Trigger Fix + PR Delivery | v1.4 | n/a (direct workflow) | Complete | 2026-07-20 |
 | 16. MCP Server Foundation & Write Safety | v1.5 | 3/3 | Complete    | 2026-07-20 |
-| 17. Session Lifecycle | v1.5 | 8/9 | Gap closure | - |
+| 17. Session Lifecycle | v1.5 | 9/9 | Complete   | 2026-07-21 |
 | 18. Query Tools | v1.5 | 0/TBD | Not started | - |
 | 19. Security Hardening & End-to-End Validation | v1.5 | 0/TBD | Not started | - |
 
