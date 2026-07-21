@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/SoulKyu/cpg/pkg/evidence"
+	"github.com/SoulKyu/cpg/pkg/explain"
 )
 
 func newExplainCmd() *cobra.Command {
@@ -82,7 +83,7 @@ func runExplain(cmd *cobra.Command, args []string) error {
 	}
 	matched := make([]evidence.RuleEvidence, 0, len(pe.Rules))
 	for _, r := range pe.Rules {
-		if filter.match(r) {
+		if filter.Match(r) {
 			matched = append(matched, r)
 		}
 	}
@@ -97,9 +98,9 @@ func runExplain(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 	switch format {
 	case "json":
-		return renderJSON(out, pe, matched)
+		return explain.RenderJSON(out, pe, matched)
 	case "yaml":
-		return renderYAML(out, pe, matched)
+		return explain.RenderYAML(out, pe, matched)
 	case "text":
 		// TTY detection: only color when writing directly to a terminal, not
 		// when tests capture via bytes.Buffer.
@@ -107,14 +108,14 @@ func runExplain(cmd *cobra.Command, args []string) error {
 		if f, ok := out.(*os.File); ok {
 			color = isTerminal(f)
 		}
-		return renderText(out, pe, matched, samplesLimit, color)
+		return explain.RenderText(out, pe, matched, samplesLimit, color)
 	default:
 		return fmt.Errorf("unknown format %q: expected text | json | yaml", format)
 	}
 }
 
-func buildFilter(cmd *cobra.Command) (explainFilter, error) {
-	f := explainFilter{Now: time.Now()}
+func buildFilter(cmd *cobra.Command) (explain.Filter, error) {
+	f := explain.Filter{Now: time.Now()}
 	ing, _ := cmd.Flags().GetBool("ingress")
 	eg, _ := cmd.Flags().GetBool("egress")
 	if ing && eg {
@@ -130,7 +131,7 @@ func buildFilter(cmd *cobra.Command) (explainFilter, error) {
 
 	peer, _ := cmd.Flags().GetString("peer")
 	if peer != "" {
-		k, v, ok := parsePeerLabel(peer)
+		k, v, ok := explain.ParsePeerLabel(peer)
 		if !ok {
 			return f, fmt.Errorf("--peer must be KEY=VAL")
 		}
