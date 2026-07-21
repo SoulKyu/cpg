@@ -159,6 +159,26 @@ func (m *Manager) Start(reqCtx context.Context, args StartArgs) (StartResult, er
 	timeout := defaultDuration(args.Timeout, 10*time.Second)
 	setupCtx, setupCancel := context.WithTimeout(reqCtx, timeout) // Pitfall H — bounds the WHOLE setup, not just the gRPC dial
 	defer setupCancel()
+	// WR-02: setupCtx is now bounded by THREE independent signals — its own
+	// timeout above, the per-call reqCtx it forks from, and sessionCtx via
+	// this AfterFunc merge. Without this third signal, Shutdown's
+	// s.cancel() (== sessionCancel, which only cancels sessionCtx) had no
+	// way to reach a mid-setup resolveSetupFn call: setupCtx and sessionCtx
+	// shared no parent Shutdown could reach. Merging them means a
+	// transport-kill/SIGTERM landing while resolveSetupFn is still running
+	// now cancels setupCtx too, so any setup step that observes its ctx
+	// (PortForwardToRelay, LoadClusterPoliciesForNamespaces below) returns
+	// promptly instead of running to setupCtx's own timeout — Start's
+	// existing os.RemoveAll(tmpDir) error path a few lines down then
+	// reclaims the tmpdir instead of orphaning it. Accepted residual:
+	// k8s.LoadKubeConfig() below takes no ctx parameter at all, so a hang
+	// specifically inside kubeconfig load is reachable by neither the
+	// timeout nor this cancellation — a pre-existing upstream helper
+	// limitation left unaddressed this phase (T-17-06-03). It does not
+	// block process exit: Shutdown's own fan-out is independently bounded
+	// and returns regardless of this goroutine.
+	stopSetupOnShutdown := context.AfterFunc(sessionCtx, setupCancel)
+	defer stopSetupOnShutdown()
 
 	server, portForwardCleanup, clusterPolicies, err := m.resolveSetupFn(setupCtx, args)
 	if err != nil {
