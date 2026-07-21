@@ -195,7 +195,30 @@ func (m *Manager) Start(reqCtx context.Context, args StartArgs) (StartResult, er
 	go func() {
 		err := m.runPipeline(sessionCtx, cfg)
 		portForwardCleanup() // non-blocking (close(stopCh)) — before signaling done, so an
-		s.done <- err        // observer of done also knows the port-forward is already closing
+
+		// WR-01: a GENUINE failure (never a context.Canceled/DeadlineExceeded
+		// cancellation) means the pipeline died on its own — relay
+		// connection reset, auth expiry, an unreachable/typo'd --server
+		// address. Autonomously transition the session to stopped so
+		// get_status stops reporting "capturing" forever for a dead
+		// session. A clean drain (nil) or a cancellation-driven
+		// stop/shutdown is deliberately left untouched — Stop/Shutdown
+		// remain the sole state drivers for those paths, so every
+		// pre-existing test keeps passing unchanged.
+		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			s.pipelineErr.Store(&err)
+			m.logger.Warn("session pipeline exited with error", zap.String("session_id", s.ID), zap.Error(err))
+			m.mu.Lock()
+			// Guard against clobbering a slot a concurrent Shutdown already
+			// nil'd, or a State a concurrent Stop already transitioned.
+			if m.session == s && s.State == StateCapturing {
+				s.State = StateStopped
+				s.StoppedAt = time.Now()
+			}
+			m.mu.Unlock()
+		}
+
+		s.done <- err // observer of done also knows the port-forward is already closing
 	}()
 
 	return StartResult{SessionID: s.ID, DiscardedSession: discarded, Server: server}, nil
@@ -299,6 +322,15 @@ func (m *Manager) Status(id string) (StatusResult, error) {
 		evidenceCount = 0
 	}
 
+	// WR-01: pipelineErr is atomic — safe to load outside m.mu. The
+	// StateStopped elapsed-freeze above already handles the frozen-elapsed
+	// case for a crashed session, since the launch goroutine set StoppedAt
+	// alongside pipelineErr.
+	var statusErr string
+	if p := s.pipelineErr.Load(); p != nil && *p != nil {
+		statusErr = (*p).Error()
+	}
+
 	return StatusResult{
 		SessionID:         sid,
 		State:             state.String(),
@@ -306,6 +338,7 @@ func (m *Manager) Status(id string) (StatusResult, error) {
 		PolicyFileCount:   policyCount,
 		EvidenceFileCount: evidenceCount,
 		TmpDir:            tmpDir,
+		Error:             statusErr,
 	}, nil
 }
 
