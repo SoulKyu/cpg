@@ -69,6 +69,11 @@ var k8sWriteVerbs = map[string]bool{
 	"Patch":  true,
 	"Delete": true,
 	"Apply":  true,
+	// WR-03: additional write verbs client-go's typed and dynamic clients
+	// also expose as interface methods.
+	"DeleteCollection": true,
+	"UpdateStatus":     true,
+	"ApplyStatus":      true,
 }
 
 // fsWriteAllowlist is the exact, hand-audited set of cpg-owned functions
