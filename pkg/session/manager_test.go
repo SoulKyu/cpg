@@ -679,7 +679,11 @@ func TestManager_Start_SetupFailureRollsBackSlot(t *testing.T) {
 // SESS-03 reopened gap): a pipeline that exits on its own with a genuine
 // (non-context-cancellation) error autonomously transitions the session to
 // stopped and surfaces the error on both get_status and stop_session, with
-// zero stop_session calls required to observe the transition.
+// zero stop_session calls required to observe the transition. This
+// exercises the launch goroutine's s.pipelineErr.Store + guarded State
+// transition (manager.go) and Session.pipelineErr's surfacing through
+// Status/buildSummary (session.go) — indirectly, through the public
+// Start/Status/Stop API, since pipelineErr is unexported.
 //
 // Load-bearing property: the post-close(fail) assertion state == "stopped"
 // is FALSE under the pre-fix launch goroutine, which discarded the pipeline
