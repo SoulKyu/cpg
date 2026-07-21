@@ -484,3 +484,65 @@ func TestClusterHealthBranch(t *testing.T) {
 		assert.Equal(t, getClusterHealthResult{}, result)
 	})
 }
+
+// TestMCPQueryToolsListed proves the 3 non-paginated query tools registered
+// this plan are on the wire with the correct required-argument contract
+// (QRY-05). It deliberately does NOT assert an exact total tool count:
+// 18-04/18-05 register 2 more tools on this same server later in the
+// phase, and asserting an exact count here would break mid-phase. The
+// final exact 8-tool total is 18-05's own closing integration test.
+func TestMCPQueryToolsListed(t *testing.T) {
+	initLoggerForTesting(t)
+
+	cs, ctx, cleanup := connectQueryTestClient(t)
+	defer cleanup()
+
+	toolsResult, err := cs.ListTools(ctx, nil)
+	require.NoError(t, err)
+
+	byName := make(map[string]*mcp.Tool, len(toolsResult.Tools))
+	for _, tool := range toolsResult.Tools {
+		byName[tool.Name] = tool
+	}
+	assert.Contains(t, byName, "list_policies")
+	assert.Contains(t, byName, "get_policy")
+	assert.Contains(t, byName, "get_cluster_health")
+
+	assert.ElementsMatch(t, []string{"session_id"}, requiredFields(t, byName["list_policies"].InputSchema),
+		"list_policies must require only session_id")
+	assert.ElementsMatch(t, []string{"session_id"}, requiredFields(t, byName["get_cluster_health"].InputSchema),
+		"get_cluster_health must require only session_id")
+	assert.ElementsMatch(t, []string{"session_id", "namespace", "workload"}, requiredFields(t, byName["get_policy"].InputSchema),
+		"get_policy must require session_id, namespace, and workload (D-11, no omitempty)")
+}
+
+// TestMCPQueryToolsErrorTexts centralizes D-16's actionable-error-text
+// contract across all 3 tools this plan registers: an unknown session_id
+// must resolve to a tool error carrying the verbatim SESS-06 phrase "not
+// found or expired" for every one of them, reusing Manager.Status's own
+// text untouched (D-08) rather than each handler inventing its own
+// wording.
+func TestMCPQueryToolsErrorTexts(t *testing.T) {
+	initLoggerForTesting(t)
+
+	cs, ctx, cleanup := connectQueryTestClient(t)
+	defer cleanup()
+
+	cases := []struct {
+		name string
+		args map[string]any
+	}{
+		{"list_policies", map[string]any{"session_id": "sess_bogus"}},
+		{"get_policy", map[string]any{"session_id": "sess_bogus", "namespace": "prod", "workload": "api"}},
+		{"get_cluster_health", map[string]any{"session_id": "sess_bogus"}},
+	}
+	for _, tc := range cases {
+		result, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: tc.name, Arguments: tc.args})
+		require.NoError(t, err, "%s: a tool error must not surface as a transport/protocol error", tc.name)
+		require.True(t, result.IsError, "%s: an unknown session_id must resolve to a tool error", tc.name)
+		require.Len(t, result.Content, 1, "%s: error result must carry exactly one content block", tc.name)
+		content, ok := result.Content[0].(*mcp.TextContent)
+		require.True(t, ok, "%s: error content must be TextContent, got %T", tc.name, result.Content[0])
+		assert.Contains(t, content.Text, "not found or expired", "%s: must reuse the SESS-06 phrase verbatim", tc.name)
+	}
+}
