@@ -296,7 +296,7 @@ func TestReadPolicyFile_RoundTrips(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, cnp)
 
-	assert.Equal(t, event.Policy.ObjectMeta.Name, cnp.ObjectMeta.Name)
+	assert.Equal(t, event.Policy.Name, cnp.Name)
 	assert.Equal(t, event.Policy.Spec.Ingress, cnp.Spec.Ingress)
 	assert.Equal(t, event.Policy.Spec.Egress, cnp.Spec.Egress)
 }
