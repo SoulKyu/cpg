@@ -119,3 +119,14 @@ None -- no external service configuration required.
 ---
 *Phase: 19-security-hardening-end-to-end-validation*
 *Completed: 2026-07-21*
+
+## Self-Check: PASSED
+
+- FOUND: `cmd/cpg/mcp_e2e_test.go`
+- FOUND: `.planning/phases/19-security-hardening-end-to-end-validation/19-04-SUMMARY.md`
+- FOUND commit: `140d25f` (Task 1)
+- FOUND commit: `244af33` (docs: plan completion)
+- Grep-verified: `func TestMCPE2EUngracefulDisconnect` defined exactly once
+- Grep-verified: `waitStarted`/`snapshot()` pattern present (13 matches) -- Pitfall 3 synchronization + relay-state observation
+- Grep-verified: `NoDirExists`/`cancelled` pattern present (19 matches) -- bounded cleanup fan-out assertions
+- `requirements.mark-complete SRV-04` confirmed already-complete (Plan 02 marked it; no REQUIREMENTS.md diff from this plan)
