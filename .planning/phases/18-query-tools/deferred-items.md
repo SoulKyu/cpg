@@ -52,3 +52,20 @@ rule: only auto-fix issues directly caused by the current task's changes.
   plans/waves, the fix belongs in `pkg/session/manager_test.go`: scope the before/after glob
   to tmpdirs this specific test created (e.g. record the Manager's own tmpdir path instead of
   diffing a shared, unscoped `/tmp` glob), not a change to `pkg/session/manager.go` itself.
+
+## From 18-05 (list_dropped_flows + phase close)
+
+### Pre-existing gofmt debt: `cmd/cpg/commonflags.go`
+
+- **File:** `cmd/cpg/commonflags.go` — unrelated to 18-05's `mcp_query_flows*.go`/`mcp_query.go`/
+  `mcp_query_tools_test.go`/`mcp_query_pagination.go` scope.
+- **Symptom:** `gofmt -l cmd/cpg/*.go` flags this file as needing reformatting.
+- **Verified pre-existing:** `git show 8ac783a276499afd05b586b0d8513e09eed23f3b:cmd/cpg/commonflags.go`
+  (this plan's exact worktree base commit, before any 18-05 change) already fails `gofmt -l` —
+  last touched by an unrelated commit (`960d3cd`, "quick-bp7" Levenshtein hardening), well before
+  Phase 18. Not introduced or worsened by this plan.
+- **Action taken:** None — out of scope for 18-05 per the executor's scope-boundary rule; this
+  plan never edits `commonflags.go`.
+- **Recommendation:** A one-line `gofmt -w cmd/cpg/commonflags.go` fix whenever a plan is
+  actually scoped to that file, or as part of the v1.5 lint-debt cleanup (LINT-01..03, tracked
+  in REQUIREMENTS.md v2).
