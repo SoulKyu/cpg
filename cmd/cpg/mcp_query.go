@@ -431,11 +431,11 @@ func handleGetClusterHealth(mgr *session.Manager, args sessionRef) (*mcp.CallToo
 		return nil, getClusterHealthResult{}, err
 	}
 
-	// Inline recompute of pkg/session/manager.go Stop's exact formula — D-08:
-	// zero new Manager API, the outputHash/healthPath derivation is
-	// deterministic and shared with Stop's own StopResult.ClusterHealthPath.
-	outputHash := evidence.HashOutputDir(filepath.Join(status.TmpDir, "policies"))
-	healthPath := filepath.Join(status.TmpDir, "evidence", outputHash, "cluster-health.json")
+	// WR-04: session.DeriveSessionPaths is the single source of truth for
+	// this formula — shared with Manager.Stop's own
+	// StopResult.ClusterHealthPath and every other query-tool reader,
+	// instead of each hand-copying the outputHash/healthPath derivation.
+	healthPath := session.DeriveSessionPaths(status.TmpDir).ClusterHealthPath
 
 	result, err := clusterHealthBranch(status, healthPath)
 	return nil, result, err

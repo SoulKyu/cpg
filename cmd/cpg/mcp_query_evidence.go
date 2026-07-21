@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"path/filepath"
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -119,11 +118,11 @@ func handleGetEvidence(mgr *session.Manager, args getEvidenceArgs) (*mcp.CallToo
 		return nil, getEvidenceResult{}, err
 	}
 
-	// D-08: re-derive outputHash/evidenceDir with the exact formula
-	// buildPipelineConfig/Manager.Stop already use — zero new pkg/session API.
-	outputHash := evidence.HashOutputDir(filepath.Join(status.TmpDir, "policies"))
-	evidenceDir := filepath.Join(status.TmpDir, "evidence")
-	reader := evidence.NewReader(evidenceDir, outputHash)
+	// WR-04: session.DeriveSessionPaths is the single source of truth for
+	// this formula, shared with buildPipelineConfig/Manager.Stop and every
+	// other query-tool reader — instead of hand-copying it here.
+	paths := session.DeriveSessionPaths(status.TmpDir)
+	reader := evidence.NewReader(paths.EvidenceDir, paths.OutputHash)
 
 	pe, err := reader.Read(args.Namespace, args.Workload)
 	if err != nil {

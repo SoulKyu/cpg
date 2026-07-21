@@ -165,10 +165,11 @@ func handleListDroppedFlows(mgr *session.Manager, args listDroppedFlowsArgs) (*m
 		return nil, listDroppedFlowsResult{}, err
 	}
 
-	// D-08: re-derive outputHash/evidenceDir with the exact formula
-	// buildPipelineConfig/Manager.Stop/get_evidence already use.
-	outputHash := evidence.HashOutputDir(filepath.Join(status.TmpDir, "policies"))
-	evidenceDir := filepath.Join(status.TmpDir, "evidence")
+	// WR-04: session.DeriveSessionPaths is the single source of truth for
+	// this formula, shared with buildPipelineConfig/Manager.Stop/get_evidence
+	// — instead of hand-copying it here.
+	paths := session.DeriveSessionPaths(status.TmpDir)
+	evidenceDir, outputHash := paths.EvidenceDir, paths.OutputHash
 
 	samples, err := collectDroppedFlowSamples(evidenceDir, outputHash)
 	if err != nil {
@@ -186,8 +187,7 @@ func handleListDroppedFlows(mgr *session.Manager, args listDroppedFlowsArgs) (*m
 			Message:            "aggregates are finalized only after stop_session; call stop_session first (samples above are already live)",
 		}
 	} else {
-		healthPath := filepath.Join(evidenceDir, outputHash, "cluster-health.json")
-		report, err := hubble.ReadClusterHealth(healthPath)
+		report, err := hubble.ReadClusterHealth(paths.ClusterHealthPath)
 		if err != nil {
 			if !errors.Is(err, fs.ErrNotExist) {
 				// A genuinely malformed/wrong-version file — distinct from

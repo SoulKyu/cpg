@@ -15,7 +15,6 @@ import (
 	"go.uber.org/zap"
 	"k8s.io/client-go/rest"
 
-	"github.com/SoulKyu/cpg/pkg/evidence"
 	"github.com/SoulKyu/cpg/pkg/hubble"
 	"github.com/SoulKyu/cpg/pkg/k8s"
 )
@@ -402,11 +401,10 @@ func (m *Manager) Stop(id string) (StopResult, error) {
 	tmpDir := s.TmpDir
 	m.mu.Unlock() // Pitfall G — release before the (potentially slow) bounded wait
 
-	// Inline recompute: Session carries no outputHash field (session.go
-	// belongs to plan 17-02, not this plan's files_modified). This is the
-	// exact formula buildPipelineConfig uses for PipelineConfig.OutputHash.
-	outputHash := evidence.HashOutputDir(filepath.Join(tmpDir, "policies"))
-	healthPath := filepath.Join(tmpDir, "evidence", outputHash, "cluster-health.json")
+	// WR-04: DeriveSessionPaths (paths.go) is the single source of truth for
+	// this formula — buildPipelineConfig and every cmd/cpg query-tool reader
+	// call the same function instead of each re-deriving it locally.
+	healthPath := DeriveSessionPaths(tmpDir).ClusterHealthPath
 
 	if state == StateStopped {
 		// WR-02: AlreadyStopped reflects whether Stop() itself was already

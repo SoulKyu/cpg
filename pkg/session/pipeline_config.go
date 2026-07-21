@@ -3,7 +3,6 @@ package session
 import (
 	"fmt"
 	"io"
-	"path/filepath"
 	"time"
 
 	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
@@ -66,9 +65,10 @@ func buildPipelineConfig(
 	clusterPolicies map[string]*ciliumv2.CiliumNetworkPolicy,
 	onFinal func(hubble.SessionStats),
 ) hubble.PipelineConfig {
-	outputDir := filepath.Join(tmpDir, "policies")
-	evidenceDir := filepath.Join(tmpDir, "evidence")
-	outputHash := evidence.HashOutputDir(outputDir)
+	// WR-04: the single source of truth for the outputDir/evidenceDir/
+	// outputHash formula, shared with Manager.Stop and every cmd/cpg
+	// query-tool reader (paths.go).
+	paths := DeriveSessionPaths(tmpDir)
 
 	return hubble.PipelineConfig{
 		Server:          server,
@@ -76,7 +76,7 @@ func buildPipelineConfig(
 		Timeout:         defaultDuration(args.Timeout, 10*time.Second),
 		Namespaces:      args.Namespaces,
 		AllNamespaces:   args.AllNamespaces,
-		OutputDir:       outputDir,
+		OutputDir:       paths.OutputDir,
 		FlushInterval:   defaultDuration(args.FlushInterval, 5*time.Second),
 		Logger:          logger,
 		ClusterPolicies: clusterPolicies,
@@ -87,8 +87,8 @@ func buildPipelineConfig(
 		// value (false).
 
 		EvidenceEnabled: true,
-		EvidenceDir:     evidenceDir,
-		OutputHash:      outputHash,
+		EvidenceDir:     paths.EvidenceDir,
+		OutputHash:      paths.OutputHash,
 		EvidenceCaps:    evidence.MergeCaps{MaxSamples: 10, MaxSessions: 10},
 		// SessionID keeps the CLI's exact existing formula — the internal
 		// evidence schema v2 is untouched by this phase (D-10). This is NOT
