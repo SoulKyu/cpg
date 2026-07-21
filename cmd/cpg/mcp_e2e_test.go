@@ -311,6 +311,20 @@ func startE2ESubprocess(t *testing.T, ctx context.Context) *e2eSession {
 	cmd.Stderr = &stderrBuf // subprocess zap/zapslog diagnostics on failure
 
 	require.NoError(t, cmd.Start())
+	// WR-04: guarantee termination even if a require.* below this point
+	// fails before stdinW.Close() is reached (or client.Connect itself
+	// fails, before the cmd.Wait reaper goroutine is even set up) — without
+	// this, a mid-test failure orphans the -race subprocess for the
+	// remainder of the test-binary run. Process.Kill() is idempotent
+	// w.r.t. a process that already self-exited: once cmd.Wait() has
+	// reaped it, Go's os.Process tracks that and turns any later Kill()
+	// into a no-op (ErrProcessDone) instead of risking a signal to a
+	// recycled PID.
+	t.Cleanup(func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+	})
 
 	var rawTee syncBuffer
 	teed := io.TeeReader(stdoutR, &rawTee)
