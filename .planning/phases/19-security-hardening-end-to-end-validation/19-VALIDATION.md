@@ -1,9 +1,9 @@
 ---
 phase: 19
 slug: security-hardening-end-to-end-validation
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: approved
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-07-21
 ---
 
@@ -38,7 +38,14 @@ created: 2026-07-21
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| (filled by planner) | | | SRV-01, SRV-04, SEC-01, SEC-03 | | | | | | ⬜ pending |
+| 19-01-01 | 01 | 1 | SEC-01 | T-19-01 (audit unsoundness) | No K8s write verb / no fs write outside tmpdir reachable from `runMCPServer` | static-audit test | `rtk proxy go test ./cmd/cpg/ -run TestMCPAuditReadonlyReachability -count=1` | ✅ | ⬜ pending |
+| 19-01-02 | 01 | 1 | SEC-01 | T-19-01 | x/tools direct test dep, audit green under `-race` | build+test | `rtk proxy go build ./... && rtk proxy go test ./cmd/cpg/ -run TestMCPAuditReadonlyReachability -race -count=1` | ✅ | ⬜ pending |
+| 19-02-01 | 02 | 1 | SRV-04 | T-19-02 (subprocess/pipe DoS) | e2e infra compiles; fake relay + `-race` binary harness | build gate | `rtk proxy go test ./cmd/cpg/ -run '^$' -count=1` | ✅ | ⬜ pending |
+| 19-02-02 | 02 | 1 | SRV-01, SRV-04 | T-19-02 (wire integrity) | Graceful lifecycle + 8-tool handshake + stdout byte-purity | e2e subprocess | `rtk proxy go test ./cmd/cpg/ -run TestMCPE2EGracefulLifecycle -race -count=1` | ✅ | ⬜ pending |
+| 19-03-01 | 03 | 1 | SEC-03 | T-19-03 (doc misconfiguration) | README documents env block, secrets posture, exec-credential caveat | grep assertion | `rg -q '## MCP Server' README.md && rg -q 'KUBECONFIG' README.md` | ✅ | ⬜ pending |
+| 19-04-01 | 04 | 2 | SRV-04 | T-19-02 | Ungraceful disconnect → bounded exit + tmpdir removed + stream cancelled | e2e subprocess | `rtk proxy go test ./cmd/cpg/ -run TestMCPE2EUngracefulDisconnect -race -count=5` | ✅ | ⬜ pending |
+
+*Note: the audit test runs ~55-76s under `-race` (LoadAllSyntax over the Cilium dep graph) — budgeted within the 120s latency cap, not a regression (RESEARCH Pitfall 5).*
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -60,11 +67,11 @@ Existing infrastructure covers all phase requirements — `go test -race` is alr
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 120s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies (6/6 tasks — plan-checker Dimension 8 pass)
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify (Wave 1: 5/5, Wave 2: 1/1)
+- [x] Wave 0 covers all MISSING references (none used)
+- [x] No watch-mode flags
+- [x] Feedback latency < 120s (audit test ~55-76s budgeted, see note)
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** approved 2026-07-21 (plan-checker Dimension 8: PASS)
