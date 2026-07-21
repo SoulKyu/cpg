@@ -261,3 +261,166 @@ func TestMCPQueryGetPolicy(t *testing.T) {
 	require.True(t, ok)
 	assert.Contains(t, traversalText.Text, "directory-traversal")
 }
+
+// TestMCPQueryGetClusterHealth proves QRY-04/D-13's corrected 3-way branch
+// (4 cases counting the capturing state) over the in-memory transport.
+//
+// Timing note on the "capturing" and "stopped_present"/"stopped_absent_
+// no_error" sub-tests: pkg/hubble/client.go's waitForConnReady loops on
+// conn.WaitForStateChange until either connectivity.Ready or its OWN
+// timeout fires — a refused D-07 bypass dial cycles through
+// CONNECTING/TRANSIENT_FAILURE/backoff but never reaches Ready, so the
+// session provably stays "capturing" for the full configured timeout
+// (verified against pkg/hubble/client.go). Using a generous timeout and
+// never waiting for it makes these sub-tests deterministic, not racy.
+//
+// The "stopped_absent_with_error" sub-test is the one genuine exception: it
+// needs the pipeline to fail ON ITS OWN (not via stop_session, which never
+// populates StatusResult.Error per WR-01's sessionCtx.Err()==nil guard), so
+// it uses a short real timeout and require.Eventually to poll for the
+// autonomous transition — mirroring pkg/session/manager_test.go's own
+// TestManager_PipelineErrorAutonomouslyStopsSession pattern at the
+// black-box MCP-harness level.
+func TestMCPQueryGetClusterHealth(t *testing.T) {
+	initLoggerForTesting(t)
+
+	t.Run("capturing", func(t *testing.T) {
+		cs, ctx, cleanup := connectQueryTestClient(t)
+		defer cleanup()
+
+		sessionID, _ := startBypassSession(t, ctx, cs, "10s")
+
+		healthResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "get_cluster_health",
+			Arguments: map[string]any{"session_id": sessionID},
+		})
+		require.NoError(t, err)
+		require.False(t, healthResp.IsError, "capturing must be a non-error available_after_stop marker")
+
+		var out struct {
+			AvailableAfterStop bool   `json:"available_after_stop"`
+			Message            string `json:"message"`
+		}
+		decodeStructured(t, healthResp.StructuredContent, &out)
+		assert.True(t, out.AvailableAfterStop)
+		assert.Contains(t, out.Message, "stop_session")
+	})
+
+	t.Run("stopped_present", func(t *testing.T) {
+		cs, ctx, cleanup := connectQueryTestClient(t)
+		defer cleanup()
+
+		sessionID, tmpDir := startBypassSession(t, ctx, cs, "5s")
+		writeClusterHealthFixture(t, tmpDir, hubble.ClusterHealthReport{
+			SchemaVersion:     1,
+			ClassifierVersion: "v1",
+			Session: hubble.HealthSession{
+				Started:        time.Now().Add(-time.Minute),
+				Ended:          time.Now(),
+				FlowsSeen:      10,
+				InfraDropTotal: 3,
+			},
+			Drops: []hubble.HealthDropJSON{{
+				Reason:      "CT_MAP_INSERTION_FAILED",
+				Class:       "infra",
+				Count:       3,
+				Remediation: "https://docs.cilium.io/en/stable/",
+				ByNode:      map[string]uint64{"node-1": 3},
+				ByWorkload:  map[string]uint64{"prod/api": 3},
+			}},
+		})
+
+		stopResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "stop_session",
+			Arguments: map[string]any{"session_id": sessionID},
+		})
+		require.NoError(t, err)
+		require.False(t, stopResp.IsError)
+
+		healthResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "get_cluster_health",
+			Arguments: map[string]any{"session_id": sessionID},
+		})
+		require.NoError(t, err)
+		require.False(t, healthResp.IsError)
+
+		var out struct {
+			Report *struct {
+				SchemaVersion int `json:"schema_version"`
+				Drops         []struct {
+					Reason string `json:"reason"`
+					Count  uint64 `json:"count"`
+				} `json:"drops"`
+			} `json:"report"`
+		}
+		decodeStructured(t, healthResp.StructuredContent, &out)
+		require.NotNil(t, out.Report)
+		require.Len(t, out.Report.Drops, 1)
+		assert.Equal(t, "CT_MAP_INSERTION_FAILED", out.Report.Drops[0].Reason)
+		assert.Equal(t, uint64(3), out.Report.Drops[0].Count)
+	})
+
+	t.Run("stopped_absent_no_error", func(t *testing.T) {
+		cs, ctx, cleanup := connectQueryTestClient(t)
+		defer cleanup()
+
+		sessionID, _ := startBypassSession(t, ctx, cs, "5s")
+
+		stopResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "stop_session",
+			Arguments: map[string]any{"session_id": sessionID},
+		})
+		require.NoError(t, err)
+		require.False(t, stopResp.IsError)
+
+		healthResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "get_cluster_health",
+			Arguments: map[string]any{"session_id": sessionID},
+		})
+		require.NoError(t, err)
+		require.False(t, healthResp.IsError, "absent report + no pipeline error must not be a failure (D-13)")
+
+		var out struct {
+			NoDrops bool `json:"no_drops"`
+		}
+		decodeStructured(t, healthResp.StructuredContent, &out)
+		assert.True(t, out.NoDrops)
+	})
+
+	t.Run("stopped_absent_with_error", func(t *testing.T) {
+		cs, ctx, cleanup := connectQueryTestClient(t)
+		defer cleanup()
+
+		// A short timeout against the unreachable D-07 bypass address lets
+		// the pipeline genuinely fail on its own (WR-01 autonomous exit) —
+		// distinct from an explicit stop_session cancellation, which never
+		// populates StatusResult.Error.
+		sessionID, _ := startBypassSession(t, ctx, cs, "1s")
+
+		require.Eventually(t, func() bool {
+			statusResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+				Name:      "get_status",
+				Arguments: map[string]any{"session_id": sessionID},
+			})
+			if err != nil || statusResp.IsError {
+				return false
+			}
+			var statusOut struct {
+				State string `json:"state"`
+				Error string `json:"error"`
+			}
+			decodeStructured(t, statusResp.StructuredContent, &statusOut)
+			return statusOut.State == "stopped" && statusOut.Error != ""
+		}, 10*time.Second, 50*time.Millisecond, "pipeline must autonomously fail against the unreachable bypass address")
+
+		healthResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "get_cluster_health",
+			Arguments: map[string]any{"session_id": sessionID},
+		})
+		require.NoError(t, err)
+		require.True(t, healthResp.IsError, "a genuine crash before any drop must surface as isError")
+		tc, ok := healthResp.Content[0].(*mcp.TextContent)
+		require.True(t, ok)
+		assert.NotEmpty(t, tc.Text)
+	})
+}
