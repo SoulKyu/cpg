@@ -400,7 +400,15 @@ func (m *Manager) Stop(id string) (StopResult, error) {
 	healthPath := filepath.Join(tmpDir, "evidence", outputHash, "cluster-health.json")
 
 	if state == StateStopped {
-		return s.buildSummary(true, healthPath), nil // D-03: idempotent, already-stopped marker, never isError
+		// WR-02: AlreadyStopped reflects whether Stop() itself was already
+		// called, not merely whether State is StateStopped — the launch
+		// goroutine's autonomous crash transition also reaches
+		// StateStopped without ever calling Stop, so a literal `true` here
+		// would wrongly mark the FIRST explicit stop_session after a crash
+		// as already-stopped (D-03 violation). Swap(true) returns the
+		// previous value: false on the first Stop() call for this session,
+		// true on every call after.
+		return s.buildSummary(s.explicitStopSeen.Swap(true), healthPath), nil // D-03: idempotent, already-stopped marker, never isError
 	}
 
 	s.stopOnce.Do(func() { // Pitfall F — only the first concurrent caller performs the real teardown
@@ -422,7 +430,13 @@ func (m *Manager) Stop(id string) (StopResult, error) {
 	// call after its own m.mu Lock/Unlock cycle, which is ordered after
 	// whichever call last wrote StoppedAt by the mutex's happens-before
 	// guarantee. No additional synchronization is needed for this read.
-	return s.buildSummary(false, healthPath), nil
+	//
+	// The atomic Swap below mirrors the early-return branch above (WR-02):
+	// the first Stop() call to reach either buildSummary call site reports
+	// AlreadyStopped==false, every call after reports true — regardless of
+	// whether State reached StateStopped via this stopOnce.Do teardown or
+	// via the launch goroutine's autonomous crash transition.
+	return s.buildSummary(s.explicitStopSeen.Swap(true), healthPath), nil
 }
 
 // Shutdown synchronously, boundedly tears down the active session (if any)

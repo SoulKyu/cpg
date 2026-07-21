@@ -112,6 +112,16 @@ type Session struct {
 	// rationale as final above: atomic.Pointer (not a bare field) keeps
 	// this race-free under `go test -race`.
 	pipelineErr atomic.Pointer[error]
+
+	// explicitStopSeen tracks whether Stop() has already returned a summary
+	// for this session, independent of why State became StateStopped —
+	// Stop's own stopOnce.Do teardown, OR the launch goroutine's autonomous
+	// crash transition (manager.go), which never calls Stop. Set via
+	// atomic.Bool.Swap(true) at both of Stop's buildSummary call sites
+	// (WR-02 / D-03): the first Stop() for a given session — whether
+	// preceded by an autonomous crash or not — reports
+	// AlreadyStopped==false, and only a genuine second call reports true.
+	explicitStopSeen atomic.Bool
 }
 
 // StartArgs are the already-validated, already-normalized inputs pkg/session
@@ -173,8 +183,10 @@ type StopResult struct {
 	// than being stopped cleanly.
 	Error string `json:"error,omitempty" jsonschema:"the pipeline's terminal error if the session crashed rather than being stopped cleanly"`
 	// AlreadyStopped marks a second/idempotent stop_session call (D-03) —
-	// this is never an isError response; it carries the same summary as
-	// the first stop.
+	// true iff Stop() was already called for this session (tracked by
+	// explicitStopSeen, independent of State), never merely because the
+	// session is no longer running. This is never an isError response; it
+	// carries the same summary as the first stop.
 	AlreadyStopped bool   `json:"already_stopped"`
 	Duration       string `json:"duration"`
 
