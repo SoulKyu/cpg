@@ -75,7 +75,7 @@ Full details: [milestones/v1.4-ROADMAP.md](milestones/v1.4-ROADMAP.md)
 - [x] **Phase 16: MCP Server Foundation & Write Safety** - Protocol-safe stdio process (pure JSON-RPC stdout, unified stderr logging) plus an atomic policy writer (completed 2026-07-20)
 - [x] **Phase 17: Session Lifecycle** - `start_session`/`get_status`/`stop_session` MCP tools wrapping the Hubble capture pipeline, with full cleanup on every exit path (completed 2026-07-21)
 - [x] **Phase 18: Query Tools** - Paginated readonly tools over dropped flows, generated policies, evidence, and cluster health (completed 2026-07-21)
-- [ ] **Phase 19: Security Hardening & End-to-End Validation** - Structural readonly audit, full stdio lifecycle test under `-race`, MCP harness documentation
+- [x] **Phase 19: Security Hardening & End-to-End Validation** - Structural readonly audit, full stdio lifecycle test under `-race`, MCP harness documentation (completed 2026-07-21)
 
 ## Phase Details
 
@@ -192,7 +192,7 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 
 **Wave 2** *(blocked on 19-02 — same test file)*
 
-- [ ] 19-04-PLAN.md — SRV-04 ungraceful-disconnect variant (bounded self-exit + tmpdir removal + relay stream cancel)
+- [x] 19-04-PLAN.md — SRV-04 ungraceful-disconnect variant (bounded self-exit + tmpdir removal + relay stream cancel)
 
 ## Progress
 
@@ -216,6 +216,6 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 | 16. MCP Server Foundation & Write Safety | v1.5 | 3/3 | Complete    | 2026-07-20 |
 | 17. Session Lifecycle | v1.5 | 9/9 | Complete    | 2026-07-21 |
 | 18. Query Tools | v1.5 | 5/5 | Complete    | 2026-07-21 |
-| 19. Security Hardening & End-to-End Validation | v1.5 | 3/4 | In Progress|  |
+| 19. Security Hardening & End-to-End Validation | v1.5 | 4/4 | Complete   | 2026-07-21 |
 
 **Milestone status:** v1.0 ✅ shipped · v1.1 ✅ shipped · v1.2 ✅ shipped · v1.3 ✅ shipped · v1.4 ✅ shipped · v1.5 📋 in progress
