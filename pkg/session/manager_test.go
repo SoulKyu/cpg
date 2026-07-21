@@ -847,6 +847,44 @@ func TestManager_CleanDrainAutonomouslyStopsSession(t *testing.T) {
 	m.Shutdown()
 }
 
+// TestManager_FirstStopAfterCleanAutonomousExitIsNotAlreadyStopped proves
+// the D-03 idempotency contract also holds for the clean-exit path added by
+// Task 1's broadened guard: the FIRST explicit stop_session call after an
+// autonomous CLEAN (nil-error) drain must report AlreadyStopped==false and
+// no crash error, and a genuine SECOND stop_session call must report true —
+// mirroring TestManager_FirstStopAfterAutonomousCrashIsNotAlreadyStopped,
+// but driving a clean drain instead of a crash.
+//
+// Load-bearing property: the require.Eventually precondition below is FALSE
+// under pre-Task-1 code (a clean nil exit never transitions State, so this
+// never reaches "stopped" on its own). The first.AlreadyStopped == false
+// assertion pins that the autonomous clean-exit transition does not touch
+// explicitStopSeen — it stays false until the first explicit Stop() call's
+// own Swap.
+func TestManager_FirstStopAfterCleanAutonomousExitIsNotAlreadyStopped(t *testing.T) {
+	m := newTestManager(t, &closedFlowSource{flows: twoFlows()})
+
+	res, err := m.Start(context.Background(), StartArgs{Server: "bypass:1"})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		status, statusErr := m.Status(res.SessionID)
+		return statusErr == nil && status.State == "stopped"
+	}, 5*time.Second, 5*time.Millisecond, "the autonomous clean-exit transition must have run before Stop is ever called")
+
+	first, err := m.Stop(res.SessionID)
+	require.NoError(t, err)
+	assert.False(t, first.AlreadyStopped,
+		"the first explicit stop_session after a clean autonomous exit must not be marked already-stopped (D-03)")
+	assert.Empty(t, first.Error, "a clean drain carries no crash error")
+
+	second, err := m.Stop(res.SessionID)
+	require.NoError(t, err)
+	assert.True(t, second.AlreadyStopped, "a genuine second stop_session call must report already-stopped")
+
+	m.Shutdown()
+}
+
 // TestManager_Start_ShutdownCancelsSetupCtx proves WR-02 (Truth 4 / SESS-05
 // reopened gap): Shutdown's s.cancel() now reaches a mid-setup Start call's
 // setupCtx via the Task 1 context.AfterFunc(sessionCtx, setupCancel) merge,
