@@ -151,3 +151,28 @@ None - all new surface in this plan (the `pkg/session` package itself, `buildPip
 ---
 *Phase: 17-session-lifecycle*
 *Completed: 2026-07-21*
+
+## Self-Check: PASSED
+
+- FOUND: pkg/session/session.go
+- FOUND: pkg/session/session_test.go
+- FOUND: pkg/session/pipeline_config.go
+- FOUND: pkg/session/pipeline_config_test.go
+- FOUND: .planning/phases/17-session-lifecycle/17-02-SUMMARY.md
+- FOUND: commit 5fd92f7 (Task 1)
+- FOUND: commit c3b233e (Task 2)
+- FOUND: commit 5c86740 (SUMMARY.md)
+- FOUND: `func (s State) String()` in session.go
+- FOUND: `func (s *Session) buildSummary` in session.go
+- FOUND: `func defaultDuration` in pipeline_config.go
+- FOUND: `func buildPipelineConfig` in pipeline_config.go
+- FOUND: `TestState_String` in session_test.go
+- FOUND: `TestSession_BuildSummary` in session_test.go
+- FOUND: `TestDefaultDuration` in pipeline_config_test.go
+- FOUND: `TestBuildPipelineConfig` in pipeline_config_test.go
+- VERIFIED: `go build ./...` succeeds
+- VERIFIED: `go test ./pkg/session/... -race -count=1` — 12 passed, 0 failed
+- VERIFIED: `go test ./... -race -count=1` — 505 passed across 11 packages, 0 regressions
+- VERIFIED: `rg -n 'cmd/cpg|mcpModeStdout|validateIgnore' pkg/session/` — 0 matches
+- VERIFIED: `rg -n 'DryRun|FailOnInfraDrops' pkg/session/pipeline_config.go` — 0 matches
+- VERIFIED: `golangci-lint run ./pkg/session/...` — 0 issues
