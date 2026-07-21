@@ -268,7 +268,12 @@ func TestManager_Start_PurgesStoppedSession(t *testing.T) {
 
 	status, err := m.Status(second.SessionID)
 	require.NoError(t, err)
-	assert.Equal(t, "capturing", status.State)
+	// The second closedFlowSource session may already have drained to
+	// "stopped" under the WR-01 clean-nil-exit fix (Task 1's broadened
+	// autonomous-exit guard) — either state proves the new session was
+	// created and is queryable, which is what D-04 requires here.
+	assert.True(t, status.State == "capturing" || status.State == "stopped",
+		"expected capturing or stopped, got %q", status.State)
 
 	m.Shutdown()
 }

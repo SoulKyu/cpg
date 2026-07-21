@@ -216,24 +216,32 @@ func (m *Manager) Start(reqCtx context.Context, args StartArgs) (StartResult, er
 		err := m.runPipeline(sessionCtx, cfg)
 		portForwardCleanup() // non-blocking (close(stopCh)) — before signaling done, so an
 
-		// WR-01 (17-08): a GENUINE failure is classified on whether the
-		// session's OWN ctx (sessionCtx) was cancelled, not on the kind of
-		// error runPipeline returned. sessionCtx.Err() is non-nil ONLY when
-		// Stop/Shutdown (or m.rootCtx) actually cancelled this session —
-		// the sole "this was on purpose" signal — so any other non-nil err
-		// is a genuine failure: relay connection reset, auth expiry, an
-		// unreachable/typo'd --server address, INCLUDING a
+		// WR-01 (17-09): the autonomous-exit transition now fires on ANY
+		// exit — clean (nil) or genuinely failing — while sessionCtx is
+		// still healthy. sessionCtx.Err() is non-nil ONLY when Stop/Shutdown
+		// (or m.rootCtx) actually cancelled this session — the sole "this
+		// was on purpose" signal — so every other case, nil or not, means
+		// the pipeline exited on its own and get_status must stop reporting
+		// "capturing" forever for a dead session. Error-surfacing stays
+		// conditional: a non-nil err (relay connection reset, auth expiry,
+		// an unreachable/typo'd --server address, INCLUDING a
 		// context.DeadlineExceeded produced by an unrelated SCOPED timeout
-		// such as pkg/hubble/client.go's dial timeout, which derives its
-		// own child ctx from this still-healthy sessionCtx. Autonomously
-		// transition the session to stopped so get_status stops reporting
-		// "capturing" forever for a dead session. A clean drain (nil) or a
-		// genuine sessionCtx cancellation (Stop/Shutdown) is deliberately
-		// left untouched — Stop/Shutdown remain the sole state drivers for
-		// those paths, so every pre-existing test keeps passing unchanged.
-		if err != nil && sessionCtx.Err() == nil {
-			s.pipelineErr.Store(&err)
-			m.logger.Warn("session pipeline exited with error", zap.String("session_id", s.ID), zap.Error(err))
+		// such as pkg/hubble/client.go's dial timeout) is stored and
+		// Warn-logged; a nil err (e.g. a Hubble Relay closing the gRPC
+		// stream on a harmless io.EOF, pkg/hubble/client.go's
+		// streamFromSource) stores no pipelineErr and is Info-logged
+		// instead. The State transition and s.cancel() release below run
+		// unconditionally either way. A genuine sessionCtx cancellation
+		// (Stop/Shutdown) is the only path deliberately left untouched here
+		// — Stop/Shutdown remain the sole state drivers for that path, so
+		// every pre-existing cancellation-path test keeps passing unchanged.
+		if sessionCtx.Err() == nil {
+			if err != nil {
+				s.pipelineErr.Store(&err)
+				m.logger.Warn("session pipeline exited with error", zap.String("session_id", s.ID), zap.Error(err))
+			} else {
+				m.logger.Info("session pipeline drained to a clean exit; transitioning to stopped", zap.String("session_id", s.ID))
+			}
 			m.mu.Lock()
 			// Guard against clobbering a slot a concurrent Shutdown already
 			// nil'd, or a State a concurrent Stop already transitioned.
@@ -242,13 +250,14 @@ func (m *Manager) Start(reqCtx context.Context, args StartArgs) (StartResult, er
 				s.StoppedAt = time.Now()
 			}
 			m.mu.Unlock()
-			// INFO (17-08): release sessionCtx's registration on m.rootCtx
-			// now that the pipeline has autonomously exited — s.cancel is
-			// idempotent and a no-op for the already-exited pipeline, and
-			// safe w.r.t. Start's context.AfterFunc(sessionCtx,
-			// setupCancel): Start's own deferred stopSetupOnShutdown()
-			// already un-registered that AfterFunc before this goroutine's
-			// runPipeline call returned.
+			// Release sessionCtx's registration on m.rootCtx now that the
+			// pipeline has autonomously exited (clean or crashing) —
+			// s.cancel is an idempotent context.CancelFunc, safe even if it
+			// fires Start's still-registered context.AfterFunc(sessionCtx,
+			// setupCancel): setupCancel is itself idempotent, and setupCtx
+			// has no remaining consumers once resolveSetupFn already
+			// returned (setup necessarily completed before this launch
+			// goroutine's runPipeline call could return at all).
 			s.cancel()
 		}
 
