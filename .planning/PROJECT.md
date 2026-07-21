@@ -64,6 +64,11 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 - ✓ `pkg/session` single-slot Manager: `capturing → stopped → gone` lifecycle with retention, idempotent stop, autonomous transition on both crash and clean pipeline exit (SESS-02, SESS-03) — v1.5 Phase 17
 - ✓ `start_session`/`get_status`/`stop_session` MCP tools wired into `cpg mcp`, opaque session_id, "session not found or expired" contract with D-02 stopped-session queryability (SESS-01, SESS-04, SESS-06) — v1.5 Phase 17
 - ✓ Bounded transport-kill cleanup: `Shutdown()` cancels session + setup contexts, per-step deadlines so one wedged cleanup cannot block process exit, tmpdir removal (SESS-05) — v1.5 Phase 17
+- ✓ `list_dropped_flows`: paginated composed view (`samples[]` live from evidence + `aggregates[]` from cluster-health.json with `available_after_stop` marker mid-capture), explicit "sampled/aggregated view, not a raw flow log" description (QRY-01) — v1.5 Phase 18
+- ✓ `list_policies` (paginated metadata) + `get_policy` (full CNP YAML + absolute tmpdir path, single atomic read) keyed by namespace+workload (QRY-02) — v1.5 Phase 18
+- ✓ `get_evidence`: paginated per-rule attribution byte-identical to `cpg explain --output json` via promoted `pkg/explain` (Filter/Output/Render*/ParsePeerLabel exported, flowsource-style promotion) (QRY-03) — v1.5 Phase 18
+- ✓ `get_cluster_health`: typed passthrough via `pkg/hubble.ReadClusterHealth`, 4-state branch (capturing → `available_after_stop`; stopped+absent+no-error → "zero drops"; crash → isError citing pipeline error), remediation URLs intact (QRY-04) — v1.5 Phase 18
+- ✓ QRY-05 contract on all 8 tools: `structuredContent`+`outputSchema` (explicit `*jsonschema.Schema` dropclass enum — go-sdk has no enum tags), truthful annotations, taxonomy-teaching descriptions, actionable `isError`; opaque fail-closed cursor; `session.DeriveSessionPaths` single source of truth for tmpdir layout — v1.5 Phase 18
 
 ### Active
 
@@ -166,9 +171,9 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 
 **Shipped:** v1.0 (2026-03-08), v1.1 (2026-04-24), v1.2 (2026-04-25), v1.3 (2026-04-26), and v1.4 (2026-07-20).
 
-**Codebase:** 11 packages (`pkg/{labels,policy,output,hubble,k8s,dedup,flowsource,evidence,diff,dropclass,session}` + `cmd/`). **539 tests passing with `-race`** across 11 packages (up from 484 at v1.4 close). CI green and operational (build + race tests + lint + govulncheck). Deps: cilium v1.19.4, go-sdk v1.6.1, toolchain go1.25.12. Known debt: 26 lint issues (16 errcheck + 10 SA1019) gated by `only-new-issues`, scoped to v1.5. Release-please continues to handle product SemVer tagging.
+**Codebase:** 12 packages (`pkg/{labels,policy,output,hubble,k8s,dedup,flowsource,evidence,diff,dropclass,session,explain}` + `cmd/`). **607 tests passing with `-race`** across 12 packages (up from 539 at Phase 17 close). CI green and operational (build + race tests + lint + govulncheck). Deps: cilium v1.19.4, go-sdk v1.6.1, jsonschema-go v0.4.3 (direct since Phase 18), toolchain go1.25.12. Known debt: 26 lint issues (16 errcheck + 10 SA1019) gated by `only-new-issues`, scoped to v1.5; pre-existing `pkg/session` shared-`/tmp` test flake documented in `phases/18-query-tools/deferred-items.md`. Release-please continues to handle product SemVer tagging.
 
-**Current milestone:** v1.5 MCP Integration — Phase 17 (Session Lifecycle) complete 2026-07-21: `pkg/session` single-slot Manager (`capturing → stopped → gone`, autonomous exit on crash and clean drain), `start_session`/`get_status`/`stop_session` tools wired into `cpg mcp`, bounded SESS-05 shutdown. Verified 5/5 must-haves after 4 gap-closure rounds (17-05..17-09). Next: Phase 18 (Query Tools) — paginated readonly tools over dropped flows, generated policies, evidence, cluster health.
+**Current milestone:** v1.5 MCP Integration — Phase 18 (Query Tools) complete 2026-07-21: all 8 MCP tools live (3 session + 5 query), verified 5/5 must-haves first pass; code review (0 critical, 4 warnings) fully fixed same-day (DROP_REASON_UNKNOWN classification, list_policies pagination, get_policy single-read, DeriveSessionPaths helper). Next: Phase 19 (Security Hardening & End-to-End Validation) — structural readonly audit test, full-stdio e2e lifecycle under `-race`, README MCP harness docs (SRV-01, SRV-04, SEC-01, SEC-03).
 
 ## Evolution
 
@@ -188,4 +193,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-21 — v1.5 Phase 17 (Session Lifecycle) completed and verified (5/5 must-haves).*
+*Last updated: 2026-07-21 — v1.5 Phase 18 (Query Tools) completed, verified 5/5 first pass, review warnings fixed.*
