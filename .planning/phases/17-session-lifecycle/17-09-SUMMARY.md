@@ -106,5 +106,17 @@ None - no external service configuration required.
 
 ---
 
+## Self-Check: PASSED
+
+- FOUND: `pkg/session/manager.go` (broadened guard `if sessionCtx.Err() == nil {` confirmed present)
+- FOUND: `pkg/session/manager_test.go` (`TestManager_CleanDrainAutonomouslyStopsSession` and `TestManager_FirstStopAfterCleanAutonomousExitIsNotAlreadyStopped` confirmed present)
+- FOUND: `.planning/phases/17-session-lifecycle/17-09-SUMMARY.md`
+- FOUND commit `a185b9f` (test: RED)
+- FOUND commit `d4fdbb1` (feat: GREEN)
+- FOUND commit `eb40580` (test: D-03 pin)
+- FOUND commit `d37ced3` (docs: this SUMMARY)
+
+---
+
 _Phase: 17-session-lifecycle_
 _Completed: 2026-07-21_
