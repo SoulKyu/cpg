@@ -114,3 +114,15 @@ None - this plan's only new surface (the `OnFinal` hook) is exactly what the pla
 ---
 *Phase: 17-session-lifecycle*
 *Completed: 2026-07-21*
+
+## Self-Check: PASSED
+
+- FOUND: pkg/hubble/pipeline.go
+- FOUND: pkg/hubble/pipeline_test.go
+- FOUND: .planning/phases/17-session-lifecycle/17-01-SUMMARY.md
+- FOUND: commit 507d0b3 (Task 1)
+- FOUND: commit d1e43a4 (Task 2)
+- FOUND: commit 7f7f64c (SUMMARY.md)
+- FOUND: `OnFinal func(SessionStats)` field declaration in pipeline.go
+- FOUND: `TestRunPipeline_OnFinalFiresOnce` in pipeline_test.go
+- FOUND: `TestRunPipeline_OnFinalNilSafe` in pipeline_test.go
