@@ -173,9 +173,9 @@ go mod tidy
         StaticCallee() name matches         IsInvoke() (dynamic/interface
         a disallowed fs-write func          call) whose Method.Name() is a
         (os.WriteFile/Create/...)           k8s write verb (Create/Update/
-                    │                        Patch/Delete/Apply) AND the
-                    ▼                        interface/receiver type looks
-        Is this exact (caller,callee)        k8s-client-shaped
+                    │                        Patch/Delete/Apply) — verb-name-
+                    ▼                        only on IsInvoke calls, NO
+        Is this exact (caller,callee)        receiver-type filtering (D-04)
         pair in the hand-written                    │
         allowlist with a documented                 ▼
         safety rationale?                   FAIL — no allowlist exists for
@@ -327,7 +327,9 @@ for f := range cpgOwned {
                 }
             } else if common.IsInvoke() && common.Method != nil {
                 if k8sWriteVerbs[common.Method.Name()] {
-                    // check common.Value.Type().String() looks k8s-client-shaped
+                    // verb-name-only on IsInvoke calls — deliberately NO
+                    // receiver-type check (over-approximation per D-04;
+                    // design finalized in 19-01-PLAN.md Task 1)
                     assertAllowlisted(f.String(), common.Method.Name())
                 }
             }
