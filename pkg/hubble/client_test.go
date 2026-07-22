@@ -47,6 +47,16 @@ func TestBuildFilters_AllNamespaces(t *testing.T) {
 	assert.Empty(t, filters[0].DestinationPod, "should not filter by destination pod")
 }
 
+// TestBuildFilters_AllNamespaces_WithAudit proves AC-4: includeAudit=true
+// widens the verdict slice to {DROPPED, AUDIT} (order matters — DROPPED
+// first, AUDIT appended).
+func TestBuildFilters_AllNamespaces_WithAudit(t *testing.T) {
+	filters := buildFilters(nil, true, true)
+
+	require.Len(t, filters, 1, "all-namespaces should produce a single filter")
+	assert.Equal(t, []flowpb.Verdict{flowpb.Verdict_DROPPED, flowpb.Verdict_AUDIT}, filters[0].Verdict)
+}
+
 func TestBuildFilters_SingleNamespace(t *testing.T) {
 	filters := buildFilters([]string{"production"}, false, false)
 
@@ -61,6 +71,16 @@ func TestBuildFilters_SingleNamespace(t *testing.T) {
 	assert.Equal(t, []flowpb.Verdict{flowpb.Verdict_DROPPED}, filters[1].Verdict)
 	assert.Empty(t, filters[1].SourcePod)
 	assert.Equal(t, []string{"production/"}, filters[1].DestinationPod)
+}
+
+// TestBuildFilters_SingleNamespace_WithAudit proves AC-4 across both OR-ed
+// filters when a single namespace is set.
+func TestBuildFilters_SingleNamespace_WithAudit(t *testing.T) {
+	filters := buildFilters([]string{"production"}, false, true)
+
+	require.Len(t, filters, 2, "single namespace should produce two OR-ed filters")
+	assert.Equal(t, []flowpb.Verdict{flowpb.Verdict_DROPPED, flowpb.Verdict_AUDIT}, filters[0].Verdict)
+	assert.Equal(t, []flowpb.Verdict{flowpb.Verdict_DROPPED, flowpb.Verdict_AUDIT}, filters[1].Verdict)
 }
 
 func TestBuildFilters_MultipleNamespaces(t *testing.T) {
@@ -79,6 +99,16 @@ func TestBuildFilters_MultipleNamespaces(t *testing.T) {
 	assert.Equal(t, expectedPrefixes, filters[1].DestinationPod)
 }
 
+// TestBuildFilters_MultipleNamespaces_WithAudit proves AC-4 across both OR-ed
+// filters when multiple namespaces are set.
+func TestBuildFilters_MultipleNamespaces_WithAudit(t *testing.T) {
+	filters := buildFilters([]string{"prod", "staging"}, false, true)
+
+	require.Len(t, filters, 2, "multiple namespaces should produce two OR-ed filters")
+	assert.Equal(t, []flowpb.Verdict{flowpb.Verdict_DROPPED, flowpb.Verdict_AUDIT}, filters[0].Verdict)
+	assert.Equal(t, []flowpb.Verdict{flowpb.Verdict_DROPPED, flowpb.Verdict_AUDIT}, filters[1].Verdict)
+}
+
 func TestBuildFilters_EmptyNamespaces(t *testing.T) {
 	filters := buildFilters(nil, false, false)
 
@@ -86,6 +116,15 @@ func TestBuildFilters_EmptyNamespaces(t *testing.T) {
 	assert.Equal(t, []flowpb.Verdict{flowpb.Verdict_DROPPED}, filters[0].Verdict)
 	assert.Empty(t, filters[0].SourcePod)
 	assert.Empty(t, filters[0].DestinationPod)
+}
+
+// TestBuildFilters_EmptyNamespaces_WithAudit proves AC-4 for the
+// empty-namespaces-behaves-like-all-namespaces case.
+func TestBuildFilters_EmptyNamespaces_WithAudit(t *testing.T) {
+	filters := buildFilters(nil, false, true)
+
+	require.Len(t, filters, 1, "empty namespaces should behave like all-namespaces")
+	assert.Equal(t, []flowpb.Verdict{flowpb.Verdict_DROPPED, flowpb.Verdict_AUDIT}, filters[0].Verdict)
 }
 
 func TestClient_StreamDroppedFlows(t *testing.T) {
