@@ -429,13 +429,20 @@ func TestManager_Shutdown_WedgedExecDoesNotBlock(t *testing.T) {
 	}
 
 	done := make(chan struct{})
+	var result RevertResult
 	go func() {
-		m.Shutdown()
+		result = m.Shutdown()
 		close(done)
 	}()
 
 	select {
 	case <-done:
+		// The timeout branch must name what it could not confirm reverted
+		// (T-23-06 on the timeout path): TimedOut set, and the owned
+		// endpoint listed as possibly stuck.
+		require.True(t, result.TimedOut, "wedged revert must report TimedOut")
+		require.Len(t, result.PossiblyStuck, 1)
+		require.Equal(t, types.UID("uid-1"), result.PossiblyStuck[0])
 	case <-time.After(4 * (m.stopWait + m.removeWait)):
 		t.Fatal("Shutdown did not return within the bounded deadline despite a wedged setFn")
 	}

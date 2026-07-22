@@ -43,6 +43,16 @@ type endpointRecord struct {
 // non-starter (T-23-06, Repudiation).
 type RevertResult struct {
 	EndpointResults map[types.UID]error
+
+	// TimedOut is true when Shutdown's bounded deadline expired before the
+	// revert fan-out completed. EndpointResults is empty in that case (the
+	// sweep may still be running; its map cannot be read race-free), and
+	// PossiblyStuck lists the UIDs of every endpoint this window owned at
+	// the deadline — each may remain in audit mode and needs manual
+	// verification (T-23-06: a sweep that cannot name what it failed to
+	// revert is a non-starter, including on the timeout path).
+	TimedOut      bool
+	PossiblyStuck []types.UID
 }
 
 // Manager is the mutex-guarded state machine that opens, watches, and
@@ -457,7 +467,19 @@ func (m *Manager) Shutdown() RevertResult {
 		m.logger.Warn("audit window: revert fan-out did not complete within the bounded deadline; proceeding with shutdown regardless")
 		// A wedged transport is still inside Close's wg.Wait, so closeResult
 		// may be written concurrently — do NOT read it here (data race).
-		// Report an empty summary; the bounded process-exit guarantee wins.
-		return RevertResult{EndpointResults: map[types.UID]error{}}
+		// Instead name every endpoint this window owned at the deadline
+		// (m.ours is mutex-guarded, so this read is race-free): each may
+		// still be in audit mode and needs manual verification.
+		m.mu.Lock()
+		stuck := make([]types.UID, 0, len(m.ours))
+		for uid := range m.ours {
+			stuck = append(stuck, uid)
+		}
+		m.mu.Unlock()
+		return RevertResult{
+			EndpointResults: map[types.UID]error{},
+			TimedOut:        true,
+			PossiblyStuck:   stuck,
+		}
 	}
 }

@@ -168,6 +168,13 @@ func runAuditWindow(cmd *cobra.Command, _ []string) error {
 	// never block process exit (CR-02); it also cancels the watcher before
 	// snapshotting, closing the TTL-path snapshot/watcher-flip leak (WR-01).
 	result := wm.Shutdown()
+	if result.TimedOut {
+		for _, uid := range result.PossiblyStuck {
+			logger.Warn("audit window: revert deadline expired — endpoint may remain in audit mode, verify manually",
+				zap.String("uid", string(uid)))
+		}
+		return fmt.Errorf("audit window revert timed out: %d endpoint(s) may remain in audit mode (UIDs logged above) — verify with 'kubectl get cep' + cilium endpoint config on the affected nodes", len(result.PossiblyStuck))
+	}
 	for uid, revertErr := range result.EndpointResults {
 		if revertErr != nil {
 			logger.Warn("audit window: revert failed for endpoint",
