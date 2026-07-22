@@ -322,7 +322,7 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 | 17. Session Lifecycle | v1.5 | 9/9 | Complete    | 2026-07-21 |
 | 18. Query Tools | v1.5 | 5/5 | Complete    | 2026-07-21 |
 | 19. Security Hardening & End-to-End Validation | v1.5 | 4/4 | Complete    | 2026-07-21 |
-| 20. `--include-audit` Verdict Ingestion | v1.6 | 4/4 | Complete   | 2026-07-22 |
+| 20. `--include-audit` Verdict Ingestion | v1.6 | 4/4 | Complete    | 2026-07-22 |
 | 21. Cilium Compatibility Matrix + Runtime Detection | v1.6 | 0/TBD | Not started | - |
 | 22. Bootstrap Artifact Generation | v1.6 | 0/TBD | Not started | - |
 | 23. Managed Audit Window + SEC-01 Evolution | v1.6 | 0/TBD | Not started | - |

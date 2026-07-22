@@ -11,7 +11,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Audit-Mode Onboarding
 
-- [ ] **AUD-01**: Operator can ingest `Verdict_AUDIT` flows into policy generation via `--include-audit` (on `generate` and `replay`) and `include_audit` (MCP `start_session` arg); default behavior without the flag stays byte-identical (regression-tested); a single VIS-01-style warning fires when the flag is set but zero AUDIT flows arrive
+- [x] **AUD-01**: Operator can ingest `Verdict_AUDIT` flows into policy generation via `--include-audit` (on `generate` and `replay`) and `include_audit` (MCP `start_session` arg); default behavior without the flag stays byte-identical (regression-tested); a single VIS-01-style warning fires when the flag is set but zero AUDIT flows arrive
 - [ ] **AUD-02**: Operator can generate a namespaced default-deny bootstrap artifact via `cpg bootstrap -n <ns>` and a readonly MCP tool — CNP carrying `enableDefaultDeny` **and** explicit empty `ingress: []`/`egress: []` stanzas (named, tested acceptance criterion — cilium/cilium#35558), version-gated on Cilium ≥ 1.16 (never a silently-pruned field), plus an audit-window runbook modeled on Cilium's "Creating Policies from Verdicts" with an active warning against daemon-wide `policy-audit-mode`
 - [ ] **AUD-03**: Operator can open a managed audit window on a namespace — per-endpoint `PolicyAuditMode` flips via `pods/exec`, new-endpoint watcher (`CiliumEndpoint`-based), revert-only-ours bookkeeping keyed on UID (never raw endpoint ID), TTL auto-revert — with revert riding the existing SESS-05 bounded cleanup fan-out on every exit path; the surface (MCP flag-gated session property vs CLI-only command) is an explicit discuss-phase decision before the phase is planned
 - [ ] **AUD-04**: SEC-01's structural proof truthfully covers the audit-window mutation — mechanism (build-tag split vs path-scoped reachability assertion) recorded as a PROJECT.md Key Decision **before** any mutation code lands — and the README readonly guarantee is reworded to "readonly by default; scoped, lifecycle-bound mutations behind an explicit launch flag"
@@ -64,7 +64,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| AUD-01 | Phase 20 | Pending |
+| AUD-01 | Phase 20 | Complete |
 | AUD-02 | Phase 22 | Pending |
 | AUD-03 | Phase 23 | Pending |
 | AUD-04 | Phase 23 | Pending |
