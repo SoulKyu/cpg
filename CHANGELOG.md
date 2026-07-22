@@ -1,5 +1,61 @@
 # Changelog
 
+## [1.10.0](https://github.com/SoulKyu/cpg/compare/v1.9.1...v1.10.0) (2026-07-22)
+
+
+### Features
+
+* **16-01:** atomic temp+rename write in pkg/output/writer.go ([55f7cc2](https://github.com/SoulKyu/cpg/commit/55f7cc20513919632e7fa2fc2c1f222c967d4b59))
+* **16-02:** pin github.com/modelcontextprotocol/go-sdk v1.6.1 ([09d9e96](https://github.com/SoulKyu/cpg/commit/09d9e964d5923a59ddc715039b0f2ec5483b1f7b))
+* **16-03:** create cpg mcp server skeleton and register command ([93e7b3e](https://github.com/SoulKyu/cpg/commit/93e7b3e8e6e31b50e4e61d4a7b3a3168c36a3277))
+* **17-01:** add nil-safe OnFinal hook to PipelineConfig ([507d0b3](https://github.com/SoulKyu/cpg/commit/507d0b399eb5134bb7772728f1310bb79c42a824))
+* **17-02:** add pkg/session pipeline config builder + crash guard ([c3b233e](https://github.com/SoulKyu/cpg/commit/c3b233e3f59c8d4b61216d523766bf9b9ad104f9))
+* **17-02:** add pkg/session state model + result shapes ([5fd92f7](https://github.com/SoulKyu/cpg/commit/5fd92f799ef04db59588335c20d52fa1c7190ad2))
+* **17-03:** create pkg/session/manager.go single-slot state machine ([6674d8b](https://github.com/SoulKyu/cpg/commit/6674d8b934622894094b32e6410de8704e0fcd20))
+* **17-04:** register session MCP tools and wire Manager into runMCPServer ([83f70c0](https://github.com/SoulKyu/cpg/commit/83f70c0e853d00a0137d40f8fce39af39af8965e))
+* **17-05:** add terminal-error data layer to pkg/session ([4bf0063](https://github.com/SoulKyu/cpg/commit/4bf00633d3379e44295050468ad6c48e298c29aa))
+* **17-05:** autonomously transition State on genuine pipeline failure ([e0ce76d](https://github.com/SoulKyu/cpg/commit/e0ce76d766c0f28679877421db55f4011095e6be))
+* **17-06:** bound MCP-supplied timeout/flush_interval above 24h (WR-03) ([bf3012c](https://github.com/SoulKyu/cpg/commit/bf3012c3c5e0fd359db9346f59fe5bace1a74b61))
+* **17-06:** merge sessionCtx into setupCtx so Shutdown aborts mid-setup (WR-02) ([f8f9bdd](https://github.com/SoulKyu/cpg/commit/f8f9bdd7421930b52686ec1bf38f1e0291c4d431))
+* **17-08:** classify genuine crash on sessionCtx cancellation, not error identity (WR-01) ([cca60a1](https://github.com/SoulKyu/cpg/commit/cca60a1411bb5bda0f69de22c0021ad4467226d3))
+* **17-08:** track explicit-stop separately from State via atomic Swap (WR-02) ([0159b66](https://github.com/SoulKyu/cpg/commit/0159b660da6c552f7a98f8ef15a0804cf7bd99eb))
+* **17-09:** broaden autonomous-exit guard to fire on clean nil drain ([d4fdbb1](https://github.com/SoulKyu/cpg/commit/d4fdbb123c685bb87483ac84f23c17527edf668f))
+* **18-01:** implement pkg/explain with exported Filter/Output/Render* (GREEN) ([667f5ba](https://github.com/SoulKyu/cpg/commit/667f5ba82a5e59884d2cedbb4515f89511bb1fca))
+* **18-01:** thin cmd/cpg/explain.go to call pkg/explain (GREEN) ([ca5b920](https://github.com/SoulKyu/cpg/commit/ca5b920b0f9ff9de53901e027bf8c24a942da1d9))
+* **18-02:** export cluster-health types and add hubble.ReadClusterHealth ([7dabea1](https://github.com/SoulKyu/cpg/commit/7dabea16ab3446b4844565a8d9b8d3dce87d3f31))
+* **18-02:** export output.ReadPolicyFile with wrapped-not-exist contract ([7ace14c](https://github.com/SoulKyu/cpg/commit/7ace14cb8c77a0e9ec32cf1fe3e15a1b414c454d))
+* **18-03:** implement get_cluster_health with D-13 3-way branch ([1576330](https://github.com/SoulKyu/cpg/commit/157633035f5062e4f4c7b111d8f0d06d9fd598a8))
+* **18-03:** implement list_policies and get_policy query tools ([ee6a6c1](https://github.com/SoulKyu/cpg/commit/ee6a6c16330cc8ab808d73f4b063b252f515b01b))
+* **18-04:** implement get_evidence — paginated pkg/explain evidence (QRY-03) ([dd6d39f](https://github.com/SoulKyu/cpg/commit/dd6d39fe1e5e62879d9f93f910e6bb9ecf0e1b72))
+* **18-04:** implement pagination + enum-schema infra (mustQuerySchema, cursor, paginate) ([2b722b0](https://github.com/SoulKyu/cpg/commit/2b722b03c2fae9d69ab8950c1140fea5e381c8c2))
+* **18-05:** implement list_dropped_flows composed view (QRY-01) ([9836802](https://github.com/SoulKyu/cpg/commit/9836802f19455dd613d214072b1bb8bca91393ac))
+* **19-01:** SEC-01 RTA reachability + direct-call-scan audit test ([258decc](https://github.com/SoulKyu/cpg/commit/258decc109851d381e770b19cc7cb4a46333477b))
+* **19-02:** add graceful e2e lifecycle test + SRV-01 handshake/schema/annotation assertions ([cade360](https://github.com/SoulKyu/cpg/commit/cade36080d055e0cdd7160eb4274a6157857f155))
+* **19-02:** build e2e infra - fake Hubble relay, -race build helper, subprocess/tee harness, drop-flow fixtures ([2648732](https://github.com/SoulKyu/cpg/commit/2648732c49b524fd09fd4ed894ca3a8b92bcf4b5))
+* **19-04:** add ungraceful-disconnect e2e variant (SRV-04/D-08/D-09) ([140d25f](https://github.com/SoulKyu/cpg/commit/140d25ff897404fb11e8a775dd05bdfa570e2360))
+* **v1.5:** MCP integration — readonly stdio server (phases 16-19) ([81ebf2c](https://github.com/SoulKyu/cpg/commit/81ebf2c4c5b8b48c9a24d7726567bcd674ce2e93))
+
+
+### Bug Fixes
+
+* **16:** guard seam-audit identity assertion against test2json stderr aliasing ([ab665c5](https://github.com/SoulKyu/cpg/commit/ab665c5c32379f44114a92e2c1838f99345bfc25))
+* **16:** make seam-audit test immune to global stdout swaps ([2cf0754](https://github.com/SoulKyu/cpg/commit/2cf0754f9cd70233a16b0b3f734ff0d6b6a272f1))
+* **16:** WR-01 check cleanup error returns in atomic write path ([2389f2f](https://github.com/SoulKyu/cpg/commit/2389f2fbbcabab3315c158d8d0ec8a6f917cc690))
+* **16:** WR-02 stop swallowing cpg mcp startup/runtime errors ([4fb7ba2](https://github.com/SoulKyu/cpg/commit/4fb7ba294053c2da8e1dc71069257adc41544b64))
+* **18:** WR-01 classify DROP_REASON_UNKNOWN evidence samples as unknown, not transient ([8ea5a42](https://github.com/SoulKyu/cpg/commit/8ea5a425c25851e3f6fc906aef8ea466ea489013))
+* **18:** WR-02 paginate list_policies and cap get_cluster_health breakdown maps ([afab493](https://github.com/SoulKyu/cpg/commit/afab4931bbe7fd7f2371507074c565bc163ccdeb))
+* **18:** WR-03 read policy file once in get_policy to avoid metadata/YAML skew ([794175a](https://github.com/SoulKyu/cpg/commit/794175ad649a764274e734762586530c5239502e))
+* **18:** WR-04 add session.DeriveSessionPaths as single source of truth for output layout ([d733cbb](https://github.com/SoulKyu/cpg/commit/d733cbb1f0164fdaf8fd86ad72c429a38fd820b9))
+* **19:** address plan-checker findings (dropclass scope, k8s-verb heuristic) ([356e50c](https://github.com/SoulKyu/cpg/commit/356e50c8cad7f6d952974d2996044bd04750ea32))
+* **19:** correct D-10 dropclass scope in context/research/patterns + close out validation strategy ([a6ab6ab](https://github.com/SoulKyu/cpg/commit/a6ab6ab9e26de49ee7119799b7fdd0033c7bcde6))
+* **19:** IN-01 acknowledge func-value call dispatch is unchecked by Stage 3 scan ([8c9e6f5](https://github.com/SoulKyu/cpg/commit/8c9e6f5c6455dcca483963b609563ca5cb8ea83b))
+* **19:** IN-02 soften README exec-plugin timeout claim, note kubeconfig-load exception ([f0d706e](https://github.com/SoulKyu/cpg/commit/f0d706ea80b50860bdcb02fbf3387350901c63df))
+* **19:** WR-01 replace tautological BFS self-check with real reachability assertions ([7665120](https://github.com/SoulKyu/cpg/commit/7665120bced9750a9a21e2c252d9e215a42267e2))
+* **19:** WR-02 extend disallowedFSWrite watchlist with metadata/link/truncate os.* mutators ([37dbea4](https://github.com/SoulKyu/cpg/commit/37dbea4b05b7860cab81694c39511bad1a62b00f))
+* **19:** WR-03 add DeleteCollection/UpdateStatus/ApplyStatus to k8sWriteVerbs ([e92669f](https://github.com/SoulKyu/cpg/commit/e92669f4b9859b0001694c1d472346b93af3b2c9))
+* **19:** WR-04 add t.Cleanup to guarantee e2e subprocess termination ([5b5d5c7](https://github.com/SoulKyu/cpg/commit/5b5d5c76e82f4ca48dd39e4266fca2e363eed143))
+* **deps:** bump golang.org/x/text to v0.39.0 (GO-2026-5970) ([bbce104](https://github.com/SoulKyu/cpg/commit/bbce1043053b6dbb23d41baae995c5d117636456))
+
 ## [1.9.1](https://github.com/SoulKyu/cpg/compare/v1.9.0...v1.9.1) (2026-07-20)
 
 
