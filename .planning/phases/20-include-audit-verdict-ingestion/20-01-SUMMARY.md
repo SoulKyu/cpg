@@ -102,3 +102,13 @@ None - no external service configuration required. Pure in-process Go library ch
 ---
 *Phase: 20-include-audit-verdict-ingestion*
 *Completed: 2026-07-22*
+
+## Self-Check: PASSED
+
+- FOUND: pkg/hubble/aggregator.go
+- FOUND: pkg/hubble/aggregator_test.go
+- FOUND: .planning/phases/20-include-audit-verdict-ingestion/20-01-SUMMARY.md
+- FOUND: a2a7710 (test — Task 1 RED)
+- FOUND: 43adde7 (feat — Task 1 GREEN)
+- FOUND: 9209182 (test — Task 2 RED)
+- FOUND: 5b586ae (feat — Task 2 GREEN)
