@@ -82,9 +82,18 @@ type CompatInfo struct {
 
 // featureFloors is the declared per-feature Cilium version floor table,
 // sourced from 21-RESEARCH.md's Version Pin Table (merged-PR + release-tag
-// verified). Keep in sync with README.md's "Supported Cilium versions"
-// section (COMPAT-01) — this table is the runtime-enforcement side of that
-// documentation.
+// verified). Keep the FLOOR entries in sync with README.md's "Supported
+// Cilium versions" section (COMPAT-01) — for lower bounds this table is the
+// runtime-enforcement side of that documentation.
+//
+// SCOPE (WR-03): this table expresses lower bounds ("requires >= X") ONLY. It
+// deliberately does NOT model the one CEILING the README documents — the
+// policy.cilium.io/proxy-visibility annotation removed at Cilium 1.17
+// (COMPAT-01/COMPAT-03). That above-ceiling no-op is intentionally left as
+// doc-only enforcement: the downstream signal is VIS-01's "no L7 records
+// observed" warning, which fires from the capture pipeline. The "keep in
+// sync" instruction above therefore covers floors only — it is NOT a claim of
+// full README/table parity, and must not be read as one.
 var featureFloors = []struct {
 	name  string
 	floor string // fed to apiversion.ParseGeneric
