@@ -1,16 +1,17 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.4
-milestone_name: Audit Fable5
-status: Awaiting next milestone
-last_updated: "2026-07-20T12:03:36.856Z"
-last_activity: 2026-07-20 — Milestone v1.4 completed and archived
+milestone: v1.5
+milestone_name: MCP Integration
+status: milestone_complete
+last_updated: 2026-07-21T19:56:03.636Z
+last_activity: 2026-07-21 -- Phase 19 execution started
 progress:
-  total_phases: 2
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_phases: 4
+  completed_phases: 3
+  total_plans: 21
+  completed_plans: 21
+  percent: 75
+stopped_at: Milestone complete (Phase 19 was final phase)
 ---
 
 # Project State
@@ -20,20 +21,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-20)
 
 **Core value:** Automatically generate correct CiliumNetworkPolicies from observed Hubble denials so that SREs spend zero time manually writing network policies in default-deny environments.
-**Current focus:** Awaiting v1.5 scoping (`/gsd-new-milestone`)
+**Current focus:** Milestone complete
 
 ## Current Position
 
-Phase: Milestone v1.4 complete
-Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-07-20 — Milestone v1.4 completed and archived
+Phase: 19
+Plan: Not started
+Status: Milestone complete
+Last activity: 2026-07-21
+
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity (cumulative):**
 
-- Total plans completed: 30 (across 13 phases, 4 milestones; v1.4 executed via direct workflow, no plans)
+- Total plans completed: 51 (across 13 phases, 4 milestones; v1.4 executed via direct workflow, no plans)
 - Total tests: 484 across 10 packages
 
 **By Milestone:**
@@ -45,6 +48,7 @@ Last activity: 2026-07-20 — Milestone v1.4 completed and archived
 | v1.2 | 7-9 | 12 | 319 |
 | v1.3 | 10-13 | 8 | 418 |
 | v1.4 | 14-15 | 0 (direct workflow) | 484 |
+| v1.5 | 16-19 | TBD (planning not started) | - |
 
 *Updated after each plan completion.*
 | Phase 10-classifier-core P01 | 4 | 2 tasks | 5 files |
@@ -55,6 +59,7 @@ Last activity: 2026-07-20 — Milestone v1.4 completed and archived
 | Phase 13-flags-and-exit-code P01 | 8 | 2 tasks | 2 files |
 | Phase 13-flags-and-exit-code P02 | 8 | 2 tasks | 5 files |
 | Phase 13-flags-and-exit-code P03 | 146 | 2 tasks | 4 files |
+| Phase 17 P08 | ~13min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -74,6 +79,14 @@ Decisions logged in PROJECT.md Key Decisions table.
 - [Phase 13-flags-and-exit-code]: validateIgnoreDropReasons accepts *zap.Logger for inline FILTER-03 WARN emission; dropClassLabel() local helper avoids exporting String() from pkg/dropclass
 - [Phase 13-flags-and-exit-code]: FailOnInfraDrops stored in PipelineConfig but exit logic not yet implemented (plan 13-03)
 - [Phase 13-flags-and-exit-code]: ExitCodeError defined in pkg/hubble to avoid import cycle; shouldExitForInfraDrops pure helper; errors.As in main.go; exit code 1 only (not 2)
+- [v1.5 roadmap]: SEC-02 (atomic policy writer) pulled into Phase 16 (first phase) — must land before any query tool reads `pkg/output`'s directory (Phase 18)
+- [v1.5 roadmap]: SRV-01 (full tool-list handshake) and SRV-04 (e2e lifecycle test) both close Phase 19 rather than SRV-01 sitting in the skeleton phase — "all tools listed" only becomes true once every tool from Phases 16-18 is registered
+- [v1.5 roadmap]: Research's 6-phase proposal consolidated to 4 (coarse granularity) — Read-Side Foundations folded into Query Tools (Phase 18); Security Hardening + E2E Validation merged into one closing phase (Phase 19)
+- [Phase 16]: Phase 17 handoff: MCP-mode PipelineConfig.Stdout MUST use mcpModeStdout()
+- [Phase 17-session-lifecycle]: WR-01 crash classifier uses sessionCtx.Err() == nil (not errors.Is on the returned error) — the only true 'cancelled on purpose' signal, so it subsumes any future scoped-timeout shape a pipeline dependency introduces, not just client.go's dial timeout
+- [Phase 17-session-lifecycle]: s.cancel() releases sessionCtx on the autonomous-exit path, placed inside the existing genuine-failure guard (not a separate step) — idempotent and safe w.r.t. Start's context.AfterFunc(sessionCtx, setupCancel), already un-registered by then
+- [Phase 17-session-lifecycle]: WR-02: Session.explicitStopSeen atomic.Bool decouples 'was Stop() already called' from 'is State == StateStopped' — same per-session primitive placement as cancel/done/stopOnce, keeps Manager stateless across sessions
+- [Phase 17-session-lifecycle]: explicitStopSeen.Swap(true) applied at BOTH of Stop's buildSummary call sites (the state==StateStopped early-return AND the post-stopOnce path) — the early-return is exactly the path a first-post-crash Stop() takes, so it needs the same already_stopped semantics
 
 ### Pending Todos
 
@@ -81,7 +94,7 @@ None.
 
 ### Blockers/Concerns
 
-None open. v1.3 deferred items (L7-FUT-01, DNS-FUT-02, etc.) tracked in PROJECT.md Planned section. v1.4 lint debt (LINT-01..03) and release hardening (RELSEC-01..02) deliberately descoped — tracked in REQUIREMENTS.md Future Requirements for v1.5.
+None open. v1.3 deferred items (L7-FUT-01, DNS-FUT-02, etc.) tracked in PROJECT.md Planned section. v1.4 lint debt (LINT-01..03) and release hardening (RELSEC-01..02) deliberately descoped — tracked in REQUIREMENTS.md v2 Requirements for v1.5+ (not in v1.5's 18 v1 requirements).
 
 ### Quick Tasks Completed
 
@@ -103,10 +116,11 @@ Items acknowledged and deferred at milestone close on 2026-07-20:
 
 ## Session Continuity
 
-Last session: 2026-07-20
-Stopped at: Milestone v1.4 Audit Fable5 completed and archived (PR #16 merged as be06b7b; CI 4/4 green)
-Resume: `/gsd-new-milestone` — scope v1.5 (candidates: lint debt zero, release hardening, replay exit parity, feature backlog in PROJECT.md Planned)
+Last session: 2026-07-21T16:45:44.013Z
+Stopped at: Phase 19 context gathered (auto)
+Resume: `/gsd-verify-phase 17` — verify Phase 17 session-lifecycle (all 8 plans complete, gap closures WR-01/WR-02/WR-03/WR-04/D-02 done)
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Phase 16 (MCP Server Foundation & Write Safety) and Phase 17 (session-lifecycle) are both fully executed
+- Verify Phase 17 before proceeding to Phase 18 (Query Tools) planning

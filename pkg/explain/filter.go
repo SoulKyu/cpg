@@ -1,4 +1,4 @@
-package main
+package explain
 
 import (
 	"net"
@@ -8,7 +8,9 @@ import (
 	"github.com/SoulKyu/cpg/pkg/evidence"
 )
 
-type explainFilter struct {
+// Filter holds the CLI/MCP-agnostic rule-matching predicate for `cpg explain`
+// and the get_evidence MCP tool.
+type Filter struct {
 	Direction string
 	Port      string
 	PeerLabel struct {
@@ -20,7 +22,7 @@ type explainFilter struct {
 	Since    time.Duration
 	Now      time.Time
 
-	// L7 filters. Empty string = unset. Inputs are normalized in buildFilter
+	// L7 filters. Empty string = unset. Inputs are normalized by the caller
 	// (HTTPMethod uppercased, DNSPattern trailing dot stripped). When ANY of
 	// these is set, rules without an L7Ref are dropped from the matched set.
 	HTTPMethod string
@@ -28,7 +30,8 @@ type explainFilter struct {
 	DNSPattern string
 }
 
-func (f explainFilter) match(r evidence.RuleEvidence) bool {
+// Match reports whether rule r satisfies every filter predicate set on f.
+func (f Filter) Match(r evidence.RuleEvidence) bool {
 	if f.Direction != "" && r.Direction != f.Direction {
 		return false
 	}
@@ -84,7 +87,9 @@ func (f explainFilter) match(r evidence.RuleEvidence) bool {
 	return true
 }
 
-func parsePeerLabel(s string) (key, value string, ok bool) {
+// ParsePeerLabel splits a "KEY=VALUE" peer-label filter string. ok is false
+// for an empty string or a string with no "=" separator.
+func ParsePeerLabel(s string) (key, value string, ok bool) {
 	if s == "" {
 		return "", "", false
 	}

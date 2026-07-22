@@ -18,6 +18,7 @@ import (
 	"go.uber.org/zap/zaptest"
 	"go.uber.org/zap/zaptest/observer"
 
+	"github.com/SoulKyu/cpg/pkg/evidence"
 	"github.com/SoulKyu/cpg/pkg/policy"
 	"github.com/SoulKyu/cpg/pkg/policy/testdata"
 )
@@ -85,6 +86,91 @@ func TestRunPipeline_EndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "apiVersion: cilium.io/v2")
 	assert.Contains(t, string(data), "kind: CiliumNetworkPolicy")
+}
+
+// TestRunPipeline_OnFinalFiresOnce proves the D-08 contract: cfg.OnFinal is
+// called exactly once at end-of-run with the fully populated SessionStats.
+// This is the tested foundation 17-02's session manager wires against
+// (session.final.Store(&s) inside the closure).
+func TestRunPipeline_OnFinalFiresOnce(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := zaptest.NewLogger(t)
+
+	source := &mockFlowSource{
+		flows: []*flowpb.Flow{
+			testdata.IngressTCPFlow(
+				[]string{"k8s:app=client"},
+				[]string{"k8s:app=server"},
+				"production",
+				8080,
+			),
+			testdata.EgressUDPFlow(
+				[]string{"k8s:app=server"},
+				[]string{"k8s:app=dns"},
+				"production",
+				53,
+			),
+		},
+	}
+
+	var called int
+	var captured SessionStats
+
+	cfg := PipelineConfig{
+		FlushInterval: 10 * time.Millisecond,
+		OutputDir:     tmpDir,
+		Logger:        logger,
+		OnFinal: func(s SessionStats) {
+			called++
+			captured = s
+		},
+	}
+
+	// RunPipelineWithSource is synchronous: it returns only after g.Wait()
+	// and therefore after OnFinal has already fired. Reading called/captured
+	// after this call (not from another goroutine) is race-free with no
+	// additional synchronization needed.
+	err := RunPipelineWithSource(context.Background(), cfg, source)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, called, "OnFinal must fire exactly once")
+	assert.Equal(t, uint64(2), captured.FlowsSeen, "captured stats must be fully populated (FlowsSeen from agg.FlowsSeen())")
+}
+
+// TestRunPipeline_OnFinalNilSafe proves a nil OnFinal (every existing CLI
+// path) is a pure no-op: no panic, no error.
+func TestRunPipeline_OnFinalNilSafe(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := zaptest.NewLogger(t)
+
+	source := &mockFlowSource{
+		flows: []*flowpb.Flow{
+			testdata.IngressTCPFlow(
+				[]string{"k8s:app=client"},
+				[]string{"k8s:app=server"},
+				"production",
+				8080,
+			),
+			testdata.EgressUDPFlow(
+				[]string{"k8s:app=server"},
+				[]string{"k8s:app=dns"},
+				"production",
+				53,
+			),
+		},
+	}
+
+	cfg := PipelineConfig{
+		FlushInterval: 10 * time.Millisecond,
+		OutputDir:     tmpDir,
+		Logger:        logger,
+		// OnFinal intentionally left unset (zero value / nil).
+	}
+
+	require.NotPanics(t, func() {
+		err := RunPipelineWithSource(context.Background(), cfg, source)
+		require.NoError(t, err)
+	})
 }
 
 func TestRunPipeline_GracefulShutdown(t *testing.T) {
@@ -249,6 +335,113 @@ func TestRunPipeline_SurfacesStreamError(t *testing.T) {
 	err := RunPipelineWithSource(context.Background(), cfg, source)
 	require.Error(t, err, "a mid-capture stream failure must not be reported as a clean run")
 	assert.ErrorIs(t, err, sentinel)
+}
+
+// errStreamSourceWithInfraDrop is a FlowSource whose flow channel carries one
+// pre-classified infra DROPPED flow before closing cleanly (unlike
+// errStreamSource above, which closes both channels immediately empty --
+// exactly why TestRunPipeline_SurfacesStreamError never accumulates a drop).
+//
+// The stream error is delivered only after a short delay. The aggregator
+// consumes an already-buffered channel item on the very first iteration of
+// its select loop -- pure in-memory bookkeeping plus one buffered channel
+// send, no I/O, no blocking -- which completes in low microseconds. Without
+// the delay, gctx cancellation (triggered the instant the stream-error
+// goroutine returns) could in principle become ready before the aggregator's
+// select evaluates, and Go's select picks uniformly at random among ready
+// cases: the accumulate-then-error ordering this test exists to prove would
+// then be racy rather than deterministic. The delay's margin (orders of
+// magnitude larger than the in-memory work it waits out) removes that race
+// for practical purposes while still letting RunPipelineWithSource return
+// the genuine stream error.
+type errStreamSourceWithInfraDrop struct {
+	err  error
+	flow *flowpb.Flow
+}
+
+func (e *errStreamSourceWithInfraDrop) StreamDroppedFlows(_ context.Context, _ []string, _ bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
+	fc := make(chan *flowpb.Flow, 1)
+	fc <- e.flow
+	close(fc)
+	lc := make(chan *flowpb.LostEvent)
+	close(lc)
+	return fc, lc, nil
+}
+
+func (e *errStreamSourceWithInfraDrop) StreamErr() <-chan error {
+	ec := make(chan error, 1)
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		ec <- e.err
+		close(ec)
+	}()
+	return ec
+}
+
+// TestRunPipeline_FinalizesHealthOnStreamError closes the Pitfall-1 gap and
+// pins the evidence behind D-13's corrected 3-way branch: hw.finalize() runs
+// unconditionally after g.Wait(), so a pipeline that accumulates at least one
+// infra/transient drop before a genuine stream error still writes
+// cluster-health.json -- "file absent" means "zero infra/transient drops",
+// not "crashed". TestRunPipeline_SurfacesStreamError (above) leaves
+// EvidenceEnabled unset (hw is nil) and its errStreamSource emits zero flows,
+// so it never exercises this path.
+func TestRunPipeline_FinalizesHealthOnStreamError(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := zaptest.NewLogger(t)
+
+	// EGRESS + Source carrying namespace/labels mirrors the established
+	// synthetic-infra-flow shape already used in this file
+	// (TestRunPipeline_DryRunWithoutEvidenceRendersEvidenceOff,
+	// TestRunPipeline_FallbackSnapshotNoEvidence) -- policyTargetEndpoint
+	// resolves the SOURCE endpoint for EGRESS flows, giving buildDropEvent a
+	// resolvable namespace/workload for the by_workload key.
+	infraFlow := &flowpb.Flow{
+		TrafficDirection: flowpb.TrafficDirection_EGRESS,
+		Verdict:          flowpb.Verdict_DROPPED,
+		DropReasonDesc:   flowpb.DropReason_CT_MAP_INSERTION_FAILED, // confirmed Infra-classified + remediation-linked, pkg/dropclass/hints_test.go:15
+		NodeName:         "node-1",
+		Source: &flowpb.Endpoint{
+			Labels:    []string{"k8s:app=worker"},
+			Namespace: "production",
+		},
+		Destination: &flowpb.Endpoint{
+			Labels:    []string{"k8s:app=backend"},
+			Namespace: "production",
+		},
+		L4: &flowpb.Layer4{
+			Protocol: &flowpb.Layer4_TCP{TCP: &flowpb.TCP{DestinationPort: 8080}},
+		},
+	}
+
+	sentinel := errors.New("hubble stream failed: connection reset mid-capture")
+	source := &errStreamSourceWithInfraDrop{err: sentinel, flow: infraFlow}
+
+	outputDir := filepath.Join(tmpDir, "policies")
+	evidenceDir := filepath.Join(tmpDir, "evidence")
+	outputHash := evidence.HashOutputDir(outputDir)
+
+	cfg := PipelineConfig{
+		FlushInterval:   10 * time.Millisecond,
+		OutputDir:       outputDir,
+		Logger:          logger,
+		EvidenceEnabled: true,
+		EvidenceDir:     evidenceDir,
+		OutputHash:      outputHash,
+	}
+
+	err := RunPipelineWithSource(context.Background(), cfg, source)
+	require.Error(t, err, "a mid-capture stream failure must still surface as a non-nil error")
+	assert.ErrorIs(t, err, sentinel)
+
+	healthPath := filepath.Join(cfg.EvidenceDir, cfg.OutputHash, "cluster-health.json")
+	require.FileExists(t, healthPath, "finalize() must write cluster-health.json despite the pipeline error, given an accumulated infra drop")
+
+	report, readErr := ReadClusterHealth(healthPath)
+	require.NoError(t, readErr)
+	require.Len(t, report.Drops, 1)
+	assert.Equal(t, "CT_MAP_INSERTION_FAILED", report.Drops[0].Reason)
+	assert.GreaterOrEqual(t, report.Drops[0].Count, uint64(1))
 }
 
 // channelFlowSource returns pre-made channels for testing.

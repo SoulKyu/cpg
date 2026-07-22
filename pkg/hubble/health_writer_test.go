@@ -91,7 +91,7 @@ func TestHealthWriterCounterAccumulation(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(dir, "testhash", "cluster-health.json"))
 	require.NoError(t, err)
 
-	var report clusterHealthReport
+	var report ClusterHealthReport
 	require.NoError(t, json.Unmarshal(data, &report))
 	require.Len(t, report.Drops, 1)
 	assert.Equal(t, uint64(3), report.Drops[0].Count)
@@ -110,7 +110,7 @@ func TestHealthWriterByNodeCounter(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(dir, "testhash", "cluster-health.json"))
 	require.NoError(t, err)
 
-	var report clusterHealthReport
+	var report ClusterHealthReport
 	require.NoError(t, json.Unmarshal(data, &report))
 	require.Len(t, report.Drops, 1)
 	assert.Equal(t, uint64(2), report.Drops[0].ByNode["node-1"])
@@ -130,7 +130,7 @@ func TestHealthWriterByWorkloadCounter(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(dir, "testhash", "cluster-health.json"))
 	require.NoError(t, err)
 
-	var report clusterHealthReport
+	var report ClusterHealthReport
 	require.NoError(t, json.Unmarshal(data, &report))
 	require.Len(t, report.Drops, 1)
 	// workload key: "prod/adserver" and "prod/frontend" (namespace from DropEvent + workload)
@@ -149,7 +149,7 @@ func TestHealthWriterAtomicWrite(t *testing.T) {
 	data, err := os.ReadFile(expectedPath)
 	require.NoError(t, err, "cluster-health.json must exist at evidence dir + hash + filename")
 
-	var report clusterHealthReport
+	var report ClusterHealthReport
 	require.NoError(t, json.Unmarshal(data, &report), "file must be valid JSON")
 }
 
@@ -191,7 +191,7 @@ func TestHealthWriterSessionBlock(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(dir, "testhash", "cluster-health.json"))
 	require.NoError(t, err)
 
-	var report clusterHealthReport
+	var report ClusterHealthReport
 	require.NoError(t, json.Unmarshal(data, &report))
 	assert.Equal(t, uint64(42), report.Session.FlowsSeen)
 	assert.Equal(t, uint64(7), report.Session.InfraDropTotal)
@@ -289,7 +289,7 @@ func TestHealthWriterDropsSorted(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(dir, "testhash", "cluster-health.json"))
 	require.NoError(t, err)
 
-	var report clusterHealthReport
+	var report ClusterHealthReport
 	require.NoError(t, json.Unmarshal(data, &report))
 	require.Len(t, report.Drops, 2)
 	// Verify sorted by reason name (CT_MAP_INSERTION_FAILED < SERVICE_BACKEND_NOT_FOUND)

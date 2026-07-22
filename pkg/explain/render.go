@@ -1,4 +1,4 @@
-package main
+package explain
 
 import (
 	"encoding/json"
@@ -19,13 +19,17 @@ const (
 	ansiGreen = "\x1b[32m"
 )
 
-type explainOutput struct {
+// Output is the JSON/YAML rendering shape shared by `cpg explain` and the
+// get_evidence MCP tool.
+type Output struct {
 	Policy       evidence.PolicyRef      `json:"policy"`
 	Sessions     []evidence.SessionInfo  `json:"sessions"`
 	MatchedRules []evidence.RuleEvidence `json:"matched_rules"`
 }
 
-func renderText(w io.Writer, pe evidence.PolicyEvidence, matched []evidence.RuleEvidence, samplesLimit int, color bool) error {
+// RenderText writes a human-readable, optionally ANSI-colored rendering of
+// the matched rules to w.
+func RenderText(w io.Writer, pe evidence.PolicyEvidence, matched []evidence.RuleEvidence, samplesLimit int, color bool) error {
 	c := colorizer{enabled: color}
 	fmt.Fprintf(w, "%sPolicy:%s %s (%s)\n", c.bold(), c.reset(), pe.Policy.Name, pe.Policy.Namespace)
 	if len(pe.Sessions) > 0 {
@@ -130,15 +134,19 @@ func fmtEndpoint(e evidence.FlowEndpoint) string {
 	return "<unknown>"
 }
 
-func renderJSON(w io.Writer, pe evidence.PolicyEvidence, matched []evidence.RuleEvidence) error {
-	out := explainOutput{Policy: pe.Policy, Sessions: pe.Sessions, MatchedRules: matched}
+// RenderJSON writes pe/matched as 2-space-indented JSON to w. The exact
+// indentation is part of QRY-03's byte-identical contract between `cpg
+// explain --output json` and the get_evidence MCP tool.
+func RenderJSON(w io.Writer, pe evidence.PolicyEvidence, matched []evidence.RuleEvidence) error {
+	out := Output{Policy: pe.Policy, Sessions: pe.Sessions, MatchedRules: matched}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(out)
 }
 
-func renderYAML(w io.Writer, pe evidence.PolicyEvidence, matched []evidence.RuleEvidence) error {
-	out := explainOutput{Policy: pe.Policy, Sessions: pe.Sessions, MatchedRules: matched}
+// RenderYAML writes pe/matched as YAML to w.
+func RenderYAML(w io.Writer, pe evidence.PolicyEvidence, matched []evidence.RuleEvidence) error {
+	out := Output{Policy: pe.Policy, Sessions: pe.Sessions, MatchedRules: matched}
 	data, err := sigyaml.Marshal(out)
 	if err != nil {
 		return err

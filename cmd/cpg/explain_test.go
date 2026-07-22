@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/SoulKyu/cpg/pkg/evidence"
+	"github.com/SoulKyu/cpg/pkg/explain"
 )
 
 func sampleEvidence() evidence.PolicyEvidence {
@@ -37,153 +38,6 @@ func sampleEvidence() evidence.PolicyEvidence {
 			}},
 		}},
 	}
-}
-
-func TestRenderTextShowsRuleMeta(t *testing.T) {
-	buf := new(bytes.Buffer)
-	require.NoError(t, renderText(buf, sampleEvidence(), sampleEvidence().Rules, 10, false))
-
-	out := buf.String()
-	assert.Contains(t, out, "Policy: cpg-api")
-	assert.Contains(t, out, "Ingress rule")
-	assert.Contains(t, out, "app=x")
-	assert.Contains(t, out, "8080/TCP")
-	assert.Contains(t, out, "Flow count:  3")
-	assert.Contains(t, out, "default/client")
-}
-
-func TestRenderJSON(t *testing.T) {
-	buf := new(bytes.Buffer)
-	require.NoError(t, renderJSON(buf, sampleEvidence(), sampleEvidence().Rules))
-	var got explainOutput
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &got))
-	assert.Equal(t, "cpg-api", got.Policy.Name)
-	assert.Len(t, got.MatchedRules, 1)
-}
-
-func TestRenderYAML(t *testing.T) {
-	buf := new(bytes.Buffer)
-	require.NoError(t, renderYAML(buf, sampleEvidence(), sampleEvidence().Rules))
-	assert.Contains(t, buf.String(), "policy:")
-	assert.Contains(t, buf.String(), "matched_rules:")
-}
-
-// TestWriteRuleEmptyDirection guards against a panic when a rule from malformed
-// or hand-edited evidence JSON has an empty Direction. Indexing Direction[:1]
-// would slice-bounds-panic; the guarded title falls back to "Rule".
-func TestWriteRuleEmptyDirection(t *testing.T) {
-	r := sampleEvidence().Rules[0]
-	r.Direction = ""
-
-	buf := new(bytes.Buffer)
-	require.NotPanics(t, func() {
-		writeRule(buf, colorizer{enabled: false}, r, 10)
-	})
-	assert.Contains(t, buf.String(), "Rule")
-}
-
-func httpRuleEvidence() evidence.RuleEvidence {
-	return evidence.RuleEvidence{
-		Key: "egress:ep:app=api:TCP:80:http:GET:^/api/v1/users$", Direction: "egress",
-		Peer: evidence.PeerRef{Type: "endpoint", Labels: map[string]string{"app": "api"}},
-		Port: "80", Protocol: "TCP",
-		L7: &evidence.L7Ref{
-			Protocol:   "http",
-			HTTPMethod: "GET",
-			HTTPPath:   "^/api/v1/users$",
-		},
-		FlowCount: 2,
-		FirstSeen: time.Date(2026, 4, 24, 14, 0, 0, 0, time.UTC),
-		LastSeen:  time.Date(2026, 4, 24, 14, 5, 0, 0, time.UTC),
-	}
-}
-
-func dnsRuleEvidence() evidence.RuleEvidence {
-	return evidence.RuleEvidence{
-		Key: "egress:fqdn:api.example.com:UDP:53:dns:api.example.com", Direction: "egress",
-		Peer: evidence.PeerRef{Type: "entity", Entity: "world"},
-		Port: "53", Protocol: "UDP",
-		L7: &evidence.L7Ref{
-			Protocol:     "dns",
-			DNSMatchName: "api.example.com",
-		},
-		FlowCount: 1,
-		FirstSeen: time.Date(2026, 4, 24, 14, 0, 0, 0, time.UTC),
-		LastSeen:  time.Date(2026, 4, 24, 14, 1, 0, 0, time.UTC),
-	}
-}
-
-func TestRenderTextL7HTTP(t *testing.T) {
-	pe := sampleEvidence()
-	r := httpRuleEvidence()
-	buf := new(bytes.Buffer)
-	require.NoError(t, renderText(buf, pe, []evidence.RuleEvidence{r}, 10, false))
-	out := buf.String()
-	assert.Contains(t, out, "L7:")
-	assert.Contains(t, out, "HTTP GET ^/api/v1/users$")
-}
-
-func TestRenderTextL7DNS(t *testing.T) {
-	pe := sampleEvidence()
-	r := dnsRuleEvidence()
-	buf := new(bytes.Buffer)
-	require.NoError(t, renderText(buf, pe, []evidence.RuleEvidence{r}, 10, false))
-	out := buf.String()
-	assert.Contains(t, out, "L7:")
-	assert.Contains(t, out, "DNS api.example.com")
-}
-
-func TestRenderTextL4OnlyNoL7Line(t *testing.T) {
-	// L4-only rule must not produce any "L7:" line — preserves v1.1 layout.
-	pe := sampleEvidence()
-	buf := new(bytes.Buffer)
-	require.NoError(t, renderText(buf, pe, pe.Rules, 10, false))
-	out := buf.String()
-	assert.NotContains(t, out, "L7:")
-}
-
-func TestRenderJSONL7HTTP(t *testing.T) {
-	pe := sampleEvidence()
-	r := httpRuleEvidence()
-	buf := new(bytes.Buffer)
-	require.NoError(t, renderJSON(buf, pe, []evidence.RuleEvidence{r}))
-	var got explainOutput
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &got))
-	require.Len(t, got.MatchedRules, 1)
-	require.NotNil(t, got.MatchedRules[0].L7)
-	assert.Equal(t, "http", got.MatchedRules[0].L7.Protocol)
-	assert.Equal(t, "GET", got.MatchedRules[0].L7.HTTPMethod)
-	assert.Equal(t, "^/api/v1/users$", got.MatchedRules[0].L7.HTTPPath)
-	// omitempty: dns_matchname must NOT be present in HTTP rule's JSON.
-	assert.NotContains(t, buf.String(), "dns_matchname")
-}
-
-func TestRenderJSONL4OnlyOmitsL7(t *testing.T) {
-	pe := sampleEvidence()
-	buf := new(bytes.Buffer)
-	require.NoError(t, renderJSON(buf, pe, pe.Rules))
-	// L4-only rule should omit l7 key entirely (omitempty pointer).
-	assert.NotContains(t, buf.String(), `"l7"`)
-}
-
-func TestRenderYAMLL7DNS(t *testing.T) {
-	pe := sampleEvidence()
-	r := dnsRuleEvidence()
-	buf := new(bytes.Buffer)
-	require.NoError(t, renderYAML(buf, pe, []evidence.RuleEvidence{r}))
-	out := buf.String()
-	assert.Contains(t, out, "l7:")
-	assert.Contains(t, out, "protocol: dns")
-	assert.Contains(t, out, "dns_matchname: api.example.com")
-}
-
-func TestRenderTextEmptyMatchListsAvailable(t *testing.T) {
-	buf := new(bytes.Buffer)
-	err := renderText(buf, sampleEvidence(), nil, 10, false)
-	require.NoError(t, err)
-	assert.Contains(t, buf.String(), "No rules matched")
-	assert.Contains(t, buf.String(), "Available rules:")
-	assert.Contains(t, buf.String(), "app=x")
 }
 
 func seedEvidence(t *testing.T, evDir, outDir string) {
@@ -267,7 +121,7 @@ func TestExplainJSONOutput(t *testing.T) {
 	cmd.SetArgs([]string{"prod/api", "--output-dir", outDir, "--evidence-dir", evDir, "--json"})
 	require.NoError(t, cmd.Execute())
 
-	var got explainOutput
+	var got explain.Output
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &got))
 	assert.Len(t, got.MatchedRules, 1)
 }

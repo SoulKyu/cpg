@@ -1,531 +1,199 @@
-# Feature Research — cpg v1.3 (Cluster Health Surfacing)
+# Feature Research
 
-**Domain:** Drop-reason classification and cluster health reporting in a policy-from-traffic CLI
-**Researched:** 2026-04-26
-**Confidence:** HIGH on Cilium drop reason enum (direct proto + source); HIGH on bucket taxonomy (justified per-reason below); MEDIUM on cluster-health.json schema (design choice informed by analogues); LOW on competitor drop-filtering behavior (limited public documentation)
+**Domain:** MCP (Model Context Protocol) tool surface for a readonly Kubernetes/Cilium network-policy observability CLI (`cpg mcp`)
+**Researched:** 2026-07-20
+**Confidence:** HIGH (core MCP spec claims verified via Context7 + official modelcontextprotocol.io spec pages incl. the 2025-11-25 revision and the accepted SEP-2567; ecosystem-adoption claims and Claude Code specifics MEDIUM — WebSearch-sourced, cross-checked against at least one primary/official source each)
 
-> **Scope reminder.** v1.3 ships **cluster-health surfacing only**. OpenMetrics/Prometheus export,
-> semantic policy intersection, `cpg apply`, policy consolidation, and L7-FUT-* are explicitly
-> **out** (deferred per `.planning/PROJECT.md`). This document supersedes the v1.2 FEATURES.md
-> for the current milestone.
+**Scope note:** This file researches ONLY the new v1.5 MCP feature surface (`cpg mcp` subcommand, session tools, query tools). It does not re-research already-shipped `cpg generate`/`replay`/`explain` functionality — those are treated as existing capabilities the MCP layer wraps.
 
----
+## Feature Landscape
 
-## Trigger (Production Bug)
+### Table Stakes (Users Expect These)
 
-`mmtro-adserver` ingress drop with `drop_reason_desc = CT_MAP_INSERTION_FAILED` (Cilium conntrack
-map full — infra issue) caused cpg to generate a useless `cpg-mmtro-adserver` CNP. The bug class:
-**cpg trusts every Hubble DROPPED verdict as a policy-fixable event**, which is wrong.
-
-Approximately 15–20% of Cilium drop reasons are infra/datapath failures that no CNP can fix.
-Generating policies for them is actively harmful — the policy is never applied usefully and hides
-the real cluster problem from the operator.
-
----
-
-## 1. Drop Reason Taxonomy — CANONICAL CLASSIFICATION TABLE
-
-**Source:** `api/v1/flow/flow.proto` (DropReason enum) + `pkg/monitor/api/drop.go` (string names)
-from `github.com/cilium/cilium` main branch, verified 2026-04-26.
-
-**Bucket definitions:**
-
-- **POLICY** — The drop is a direct consequence of an absent or misconfigured CiliumNetworkPolicy.
-  Adding or correcting a CNP *will* fix the drop. cpg MUST generate a policy.
-- **INFRA** — The drop is a datapath, map, routing, encryption, or service-mesh infrastructure
-  failure. No CNP can fix it. cpg MUST NOT generate a policy; the SRE needs cluster-level action.
-- **TRANSIENT** — The drop is expected during startup/teardown races or normal Cilium datapath
-  operation (identity allocation lag, CT state transitions). cpg SHOULD NOT generate a policy;
-  the drop typically resolves without operator action.
-- **NOISE** — Internal Cilium datapath bookkeeping events that surface as DROPPED in Hubble but
-  are not errors. cpg MUST ignore them entirely.
-- **SCOPED** — Requires a CiliumClusterwideNetworkPolicy (reserved identities). cpg already
-  detects and warns via `isActionableReserved`; these are not policy-fixable by cpg (namespace-
-  scoped CNP only). Map to infra for health reporting; keep existing warn path.
-
-| Enum Constant (flow.proto) | Code | Human-readable (drop.go) | Bucket | Rationale |
-|----------------------------|------|--------------------------|--------|-----------|
-| `DROP_REASON_UNKNOWN` | 0 | unknown | TRANSIENT | No signal; treat as transient, do not generate policy |
-| `INVALID_SOURCE_MAC` | 130 | Invalid source mac | INFRA | Layer 2 hardware/overlay misconfiguration; CNP cannot fix |
-| `INVALID_DESTINATION_MAC` | 131 | Invalid destination mac | INFRA | Layer 2 hardware/overlay misconfiguration; CNP cannot fix |
-| `INVALID_SOURCE_IP` | 132 | Invalid source ip | INFRA | Spoofed or misconfigured source; datapath enforcement |
-| `POLICY_DENIED` | 133 | Policy denied | **POLICY** | Primary signal: L3/L4 deny due to absent allow rule |
-| `INVALID_PACKET_DROPPED` | 134 | Invalid packet | INFRA | Malformed packet; datapath protection |
-| `CT_TRUNCATED_OR_INVALID_HEADER` | 135 | CT: Truncated or invalid header | INFRA | Conntrack BPF map corruption or malformed TCP |
-| `CT_MISSING_TCP_ACK_FLAG` | 136 | Fragmentation needed | INFRA | TCP state machine issue; not policy |
-| `CT_UNKNOWN_L4_PROTOCOL` | 137 | CT: Unknown L4 protocol | INFRA | Unknown L4 in conntrack; datapath gap |
-| `CT_CANNOT_CREATE_ENTRY_FROM_PACKET` | 138 | _(deprecated)_ | INFRA | CT map write failure; deprecated but keep bucket |
-| `UNSUPPORTED_L3_PROTOCOL` | 139 | Unsupported L3 protocol | INFRA | Non-IP traffic; datapath does not support |
-| `MISSED_TAIL_CALL` | 140 | Missed tail call | INFRA | BPF tail-call table miss; kernel/cilium version mismatch |
-| `ERROR_WRITING_TO_PACKET` | 141 | Error writing to packet | INFRA | BPF packet write failure; datapath bug |
-| `UNKNOWN_L4_PROTOCOL` | 142 | Unknown L4 protocol | INFRA | Unrecognized L4 in policy engine |
-| `UNKNOWN_ICMPV4_CODE` | 143 | Unknown ICMPv4 code | INFRA | Unexpected ICMP variant; datapath gap |
-| `UNKNOWN_ICMPV4_TYPE` | 144 | Unknown ICMPv4 type | INFRA | Unexpected ICMP variant; datapath gap |
-| `UNKNOWN_ICMPV6_CODE` | 145 | Unknown ICMPv6 code | INFRA | Unexpected ICMPv6 variant |
-| `UNKNOWN_ICMPV6_TYPE` | 146 | Unknown ICMPv6 type | INFRA | Unexpected ICMPv6 variant |
-| `ERROR_RETRIEVING_TUNNEL_KEY` | 147 | Error retrieving tunnel key | INFRA | Tunnel/overlay metadata failure |
-| `ERROR_RETRIEVING_TUNNEL_OPTIONS` | 148 | _(deprecated)_ | INFRA | Tunnel option lookup failure |
-| `INVALID_GENEVE_OPTION` | 149 | _(deprecated)_ | INFRA | Geneve overlay misconfiguration |
-| `UNKNOWN_L3_TARGET_ADDRESS` | 150 | Unknown L3 target address | INFRA | Next-hop resolution failure; routing issue |
-| `STALE_OR_UNROUTABLE_IP` | 151 | Stale or unroutable IP | TRANSIENT | Pod restart / IP reuse lag; resolves when CT entries age out |
-| `NO_MATCHING_LOCAL_CONTAINER_FOUND` | 152 | _(deprecated)_ | TRANSIENT | Pre-endpoint-ID-table era; legacy |
-| `ERROR_WHILE_CORRECTING_L3_CHECKSUM` | 153 | Error while correcting L3 checksum | INFRA | Hardware offload / BPF checksum bug |
-| `ERROR_WHILE_CORRECTING_L4_CHECKSUM` | 154 | Error while correcting L4 checksum | INFRA | Hardware offload / BPF checksum bug |
-| `CT_MAP_INSERTION_FAILED` | 155 | CT: Map insertion failed | **INFRA** | **The triggering prod bug.** Conntrack BPF map full; fix: raise `bpf-ct-global-tcp-max` / lower GC interval. CNP cannot fix. |
-| `INVALID_IPV6_EXTENSION_HEADER` | 156 | Invalid IPv6 extension header | INFRA | Unsupported IPv6 extension; datapath gap |
-| `IP_FRAGMENTATION_NOT_SUPPORTED` | 157 | IP fragmentation not supported | INFRA | Fragmented packets; MTU or overlay config |
-| `SERVICE_BACKEND_NOT_FOUND` | 158 | Service backend not found | INFRA | Cilium kube-proxy LB map stale; re-create backends or check EndpointSlice sync |
-| `NO_TUNNEL_OR_ENCAPSULATION_ENDPOINT` | 160 | No tunnel/encapsulation endpoint (datapath BUG!) | INFRA | Overlay routing gap; CNP cannot fix |
-| `FAILED_TO_INSERT_INTO_PROXYMAP` | 161 | NAT 46/64 not enabled | INFRA | NAT46/64 feature disabled; cluster config |
-| `REACHED_EDT_RATE_LIMITING_DROP_HORIZON` | 162 | Reached EDT rate-limiting drop horizon | INFRA | BPF bandwidth manager rate limit hit; tune `bandwidth-manager` or check NIC limits |
-| `UNKNOWN_CONNECTION_TRACKING_STATE` | 163 | Unknown connection tracking state | INFRA | CT state machine inconsistency; Cilium agent restart may help |
-| `LOCAL_HOST_IS_UNREACHABLE` | 164 | Local host is unreachable | INFRA | Node-level routing gap |
-| `NO_CONFIGURATION_AVAILABLE_TO_PERFORM_POLICY_DECISION` | 165 | No configuration available for policy decision | **TRANSIENT** | Endpoint not yet fully programmed; normal during pod startup race. Resolves without action within seconds. |
-| `UNSUPPORTED_L2_PROTOCOL` | 166 | Unsupported L2 protocol | INFRA | Non-Ethernet L2; datapath gap |
-| `NO_MAPPING_FOR_NAT_MASQUERADE` | 167 | No mapping for NAT masquerade | INFRA | SNAT table miss; NAT config issue |
-| `UNSUPPORTED_PROTOCOL_FOR_NAT_MASQUERADE` | 168 | Unsupported protocol for NAT masquerade | INFRA | Protocol not supported by SNAT engine |
-| `FIB_LOOKUP_FAILED` | 169 | FIB lookup failed | INFRA | Missing kernel route / ARP neighbor; routing misconfiguration |
-| `ENCAPSULATION_TRAFFIC_IS_PROHIBITED` | 170 | Encapsulation traffic is prohibited | INFRA | Tunnel-in-tunnel blocked; overlay config |
-| `INVALID_IDENTITY` | 171 | Invalid identity | TRANSIENT | Identity not yet allocated during pod startup; resolves when kvstore propagates. Also seen on Egress Gateway misconfiguration — see remediation. |
-| `UNKNOWN_SENDER` | 172 | Unknown sender | TRANSIENT | Source identity not yet known to this node; propagation lag |
-| `NAT_NOT_NEEDED` | 173 | NAT not needed | NOISE | Internal Cilium bookkeeping; not an error |
-| `IS_A_CLUSTERIP` | 174 | Is a ClusterIP | NOISE | Expected datapath short-circuit for ClusterIP traffic |
-| `FIRST_LOGICAL_DATAGRAM_FRAGMENT_NOT_FOUND` | 175 | First logical datagram fragment not found | INFRA | IP fragment reassembly failure |
-| `FORBIDDEN_ICMPV6_MESSAGE` | 176 | Forbidden ICMPv6 message | INFRA | ICMPv6 type blocked by datapath policy |
-| `DENIED_BY_LB_SRC_RANGE_CHECK` | 177 | Denied by LB src range check | **POLICY** | LoadBalancer `spec.loadBalancerSourceRanges` intentional deny — IS a policy-fixable event: operator must add source CIDR to Service. Not a CNP but a Service field. cpg cannot auto-fix but SHOULD surface it. |
-| `SOCKET_LOOKUP_FAILED` | 178 | Socket lookup failed | INFRA | BPF socket-LB table miss |
-| `SOCKET_ASSIGN_FAILED` | 179 | Socket assign failed | INFRA | BPF socket assignment error |
-| `PROXY_REDIRECTION_NOT_SUPPORTED_FOR_PROTOCOL` | 180 | Proxy redirection not supported for protocol | INFRA | Protocol not interceptable by Envoy proxy |
-| `POLICY_DENY` | 181 | Policy denied by denylist | **POLICY** | Explicit `denylist` rule in CNP hit; separate from POLICY_DENIED (133). Both are policy-fixable (review/remove the deny rule). |
-| `VLAN_FILTERED` | 182 | VLAN traffic disallowed by VLAN filter | INFRA | VLAN filter config; not CNP |
-| `INVALID_VNI` | 183 | Incorrect VNI from VTEP | INFRA | VXLAN overlay misconfiguration |
-| `INVALID_TC_BUFFER` | 184 | Failed to update or lookup TC buffer | INFRA | TC BPF map failure |
-| `NO_SID` | 185 | No SID was found for the IP address | INFRA | SRv6 segment ID missing; SRv6 config issue |
-| `MISSING_SRV6_STATE` | 186 | _(deprecated)_ | INFRA | SRv6 state missing |
-| `NAT46` | 187 | L3 translation from IPv4 to IPv6 failed (NAT46) | INFRA | NAT46 translation failure; NAT config |
-| `NAT64` | 188 | L3 translation from IPv6 to IPv4 failed (NAT64) | INFRA | NAT64 translation failure; NAT config |
-| `AUTH_REQUIRED` | 189 | Authentication required | **POLICY** | Mutual authentication (SPIFFE/SPIRE) required but not established. Policy intent: add `authentication.mode: required` CNP, OR it may indicate mTLS infra not provisioned. Classify as POLICY because the trigger is a policy `require authentication` directive, but flag for human review — could be infra if SPIRE is misconfigured. |
-| `CT_NO_MAP_FOUND` | 190 | No conntrack map found | INFRA | CT BPF map completely absent; severe Cilium agent issue |
-| `SNAT_NO_MAP_FOUND` | 191 | No nat map found | INFRA | NAT BPF map absent; severe Cilium agent issue |
-| `INVALID_CLUSTER_ID` | 192 | Invalid ClusterID | INFRA | ClusterMesh misconfiguration |
-| `UNSUPPORTED_PROTOCOL_FOR_DSR_ENCAP` | 193 | Unsupported packet protocol for DSR encapsulation | INFRA | DSR encap config issue |
-| `NO_EGRESS_GATEWAY` | 194 | No egress gateway found | INFRA | Egress gateway policy matched but no gateway node; EgressGatewayPolicy misconfiguration |
-| `UNENCRYPTED_TRAFFIC` | 195 | Traffic is unencrypted | INFRA | WireGuard strict mode: unencrypted traffic blocked. Fix: verify encryption is enabled on all nodes. |
-| `TTL_EXCEEDED` | 196 | TTL exceeded | TRANSIENT | Normal network behavior; routing loop detection |
-| `NO_NODE_ID` | 197 | No node ID found | INFRA | Node identity not yet allocated; severe init issue |
-| `DROP_RATE_LIMITED` | 198 | Rate limited | INFRA | API rate limiting in cilium-agent; tune `--api-rate-limit` |
-| `IGMP_HANDLED` | 199 | IGMP handled | NOISE | IGMP multicast join/leave; expected datapath event |
-| `IGMP_SUBSCRIBED` | 200 | IGMP subscribed | NOISE | IGMP subscription; expected |
-| `MULTICAST_HANDLED` | 201 | Multicast handled | NOISE | Multicast handled internally; not an error |
-| `DROP_HOST_NOT_READY` | 202 | Host datapath not ready | **TRANSIENT** | Cilium agent starting up; drops during node init. Resolves without action. Flag if sustained (>60s after agent ready). |
-| `DROP_EP_NOT_READY` | 203 | Endpoint policy program not available | **TRANSIENT** | Pod endpoint being programmed (common on new pod start). Resolves within seconds. Flag if sustained. |
-| `DROP_NO_EGRESS_IP` | 204 | No Egress IP configured | INFRA | EgressGateway policy: no IP assigned to gateway interface; check EgressGatewayPolicy |
-| `DROP_PUNT_PROXY` | 205 | Punt to proxy | NOISE | Traffic redirected to Envoy proxy; this is a redirect, not a drop error |
-
-### Bucket Summary Counts (approx. from table above)
-
-| Bucket | Count | Examples |
-|--------|-------|---------|
-| POLICY | 4 | POLICY_DENIED, POLICY_DENY, AUTH_REQUIRED, DENIED_BY_LB_SRC_RANGE_CHECK |
-| INFRA | ~50 | CT_MAP_INSERTION_FAILED, FIB_LOOKUP_FAILED, SERVICE_BACKEND_NOT_FOUND, UNENCRYPTED_TRAFFIC |
-| TRANSIENT | ~8 | DROP_HOST_NOT_READY, DROP_EP_NOT_READY, NO_CONFIGURATION_AVAILABLE, INVALID_IDENTITY, UNKNOWN_SENDER, STALE_OR_UNROUTABLE_IP, TTL_EXCEEDED, DROP_REASON_UNKNOWN |
-| NOISE | 5 | NAT_NOT_NEEDED, IS_A_CLUSTERIP, IGMP_HANDLED, IGMP_SUBSCRIBED, MULTICAST_HANDLED, DROP_PUNT_PROXY |
-
-### Edge Cases and Ambiguities
-
-**AUTH_REQUIRED (189):** Could be POLICY (operator intended mTLS, policy is correct, just
-authentication infrastructure not set up) or INFRA (SPIRE agent down, certificates expired).
-Recommendation: classify as POLICY with a special `needs_review: true` flag in the health JSON,
-and include a remediation hint for both paths.
-
-**DENIED_BY_LB_SRC_RANGE_CHECK (177):** This is a real intentional policy block, but it is a
-Kubernetes Service field (`spec.loadBalancerSourceRanges`), not a CiliumNetworkPolicy. cpg cannot
-generate a fix. Classify as POLICY for health reporting (operator action needed), but suppress
-CNP generation with a distinct hint: "Fix: add source CIDR to Service.spec.loadBalancerSourceRanges".
-
-**INVALID_IDENTITY (171) and UNKNOWN_SENDER (172):** Transient under normal conditions (identity
-propagation lag, startup). Infra indicator if sustained at high volume on stable pods. Recommendation:
-classify as TRANSIENT; health JSON should include count + a time-window check hint.
-
----
-
-## 2. How Comparable Tools Handle Non-Policy Drops
-
-Research confidence: LOW (limited public docs; most tools are closed-source or do not expose filtering logic).
-
-### Inspektor Gadget `advise networkpolicy`
-- Captures TCP/UDP traffic via eBPF tracepoints on `connect()` / `accept()` syscalls, NOT on Cilium drop events.
-- **Does not see Cilium drop reasons at all.** Generates policies from observed allowed connections, not from drops.
-- Result: zero exposure to the infra-vs-policy problem. Different data model entirely.
-- Source: [inspektor-gadget.io/docs advise_networkpolicy](https://inspektor-gadget.io/docs/main/gadgets/advise_networkpolicy/) — observes activity, not drops.
-
-### Otterize Network Mapper
-- Similarly flow-based (not drop-based): maps what IS connected, then recommends allow rules.
-- No drop-reason classification needed — it never consumes DROP verdicts.
-- Source: [github.com/otterize/network-mapper](https://github.com/otterize/network-mapper)
-
-### Calico / Tigera `calicoctl`
-- No public `policy recommend` feature in OSS calicoctl (only in Tigera Enterprise via Flow Visualization UI).
-- Tigera Enterprise "Policy Recommendation Engine" (closed-source) is described as operating on
-  flow logs from the Calico node agent. No public documentation on drop classification.
-- **Conclusion:** No useful precedent from Calico OSS for drop-reason classification.
-
-### Key Insight from Competitors
-**All open-source generators work from allowed flows, not from drops.** cpg is unusual in
-consuming DROP verdicts directly from Hubble. This means cpg uniquely owns the infra-vs-policy
-classification problem — there is no industry-standard approach to copy.
-
-The general pattern for noisy-signal generators:
-1. **Source selection gate**: filter at source (only consume events that are unambiguously
-   policy-fixable). Inspektor Gadget does this by watching connections, not drops.
-2. **Post-capture labeling**: label events by root cause category before aggregating.
-   Terraform does this: `exit 0` (no change), `exit 2` (changes = actionable), `exit 1` (error).
-3. **Operator-override escape hatch**: `--ignore-X` flags for events where the tool's classification
-   is wrong for their environment. Pattern: `--ignore-protocol` (already shipped as PA5).
-
-cpg v1.3 should implement all three: (1) taxonomy-based gate in aggregator, (2) labels on health
-JSON entries, (3) `--ignore-drop-reason` flag.
-
----
-
-## 3. cluster-health.json Schema
-
-### Design Principles
-
-- **Structured for both human reading and programmatic consumption.** Not a log file.
-- **Granularity: reason × node × workload** (PROJECT.md spec). All three dimensions present.
-- **Remediation hints are doc links, not prose.** Deep links to Cilium docs pages.
-- **Schema version pinned.** Same discipline as `evidence/schema.go`.
-- **No OpenMetrics/Prometheus in v1.3.** The file IS the export; Prometheus deferred.
-
-### Concrete Schema Sketch
-
-```json
-{
-  "schema_version": 1,
-  "generated_at": "2026-04-26T14:32:00Z",
-  "session_id": "2026-04-26T14:30:00Z-a3f1",
-  "cpg_version": "1.3.0",
-  "summary": {
-    "total_infra_drops": 412,
-    "total_transient_drops": 87,
-    "total_noise_drops": 23,
-    "total_policy_drops": 1204,
-    "distinct_infra_reasons": 3,
-    "distinct_infra_nodes": 2,
-    "distinct_infra_workloads": 5
-  },
-  "infra_drops": [
-    {
-      "reason": "CT_MAP_INSERTION_FAILED",
-      "bucket": "infra",
-      "count": 341,
-      "first_seen": "2026-04-26T14:30:05Z",
-      "last_seen":  "2026-04-26T14:31:58Z",
-      "severity": "critical",
-      "nodes": [
-        {"node": "node-a.example.com", "count": 310},
-        {"node": "node-b.example.com", "count": 31}
-      ],
-      "workloads": [
-        {"namespace": "mmtro", "workload": "adserver", "count": 205},
-        {"namespace": "mmtro", "workload": "tracker", "count": 136}
-      ],
-      "remediation": {
-        "summary": "Conntrack BPF map full. Raise bpf-ct-global-tcp-max or lower conntrack-gc-interval.",
-        "docs_url": "https://docs.cilium.io/en/stable/operations/troubleshooting/#handling-drop-ct-map-insertion-failed",
-        "actions": [
-          "kubectl -n kube-system edit configmap cilium-config → increase bpf-ct-global-tcp-max",
-          "helm upgrade cilium cilium/cilium --set conntrackGCInterval=30s"
-        ]
-      }
-    }
-  ],
-  "transient_drops": [
-    {
-      "reason": "DROP_EP_NOT_READY",
-      "bucket": "transient",
-      "count": 87,
-      "first_seen": "2026-04-26T14:30:01Z",
-      "last_seen":  "2026-04-26T14:30:08Z",
-      "severity": "low",
-      "nodes": [...],
-      "workloads": [...],
-      "remediation": {
-        "summary": "Endpoint BPF program not yet loaded. Normal during pod startup. Investigate only if sustained > 60s.",
-        "docs_url": "https://docs.cilium.io/en/stable/operations/troubleshooting/"
-      }
-    }
-  ]
-}
-```
-
-### Go Struct Sketch (pkg/health)
-
-```go
-type ClusterHealth struct {
-    SchemaVersion int               `json:"schema_version"`
-    GeneratedAt   time.Time         `json:"generated_at"`
-    SessionID     string            `json:"session_id"`
-    CPGVersion    string            `json:"cpg_version"`
-    Summary       HealthSummary     `json:"summary"`
-    InfraDrops    []DropReasonEntry `json:"infra_drops,omitempty"`
-    TransientDrops []DropReasonEntry `json:"transient_drops,omitempty"`
-    // NOISE not emitted (internal bookkeeping, no operator value)
-}
-
-type HealthSummary struct {
-    TotalInfraDrops       int64 `json:"total_infra_drops"`
-    TotalTransientDrops   int64 `json:"total_transient_drops"`
-    TotalNoiseDrops       int64 `json:"total_noise_drops"`
-    TotalPolicyDrops      int64 `json:"total_policy_drops"`
-    DistinctInfraReasons  int   `json:"distinct_infra_reasons"`
-    DistinctInfraNodes    int   `json:"distinct_infra_nodes"`
-    DistinctInfraWorkloads int  `json:"distinct_infra_workloads"`
-}
-
-type DropReasonEntry struct {
-    Reason      string            `json:"reason"`       // enum name e.g. "CT_MAP_INSERTION_FAILED"
-    Bucket      string            `json:"bucket"`       // "infra" | "transient"
-    Count       int64             `json:"count"`
-    FirstSeen   time.Time         `json:"first_seen"`
-    LastSeen    time.Time         `json:"last_seen"`
-    Severity    string            `json:"severity"`     // "critical" | "high" | "medium" | "low"
-    Nodes       []NodeCount       `json:"nodes"`
-    Workloads   []WorkloadCount   `json:"workloads"`
-    Remediation RemediationHint   `json:"remediation"`
-}
-
-type NodeCount struct {
-    Node  string `json:"node"`
-    Count int64  `json:"count"`
-}
-
-type WorkloadCount struct {
-    Namespace string `json:"namespace"`
-    Workload  string `json:"workload"`
-    Count     int64  `json:"count"`
-}
-
-type RemediationHint struct {
-    Summary  string   `json:"summary"`
-    DocsURL  string   `json:"docs_url"`
-    Actions  []string `json:"actions,omitempty"`
-}
-```
-
-### Granularity Decision
-
-**Emit all three dimensions (reason × node × workload)** in v1.3. Rationale:
-- Node dimension: `CT_MAP_INSERTION_FAILED` is node-local (BPF map per-node). If one node is
-  dropping 90% of CT failures, that node needs cilium-config tuning, not the whole cluster.
-- Workload dimension: `SERVICE_BACKEND_NOT_FOUND` may be isolated to one workload's traffic
-  pattern. Per-workload count helps the operator correlate with a specific service.
-- Reason dimension: obvious — different reasons have different remediation paths.
-
-Top-N truncation: emit max 10 nodes and 10 workloads per reason entry. Add `truncated: true`
-field if more exist. This prevents enormous JSON for cluster-wide `DROP_EP_NOT_READY` storms.
-
----
-
-## 4. Session Summary Rendering
-
-### Conventions from Similar CLI Tools
-
-**Terraform:** Severity ordering in plan output: errors first, warnings second, changes third.
-Color: red for errors, yellow for warnings, green for no-change. Structured blocks with headers.
-
-**kubectl:** No color by default; ANSI only on TTY (already cpg convention). Uses indented
-sub-items for related warnings. Groups by type/resource.
-
-**tflint:** Exit 1 for errors, exit 0 for warnings (warnings do not fail the process). Separate
-warning block at end of output.
-
-### Recommended Session Summary Block (for `pipeline.go SessionStats.Log()`)
-
-```
---- Session Summary ---
-Duration:       45s
-Flows seen:     1,204
-Policies written: 12
-
-INFRA DROPS (3 distinct reasons — cluster health issues, NO policy generated):
-  CT_MAP_INSERTION_FAILED [CRITICAL]  341 drops  (node-a: 310, node-b: 31)
-    → Conntrack map full. Docs: https://docs.cilium.io/...troubleshooting/#ct-map-insertion-failed
-  FIB_LOOKUP_FAILED [HIGH]            28 drops
-    → Kernel routing gap. Check cilium connectivity test.
-  SERVICE_BACKEND_NOT_FOUND [HIGH]    43 drops   (mmtro/adserver: 31, payment/api: 12)
-    → Stale LB backend map. Re-create service backends.
-
-TRANSIENT DROPS (2 reasons — normal during pod startup):
-  DROP_EP_NOT_READY    87 drops
-  DROP_HOST_NOT_READY   3 drops
-
-Cluster health file: ./cluster-health.json
-```
-
-**Ordering rules:**
-1. INFRA before TRANSIENT (operator action needed for infra; not for transient)
-2. Within bucket: by severity (critical → high → medium → low), then by count descending
-3. NOISE never shown in summary (internal bookkeeping)
-4. TRANSIENT shown as a brief count-only block (no remediation hints — they don't need action)
-5. Hide TRANSIENT block entirely if total_transient < 5 AND no INFRA drops (very clean sessions)
-6. Top-3 nodes/workloads inline in the summary line; full detail in cluster-health.json
-
-**Color (when ANSI enabled — already tied to TTY detection in cpg):**
-- CRITICAL: red bold
-- HIGH: red
-- MEDIUM: yellow
-- LOW: dim/gray
-- TRANSIENT section header: yellow
-- INFRA section header: red bold
-
----
-
-## 5. Exit Code Conventions
-
-### Industry Survey
-
-| Tool | Exit 0 | Exit 1 | Exit 2 | Notes |
-|------|--------|--------|--------|-------|
-| terraform | success, no changes | error | success + changes detected | `--detailed-exitcode` opt-in |
-| tflint | no issues | error (parse/internal) | violations found | warnings do NOT cause non-zero |
-| kubectl | success | error | — | no warning/error split |
-| golangci-lint | no issues | issues found | usage error | |
-| trivy | no vulns | vulns found (scan failed) | usage error | |
-
-### Recommendation for cpg v1.3
-
-**Default behavior (no `--fail-on-infra-drops`):**
-- Exit 0 always (current behavior preserved). INFRA drops are surfaced in summary + JSON but do
-  not affect exit code. Rationale: cpg is a generation tool; infra health is advisory output.
-  Existing CI pipelines that use `cpg replay` in checks must not break.
-
-**`--fail-on-infra-drops` opt-in:**
-- Exit 0: no infra drops observed
-- **Exit 1: infra drops observed** — the only non-zero code cpg uses for infra detection
-- Exit 2 is NOT used (avoid terraform collision confusion)
-- Internal errors (connection failure, write error) remain exit 1 (current behavior, via `cobra`)
-
-**Rationale for NOT using exit 2:**
-- Terraform's `exit 2 = changes detected` is well-known in the K8s/platform space. Using exit 2
-  for "infra drops found" would create ambiguity in scripts that wrap both tools.
-- The `--fail-on-infra-drops` flag is explicit opt-in; its semantics are documented at the flag
-  level. No need for a secondary exit code.
-
-**`--fail-on-infra-drops` is Cobra-compatible:** Return a non-nil sentinel error from `RunE`.
-Use a dedicated error type `ErrInfraDropsDetected` so callers can detect it programmatically.
-
----
-
-## Table Stakes (v1.3 Must-Have)
-
-Features that operators will expect to be present. Missing any = milestone incomplete.
+These are the baseline conventions every credible infra/observability MCP server (AWS CloudWatch, GitHub, Grafana) already follows. Missing them makes cpg's MCP server feel broken or unsafe to an LLM harness, even if the underlying data is correct.
 
 | Feature | Why Expected | Complexity | Notes |
 |---------|--------------|------------|-------|
-| Drop-reason taxonomy embedded in code | Without it, cpg generates bogus policies for CT_MAP_INSERTION_FAILED etc. This is the core bug fix. | LOW-MEDIUM (data + lookup) | Const table in `pkg/health` (new package) or `pkg/hubble`. Pure data; no external calls. |
-| Aggregator skips non-policy drops (INFRA + TRANSIENT + NOISE) | CNP generation for infra drops is actively harmful. | LOW (add gate in aggregator before bucketing) | Parity with `--ignore-protocol` (PA5): drop before `keyFromFlow`. Count and record in new HealthAccumulator. |
-| cluster-health.json written alongside policy output | SRE needs a structured artifact to act on. JSON is machine-readable for alerting pipelines. | MEDIUM (new writer + schema) | New `pkg/health` package with `HealthWriter`. New `ClusterHealth` JSON schema (schema_version: 1). |
-| Session summary block with INFRA drops listed | Terminal-first UX. Operator sees the cluster problem immediately without parsing JSON. | LOW (extend SessionStats.Log) | Add `InfraDrops map[string]int64` and `TransientDrops map[string]int64` to `SessionStats`. |
-| `--ignore-drop-reason` flag | Same escape hatch pattern as `--ignore-protocol` (PA5). Critical for production: some operators deliberately tolerate certain infra drops. | LOW (add to aggregator, mirror PA5 exactly) | Comma-separated repeatable flag. Validated against known enum names. |
-| `--fail-on-infra-drops` exit code | CI/cron use case: alert when cluster health degrades. Zero config change for existing pipelines. | LOW (add sentinel error return) | Opt-in only. Exit 1 on infra drops. |
+| snake_case verb_noun tool names, no `cpg_` prefix | Ecosystem convention (GitHub MCP: `get_file_contents`, `list_branches`; AWS design guidelines mandate snake_case). Hosts already namespace by server — Claude Code's Agent SDK exposes tools as `mcp__cpg__start_session`, and the Messages API uses `cpg:start_session`. A redundant `cpg_` prefix in the tool's own `name` field is dead weight the model has to parse twice. | LOW | `start_session`, `get_status`, `stop_session`, `list_dropped_flows`, `list_policies`, `get_policy`, `get_evidence`, `get_cluster_health` |
+| Onboarding-level tool descriptions | Anthropic's tool-writing guidance: small description refinements measurably reduce agent error rates (cited SWE-bench improvement). Write descriptions as if explaining to a new teammate — spell out units, defaults, and what "dropped" vs "infra/transient" means. | LOW–MEDIUM | Highest-leverage differentiator is actually embedding cpg's drop-reason taxonomy semantics *in the description text* (see Differentiators) |
+| Tool annotations: `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint` | Spec-defined (`ToolAnnotations`, MCP 2025-11-25 schema). Every tool in this milestone is genuinely read-only — declaring it lets clients skip destructive-op confirmation friction and lets security-conscious hosts allowlist the server automatically. Spec explicitly warns these are hints from possibly-untrusted servers, so they must be *actually true*, not aspirational. | LOW | All 7 tools: `readOnlyHint: true`, `destructiveHint: false`. `start_session` gets `openWorldHint: true` (opens a live Hubble/K8s connection) and `idempotentHint: false` (second call while a session is active should error, not silently succeed). Query tools (`get_status`, `list_*`, `get_*`) get `openWorldHint: false` + `idempotentHint: true` — they only read the session tmpdir. |
+| Structured output: `content` (text) + `structuredContent` (JSON) + `outputSchema` | Formalized in the 2025-11-25 spec; the spec **requires** the text block for backward compat even when `structuredContent` is present. AWS design guidelines and Anthropic's tooling guide both push structured, schema-validated responses over prose parsing. | LOW–MEDIUM | cpg's internal types (dropclass results, evidence records, `cluster-health.json`) are already Go structs with JSON tags from v1.1–v1.3 — deriving `outputSchema` is largely mechanical, not new design work. |
+| `limit` + `cursor` pagination on any tool that can return many records | MCP's protocol-level cursor pagination (`nextCursor`) **only applies to `tools/list`, `resources/list`, `prompts/list`** — never to `tools/call` results. Any tool returning an unbounded set (flows, evidence samples) must implement its own filtering in the `inputSchema`, following the pattern AWS CloudWatch (`execute_cwl_insights_batch` auto-chunks at 10k records, `| limit N`) and the wider MCP pagination-pattern writeups converge on: explicit `limit`/`cursor` args, response always carries `total_count` (or estimate) and `has_more`. | MEDIUM | Applies to `list_dropped_flows` and `get_evidence` (evidence already has FIFO caps server-side from v1.1 — the tool just needs to expose windowing on top). `list_policies`/`get_cluster_health` are naturally small and don't need it. |
+| `isError: true` tool-execution errors with actionable text | Spec draws a hard line: **protocol errors** (unknown tool, malformed args) are standard JSON-RPC errors the model is unlikely to self-correct from; **tool execution errors** (`isError: true` in the result) carry text the model *can* act on ("session `sess_xyz` not found or already stopped — call `start_session` first"). Get this wrong and the LLM either silently ignores failures or retries blindly. | LOW | Concretely: "no active session," "Hubble Relay unreachable," "policy `name` not found in this session," "capture produced zero dropped flows yet" (informational, not necessarily `isError`). |
+| Explicit session handle (`session_id`) threaded through every session-scoped tool call | Directly backed by **SEP-2567 "Sessionless MCP via Explicit State Handles"** (Final, accepted 2026). The SEP explicitly calls out stdio servers relying on process-lifetime state as the *most common* anti-pattern today, and says such servers "SHOULD NOT rely on process-lifetime state and SHOULD migrate to explicit handles" — even though a stdio process isn't subject to the load-balancer/sticky-routing problem the SEP is mainly solving. Reasons that still apply to a single-process stdio server: opaque handles produce clear "expired/unknown session" errors instead of ambiguous "no session" states, they survive context compaction (they're plain strings in the transcript), and the design is forward-compatible if cpg ever ships an HTTP transport or multi-session support. | LOW–MEDIUM | `start_session(...)` returns `{"session_id": "sess_a1b2c3", "tmpdir": "...", "started_at": "..."}` in `structuredContent`. `get_status`, `stop_session`, `list_dropped_flows`, `list_policies`, `get_policy`, `get_evidence`, `get_cluster_health` all take `session_id` as a required argument. Per SEP-2567 guidance: keep the handle opaque (no encoded structure), document its lifetime in `start_session`'s description ("session and its tmpdir are destroyed on `stop_session` or server shutdown"), and return a specific "expired" error rather than a generic one. |
+| Readonly reality matches readonly annotations | Not a new decision (already an architectural constraint from PROJECT.md), but worth stating as a table-stakes *test surface*: no tool in the MCP server may call any K8s/Cilium mutating API or write outside the session tmpdir. This is what makes the `readOnlyHint` claims trustworthy rather than aspirational. | LOW (verification, not new code) | Enforced by construction: MCP tools are readers over `pkg/output`/`pkg/evidence`/`pkg/dropclass` artifacts already written by the existing `generate` pipeline running headless into the session tmpdir — there is no code path for the MCP layer to reach a K8s write API. |
 
----
+### Differentiators (Competitive Advantage)
 
-## Differentiators (Above Minimum)
+Not required to be "a working MCP server," but this is where cpg's MCP layer earns being noticeably better than a naive wrapper around the existing CLI output.
 
 | Feature | Value Proposition | Complexity | Notes |
 |---------|-------------------|------------|-------|
-| Per-node and per-workload counters in health JSON | CT_MAP_INSERTION_FAILED is per-node; SERVICE_BACKEND_NOT_FOUND is per-workload. Both dimensions enable targeted remediation vs. "something is wrong somewhere." | MEDIUM (extend accumulator) | Top-10 truncation to keep JSON bounded. |
-| Remediation hints with direct Cilium docs deep links | Operators do not know what CT_MAP_INSERTION_FAILED means or how to fix it. A direct link to the Cilium troubleshooting page converts the health file from a diagnostic to an action item. | LOW (static table) | URLs hardcoded per-reason in taxonomy. Version-pinning risk: link to `/en/stable/` not a specific version. |
-| Severity levels per reason (critical/high/medium/low) | `CT_MAP_INSERTION_FAILED` at critical is more urgent than `DROP_EP_NOT_READY` at low. Operators can triage on severity without reading remediation text. | LOW (static table) | Hardcoded per-reason in taxonomy table alongside bucket. |
-| `replay` + `generate` parity on health JSON | SRE wants to run health analysis on historical captures, not just live. | LOW (health writer plugs into same pipeline stage as evidence_writer) | ReplayCommand already supports all pipeline flags parity. |
-| AUTH_REQUIRED classified with `needs_review` hint | mTLS drops are ambiguous — could be a policy spec change OR a SPIRE infrastructure failure. Flagging for human review prevents silent misclassification. | LOW (special-case in taxonomy) | Add `notes` field to DropReasonEntry for reasons with ambiguous classification. |
+| Dual preview + reference pattern on `list_dropped_flows` / `get_evidence` | Production MCP reporting pipelines that dump full result sets routinely burn 70–80% of context before analysis starts. The documented mitigation (seen in "ResourceLink for large datasets" writeups) is a **preview sample in `content` (a handful of representative flows/samples, human-readable) + full counts and a stable reference in `structuredContent`** so the model can reason immediately without ingesting everything, and fetch more only if it decides it needs to. | MEDIUM | E.g., `list_dropped_flows` text block: "42 dropped flows (18 policy-actionable, 24 infra/transient — see `get_cluster_health`). Showing first 5." Full 42 in `structuredContent.flows` bounded by `limit`, with `has_more`/`next_cursor` for the rest. |
+| `list_policies` (cheap metadata) + `get_policy` (full YAML) split | Mirrors AWS CloudWatch's `describe_log_groups` → `analyze_log_group` split and GitHub's list/get pattern. Avoids forcing the model to pull every generated policy's full YAML into context just to see how many exist or pick one to inspect. | LOW–MEDIUM | `list_policies` returns `{name, path, rule_count}[]` only; `get_policy(session_id, name)` returns the YAML as inline text (individual policy files are small — no pagination needed here, unlike flows/evidence). |
+| Reuse cpg's existing `explain` JSON renderer verbatim for `get_evidence` | `cpg explain --output json` (shipped v1.1/v1.2, with `--http-method`/`--http-path`/`--dns-pattern` filters shipped v1.2) is already a machine-consumable, battle-tested rendering of per-rule flow evidence. Piping that renderer straight into `structuredContent` means the MCP surface and the CLI surface can never drift apart, and it's close to zero new design work — the format decision was already made and tested. | LOW | This is the single highest reuse-to-value ratio item in the whole milestone. |
+| Plain absolute tmpdir paths instead of MCP resources for file-like artifacts | MCP `resources/read` support is inconsistent across hosts today — several writeups converge on "most MCP clients don't support Resources well, if at all," and adoption is a chicken-and-egg problem (servers don't build them because clients don't surface them, and vice versa). Concretely for cpg's stated target harness, Claude Code exposes resources only via manual `@mention` autocomplete (a human action), which doesn't fit a model-driven diagnostic loop. Because cpg's session tmpdir lives on the same filesystem as the harness process (stdio transport, harness spawns the server), returning the **absolute path as a plain string field** lets Claude Code's own `Read`/`Glob` tools open the file directly — zero MCP-resources plumbing, zero client-support risk. | LOW | Return `path` alongside YAML text in `get_policy`, and the evidence/health file paths in their respective tool outputs. This is a pragmatic call specific to a local-stdio, same-filesystem deployment — it would not hold for a remote/HTTP MCP server. |
+| Embed remediation URLs directly in `get_cluster_health` output | `cluster-health.json` (shipped v1.3) already carries a Cilium-docs remediation URL per drop reason. Surfacing that verbatim in the tool's `structuredContent` saves the LLM a follow-up web-search round trip mid-diagnosis — free value from an existing artifact. | LOW | Pure passthrough of an existing file. |
+| Tool descriptions that teach the dropclass taxonomy inline | cpg's core differentiator (per PROJECT.md) is the drop-reason classifier distinguishing policy-actionable drops from infra/transient noise. If `list_dropped_flows`'s description doesn't explain that distinction, the LLM is liable to propose policies for infra drops (exactly the failure mode the classifier exists to prevent) or ask the user redundant clarifying questions. | LOW | Cheap to write, disproportionately valuable — this is where "even small description refinements yield dramatic improvements" (Anthropic) applies most directly to cpg's actual domain risk. |
 
----
+### Anti-Features (Commonly Requested, Often Problematic)
 
-## Anti-Features (Explicitly Out of Scope for v1.3)
+| Feature | Why Requested | Why Problematic | Alternative |
+|---------|---------------|------------------|-------------|
+| Mutating/`apply_policy` tool in v1.5 | Natural conversational next step after "review this generated policy" is "just apply it" | Breaks the milestone's explicit readonly guarantee (no cluster mutation); no `cpg apply` CLI command exists yet to wrap in the first place (still "Planned" in PROJECT.md); an LLM-triggered cluster write without a hard human confirmation gate is a real production-safety risk for a default-deny cluster | Defer until `cpg apply` (dry-run-by-default, `--force` to apply) ships as a CLI command; if/when an MCP `apply` tool is added later, gate it behind explicit non-readonly opt-in plus a confirmation step, not a bare tool call |
+| Elicitation (form-mode) for collecting session parameters (namespace, duration, filters) mid-call | Feels like better UX than requiring the LLM to have all args upfront | Elicitation is a newer capability (URL mode is brand-new in 2025-11-25) with materially weaker client support than tools themselves; spec requires servers to securely bind elicitation state to user identity, which is disproportionate machinery for a single-user local stdio process; the conversational harness already gathers these parameters from the human before calling `start_session` | Take all session parameters as ordinary `start_session` arguments (namespace, `--all-namespaces` equivalent, duration, `--l7`, `--ignore-drop-reason` equivalent); the LLM asks the user in natural language, same as it does for any other tool call today |
+| Sampling (server calls back into the client's LLM for semantic judgment, e.g. "is this drop plausible") | MCP's `sampling/createMessage` exists precisely for "let the server borrow the client's LLM" | This is the same AI-assisted semantic-plausibility idea PROJECT.md already explored and explicitly shelved on 2026-04-25 (hallucination risk on confident-sounding reasoning, signal quality tied to often-poor label hygiene, deterministic blast-radius analysis judged more useful) — MCP sampling would just be the transport for reintroducing it. It also inverts the milestone's own stated design principle: "cpg stays deterministic, LLM brings the intelligence." | Keep cpg's tools purely deterministic; the outer LLM harness (which already has full conversational context) does the semantic reasoning over the structured facts cpg provides |
+| MCP prompts (canned slash-command templates, e.g. `/cpg:diagnose`) | Looks like free UX — "give users a one-shot diagnostic macro" | Adoption is thin even among comparable infra MCP servers (CloudWatch, Grafana, GitHub don't lead with prompts); prompts are **user-controlled** by spec design (surfaced as something a human explicitly selects, e.g. a slash command), which fits a manual runbook better than an autonomous conversational diagnosis flow; premature templating risks freezing a workflow before real usage patterns are known | Rely on well-written tool descriptions plus README/CLAUDE.md-level guidance for the harness; revisit only if usage data shows a specific multi-tool sequence gets invoked identically often enough to be worth canning |
+| Progress notifications (`notifications/progress`) for the capture session | "Long-running Hubble capture" sounds like the canonical progress-notification use case | Progress notifications correlate to a *single blocking request* via a `progressToken` the client attaches to that request. cpg's chosen architecture (`start_session` returns immediately; a background capture writes to the tmpdir; `get_status` is polled separately) never has a call that blocks for the capture's duration — there's nothing for a progress notification to attach to. Adding the primitive anyway duplicates the status channel and adds protocol plumbing with no UX gain. | `get_status(session_id)` already returns live counters (flows seen, policies generated, elapsed time) on demand — that response *is* the progress signal, polled instead of pushed |
+| Unbounded/unfiltered flow or evidence dumps ("just return everything cpg captured") | Simplest possible implementation; "let the model see all the data" | Directly causes the token-budget blowout this research flags repeatedly — Claude Code's own default tool-response ceiling is ~25k tokens (per Anthropic's tool-writing guidance), and a live capture can trivially produce more dropped-flow records than that in a busy cluster | Mandatory `limit`+`cursor` with sane defaults (table stakes item above); this row exists to name the failure mode the pagination requirement is specifically preventing |
+| MCP resources as the *primary* (or only) access path for policy YAML / evidence | Resources are the protocol's "designed for this" primitive for file-like, application-driven data | Documented, real adoption gap: several MCP hosts implement `resources/list` but not `resources/read`, or read but not `subscribe`; Claude Code's own resource UX is manual `@mention`, not something the model reaches for autonomously mid-diagnosis | Tools + plain file paths (see Differentiators); resources can be added later as a *secondary* convenience once client support is less patchy, without it being load-bearing |
 
-| Anti-Feature | Why Requested | Why Excluded | What Instead |
-|--------------|---------------|--------------|-------------|
-| OpenMetrics / Prometheus metrics export | "We want to alert on CT_MAP_INSERTION_FAILED in Grafana." | Out of v1.3 scope per PROJECT.md. Fields not yet validated by real usage. Prometheus endpoint requires long-running mode changes. | cluster-health.json is parseable by Prometheus pushgateway scripts. Defer to v1.4 after field names stabilize. |
-| Semantic policy intersection ("would existing CNP already allow this?") | "Don't show POLICY_DENIED if there's already a CNP that should allow it." | Requires cluster API access + policy evaluation logic. Separate feature with its own complexity. Out of scope per PROJECT.md. | cpg already deduplicates against cluster policies (`--cluster-dedup`). This is a separate concern. |
-| Automatic remediation (apply config changes) | "Just fix the CT map size for me." | cpg is a read/observe/generate tool. Applying cluster-level config changes is a fundamentally different trust level. Risk of unintended side effects. | Remediation hints are advisory. Operator applies changes manually or via their GitOps pipeline. |
-| Splitting POLICY drops by which CNP rule was missing | "Show me which policy would have allowed this." | Requires policy evaluation against full cluster state + label resolution. This is the semantic intersection feature deferred above. | Session summary shows namespace/workload. `cpg explain` provides flow-level detail. |
-| Per-pod (not per-workload) granularity in health JSON | "Show me which pod had the CT failure." | Pod names are ephemeral. Workload granularity (Deployment/DaemonSet) is actionable; pod names are noise. | Workload name from labels (existing `labels.WorkloadName` function). Pod name in FlowSample evidence. |
-| Historical health trending (compare sessions) | "Show me if CT failures are getting worse over time." | Requires persistent state store across sessions. out-of-scope complexity. | Multiple cluster-health.json files can be diff'd manually. Session ID links to timestamp. |
-| Web UI or dashboard for health data | — | CLI tool only per PROJECT.md. | — |
+#### Not Applicable (transport-scoped, not a rejected feature)
 
----
+- **OAuth 2.1 / MCP Authorization spec** — The MCP authorization specification is explicitly scoped to HTTP transports. The spec states stdio implementations "SHOULD NOT" follow it and should instead retrieve credentials from the environment. `cpg mcp` is stdio-only (the harness spawns the process, per the milestone's own framing) and already gets cluster access the same way the existing CLI does (kubeconfig / env). This isn't a feature that was considered and rejected — the concern simply doesn't arise for this transport. No REQ-ID needed; worth a one-line note in the roadmap so a future reviewer doesn't flag its absence as a gap.
 
-## Feature Dependencies (Integration Map)
+## Feature Dependencies
 
 ```
-[v1.2 Pipeline] (shipped)
-        |
-        +-- [TAXONOMY: pkg/health — drop reason → bucket + severity + hint]
-        |       └── static table, no runtime deps
-        |       └── used by all other v1.3 features
-        |
-        +-- [AGGREGATOR GATE: skip INFRA/TRANSIENT/NOISE before keyFromFlow]
-        |       └── requires TAXONOMY
-        |       └── mirrors PA5 (--ignore-protocol) pattern
-        |       └── feeds HealthAccumulator (new)
-        |
-        +-- [HealthAccumulator: count by reason × node × workload]
-        |       └── requires AGGREGATOR GATE
-        |       └── analogous to ignoredByProtocol map in Aggregator
-        |       └── feeds HealthWriter + SessionStats
-        |
-        +-- [HealthWriter: write cluster-health.json]
-        |       └── requires HealthAccumulator
-        |       └── new pkg/health package (or extend pkg/hubble)
-        |       └── fan-out from pipeline like evidence_writer
-        |
-        +-- [SessionStats extension: InfraDrops + TransientDrops counts]
-        |       └── requires HealthAccumulator
-        |       └── extend existing SessionStats.Log() for summary block
-        |
-        +-- [--ignore-drop-reason flag]
-        |       └── requires TAXONOMY (validation of reason names)
-        |       └── parallel to --ignore-protocol in aggregator
-        |
-        +-- [--fail-on-infra-drops exit code]
-                └── requires HealthAccumulator (non-zero infra count)
-                └── sentinel error from RunPipeline / RunPipelineWithSource
+start_session(namespace?, all_namespaces?, duration?, l7?, ignore_drop_reason?)
+    └──requires──> pkg/hubble + pkg/flowsource (existing live gRPC connection, auto port-forward)
+    └──requires──> pkg/policy + pkg/output (existing generation/writing, redirected to session tmpdir via os.MkdirTemp)
+    └──requires──> pkg/evidence (existing schema v2 writer, FIFO caps — reused unchanged)
+    └──requires──> pkg/dropclass (existing classifier + cluster-health.json writer — reused unchanged)
+    └──produces──> session_id (opaque handle, SEP-2567 pattern)
+
+get_status(session_id) / stop_session(session_id) / list_dropped_flows(session_id) /
+list_policies(session_id) / get_policy(session_id, name) / get_evidence(session_id, ...) /
+get_cluster_health(session_id)
+    └──requires──> start_session having minted session_id (session must exist / not be expired)
+    └──requires──> tmpdir artifacts already written by the session's background writers
+    └──requires("readers over tmpdir only")──> milestone constraint: query tools never touch the
+                    live cluster directly — this is why an "explain vs live cluster diff" tool is
+                    NOT proposed here: existing dedup (both local-file and live-cluster, shipped
+                    v1.0) already runs upstream during generation, so tmpdir policies are already
+                    "new, not duplicate" by construction
+
+get_evidence(session_id, target, http_method?, http_path?, dns_pattern?)
+    └──reuses──> existing `cpg explain` JSON renderer (v1.1/v1.2) — output format decision already
+                    made and tested; MCP layer does not reinvent it
+
+stop_session(session_id)
+    └──requires──> start_session
+    └──triggers──> tmpdir cleanup (also triggered at server process shutdown — readonly guarantee
+                    depends on both cleanup paths existing, not just the happy path)
+
+Tool annotations (readOnlyHint, etc.) ──enhances──> client trust / auto-approval UX (no protocol
+                    dependency — pure metadata)
+
+limit+cursor pagination ──enhances──> list_dropped_flows, get_evidence (prevents the token-budget
+                    failure mode named in Anti-Features)
+
+MCP resources / elicitation / sampling / prompts ──conflicts with──> the milestone's own design
+                    principle ("cpg stays deterministic, LLM brings the intelligence") and/or the
+                    readonly guarantee — this is why each is classified as anti-feature/deferred
+                    rather than merely "not yet built"
 ```
 
-### Critical Dependency Note
+### Dependency Notes
 
-The aggregator gate (skipping non-policy drops) is the load-bearing change. Every other v1.3
-feature flows from it. The gate must be placed BEFORE `keyFromFlow` so that INFRA/TRANSIENT
-flows are:
-1. Never bucketed (no CNP generated — the bug fix)
-2. Counted by the HealthAccumulator (for health JSON and session summary)
-3. Excluded from `flowsSeen` (preserves existing semantics of that counter for VIS-01)
+- **All session-scoped tools require `start_session`'s handle:** per SEP-2567, `session_id` is an ordinary string threaded through every subsequent call — there is no protocol-level session concept to lean on instead, even though the transport is stdio (single process). This is a hard prerequisite for every other tool's design, not just an implementation detail.
+- **Query tools require the session's tmpdir artifacts, not the live cluster:** this is a milestone-level architectural constraint ("query tools: ... all implemented as readers over the session tmpdir artifacts"), and it is *enabled by* existing dedup already having run during generation — the dependency chain means query-tool correctness is inherited from v1.0's dedup logic, not re-derived.
+- **`get_evidence` reuses the existing `explain` renderer:** this is a deliberate low-complexity choice — the alternative (a new bespoke MCP-only evidence format) would fork cpg's output semantics in two places that need to stay in sync forever.
+- **Resources/elicitation/sampling/prompts conflict with the milestone's design principle:** all four MCP primitives are technically available but each one either reopens a product decision already made (sampling → shelved AI-plausibility feature) or works against the stated goal of a small, deterministic, readonly tool surface (resources → adoption gap and unneeded indirection; elicitation → statefulness/security overhead for a single-user process; prompts → premature templating). Listing this as a conflict, not just an omission, is meant to keep future milestones from re-litigating each one independently.
 
-Ordering: implement TAXONOMY first (pure data), then GATE (pure logic), then ACCUMULATOR
-(counter), then WRITER (I/O), then FLAGS, then SUMMARY, then EXIT CODE.
+## MVP Definition
 
----
+### Launch With (v1.5)
+
+- [ ] `start_session` / `get_status` / `stop_session` with explicit opaque `session_id` — the load-bearing pattern every other tool depends on
+- [ ] `list_dropped_flows` with `limit`/`cursor`/`since`/namespace/dropclass filtering — the tool most likely to blow a token budget if shipped without pagination
+- [ ] `list_policies` + `get_policy` (list/get split) — avoids bulk-dumping every generated YAML
+- [ ] `get_evidence` reusing the existing `explain` JSON renderer — near-zero-cost, high-consistency reuse
+- [ ] `get_cluster_health` as a thin passthrough of the existing `cluster-health.json`
+- [ ] Tool annotations (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`) on all 7 tools, truthfully set
+- [ ] `structuredContent` + `outputSchema` on every data-returning tool, text block always included for back-compat
+- [ ] `isError`-based tool execution errors with specific, actionable messages (not generic failures)
+- [ ] Descriptions written at onboarding depth, explicitly encoding the policy-actionable vs infra/transient distinction
+
+### Add After Validation (v1.5.x)
+
+- [ ] `resource_link` as a *secondary* access path for policy YAML, once real usage shows the plain-path approach is hitting a client-support wall — trigger: a target harness that can't read local files directly
+- [ ] `list_sessions` — only useful if/when multi-session-per-process is ever supported; the current single-session-at-a-time design (one background capture, one ephemeral tmpdir) makes it dead weight today
+
+### Future Consideration (v2+)
+
+- [ ] Mutating `apply_policy` tool — defer until the standalone `cpg apply` CLI command exists (still "Planned," not built) and until there's a considered human-confirmation gate design; this is the one place where elicitation might eventually earn its keep ("confirm apply to cluster?")
+- [ ] Progress notifications — only worth revisiting if a future tool introduces a genuinely long *blocking* call; the session/status-polling architecture chosen for v1.5 doesn't have one
+
+## Feature Prioritization Matrix
+
+| Feature | User Value | Implementation Cost | Priority |
+|---------|------------|----------------------|----------|
+| Explicit `session_id` handle (SEP-2567 pattern) | HIGH | LOW | P1 |
+| Tool annotations (readOnly/destructive/idempotent/openWorld) | HIGH | LOW | P1 |
+| `structuredContent` + `outputSchema` on query tools | HIGH | MEDIUM | P1 |
+| `limit`/`cursor` pagination on flows + evidence | HIGH | MEDIUM | P1 |
+| `isError` actionable error reporting | HIGH | LOW | P1 |
+| `list_policies`/`get_policy` split | MEDIUM | LOW | P1 |
+| Reuse `explain` JSON renderer for `get_evidence` | HIGH | LOW | P1 |
+| `get_cluster_health` passthrough | MEDIUM | LOW | P1 |
+| Plain file paths instead of MCP resources | MEDIUM | LOW | P1 |
+| Domain-teaching tool descriptions (dropclass semantics) | HIGH | LOW | P1 |
+| `resource_link` secondary path for policy YAML | LOW | LOW | P3 |
+| MCP prompts | LOW | LOW | P3 (defer) |
+| Progress notifications | LOW | MEDIUM | P3 (skip for v1.5) |
+| Elicitation | LOW | MEDIUM | P3 (skip for v1.5) |
+| Sampling | — (anti-feature) | — | Reject |
+| Mutating/`apply_policy` tool | — (anti-feature for v1.5) | — | Reject for v1.5 |
+
+**Priority key:**
+- P1: Must have for launch
+- P2: Should have, add when possible
+- P3: Nice to have, future consideration
+
+## Competitor / Reference Analysis
+
+Real-world MCP servers examined for prior art, all in the infra/observability or session-automation space:
+
+| Concern | AWS CloudWatch MCP | GitHub MCP | Playwright / Browserbase MCP | cpg mcp (proposed) |
+|---------|--------------------|------------|-------------------------------|---------------------|
+| Tool naming | snake_case, verb_noun (`get_metric_data`, `analyze_log_group`) | snake_case, verb_noun (`get_file_contents`, `list_branches`) — every tool maps to exactly one toolset | Short verbs (`start`, `end`, `navigate`, `act`, `observe`, `extract`) | snake_case, verb_noun, no redundant `cpg_` prefix (host auto-namespaces) |
+| Long-running work | `execute_log_insights_query` returns a query ID; separate `get_logs_insight_query_results` polls it; `cancel_logs_insight_query` to abort | Mostly synchronous CRUD; IDs (issue/PR numbers) are the natural handles | Session stays open across tool calls; tools operate within it | `start_session` returns `session_id` immediately (background capture); `get_status` polled; `stop_session` to end |
+| Pagination | `execute_cwl_insights_batch` auto-chunks at a 10k-record limit; `\| limit N` clause pattern | Cursor-based, pass-through of GitHub API pagination | N/A (not a bulk-data domain) | `limit`+`cursor` args, `total_count`/`has_more` in response |
+| Session/state model | Query ID is the de facto explicit handle (predates SEP-2567 but same shape) | Stateless — every call self-contained, resource IDs (issue/PR numbers) act as handles | Explicit `start`/`end` tools bound a session; `--isolated` flag for fresh-per-session state | Explicit opaque `session_id`, single active session per process |
+| Read-only posture | Cross-account `profile_name='prod-readonly'` convention; IAM/SCP enforce no mutation | N/A (GitHub MCP is intentionally read/write, gated by scopes) | N/A (browser automation is inherently interactive/mutating) | Every tool `readOnlyHint: true`; **no mutating tool exists at all** in the v1.5 surface (architectural, not a flag) |
 
 ## Sources
 
-- [Cilium flow.proto DropReason enum](https://github.com/cilium/cilium/blob/main/api/v1/flow/flow.proto) — canonical enum (HIGH)
-- [cilium/pkg/monitor/api/drop.go](https://github.com/cilium/hubble/blob/main/vendor/github.com/cilium/cilium/pkg/monitor/api/drop.go) — string names and DropMin threshold (HIGH)
-- [Cilium Troubleshooting Guide](https://docs.cilium.io/en/stable/operations/troubleshooting/) — CT_MAP_INSERTION_FAILED remediation (HIGH)
-- [Cilium Mutual Authentication docs](https://docs.cilium.io/en/stable/network/servicemesh/mutual-authentication/mutual-authentication/) — AUTH_REQUIRED classification context (MEDIUM)
-- [Cilium Egress Gateway troubleshooting](https://docs.cilium.io/en/stable/network/egress-gateway/egress-gateway-troubleshooting/) — NO_EGRESS_GATEWAY, DROP_NO_EGRESS_IP context (MEDIUM)
-- [Inspektor Gadget advise networkpolicy](https://inspektor-gadget.io/docs/main/gadgets/advise_networkpolicy/) — confirmed does not consume drop events (MEDIUM)
-- [Otterize network-mapper](https://github.com/otterize/network-mapper) — confirmed flow-based, not drop-based (MEDIUM)
-- [Terraform detailed-exitcode convention](https://discuss.hashicorp.com/t/terraform-detailed-exitcode-causes-plan-to-fail-when-exit-code-2/76890) — exit 0/1/2 precedent (HIGH)
-- [Cilium CT map insertion failed GitHub issues](https://github.com/cilium/cilium/issues/35010) — field-validated infra classification (HIGH)
-- [SERVICE_BACKEND_NOT_FOUND issues](https://github.com/cilium/cilium/issues/27061) — infra + stale endpoint slice context (MEDIUM)
-- [FIB_LOOKUP_FAILED issues](https://github.com/cilium/cilium/issues/15200) — routing gap confirmed (MEDIUM)
-- [UNENCRYPTED_TRAFFIC advisory](https://github.com/cilium/cilium/security/advisories/GHSA-7496-fgv9-xw82) — WireGuard strict mode context (HIGH)
-- `.planning/PROJECT.md` — v1.3 scope + out-of-scope locks
+**Official MCP specification (Context7-resolved `/websites/modelcontextprotocol_io_specification_2025-11-25` + direct WebFetch of modelcontextprotocol.io, HIGH confidence):**
+- [MCP overview / getting started](https://modelcontextprotocol.io/docs/getting-started/intro) — coordinator-supplied authoritative source, used to frame tools/resources/prompts/notifications as the canonical feature surface
+- [Tools specification](https://modelcontextprotocol.io/specification/2025-11-25/server/tools) — naming rules, annotations, structured content, output schema, `isError`/protocol-error split
+- [Resources specification](https://modelcontextprotocol.io/specification/2025-11-25/server/resources) — URI schemes, subscriptions, when servers expose resources vs tools
+- [Prompts specification](https://modelcontextprotocol.io/specification/2025-11-25/server/prompts) — user-controlled trigger model, argument schema
+- [Pagination specification](https://modelcontextprotocol.io/specification/2025-11-25/server/utilities/pagination) — cursor-based, list-operations-only scope
+- [Progress specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/progress) — `progressToken` correlates to a single in-flight request
+- [Elicitation specification](https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation) — form/URL modes, statefulness and identity-binding requirements, "MUST NOT request sensitive info via form mode"
+- [Sampling specification](https://modelcontextprotocol.io/specification/2025-11-25/client/sampling) — server-initiated LLM completion via the client
+- [SEP-2567: Sessionless MCP via Explicit State Handles](https://modelcontextprotocol.io/seps/2567-sessionless-mcp) — **Final, Standards Track**, accepted 2026; primary source for the explicit `session_id` handle recommendation, including the specific guidance that stdio servers "SHOULD NOT rely on process-lifetime state and SHOULD migrate to explicit handles"
+- Authorization scoping to HTTP transport (stdio "SHOULD NOT" implement OAuth, credentials from environment instead) — cross-checked via WebSearch against `modelcontextprotocol.io/specification/draft/basic/authorization`, MEDIUM confidence (search-synthesized, consistent across multiple independent write-ups)
+
+**Anthropic first-party guidance (HIGH confidence, official engineering blog):**
+- [Writing effective tools for AI agents](https://www.anthropic.com/engineering/writing-tools-for-agents) — namespacing, parameter naming, token-budget management, ~25k-token default response ceiling in Claude Code, `response_format` concise/detailed pattern
+
+**Production MCP servers examined (MEDIUM confidence, official repos/docs, WebFetch/WebSearch):**
+- [AWS CloudWatch MCP Server](https://awslabs.github.io/mcp/servers/cloudwatch-mcp-server) — tool catalog, async query-ID pattern, pagination/chunking behavior
+- [AWS MCP DESIGN_GUIDELINES.md](https://github.com/awslabs/mcp/blob/main/DESIGN_GUIDELINES.md) — naming limits, error-handling conventions, resources-vs-tools framing
+- [GitHub MCP Server](https://github.com/github/github-mcp-server) — verb_noun snake_case convention, toolset-per-tool mapping
+- [Playwright MCP](https://github.com/microsoft/playwright-mcp) — session-mode design (persistent/isolated/extension), context management
+- Browserbase MCP (`start`/`end`/`navigate`/`act`/`observe`/`extract`) — explicit session-tool precedent, via WebSearch synthesis of official docs
+- [WireMCP](https://github.com/0xKoda/WireMCP) — counter-example: synchronous single-call packet capture with no session/pagination model, used to contrast against cpg's chosen session-polling design
+
+**Ecosystem adoption / client-support gap (MEDIUM confidence — WebSearch-synthesized blog commentary, directionally consistent across multiple independent sources, partially corroborated by official Claude Code docs):**
+- Resources adoption gap and client-support inconsistency across MCP hosts — multiple independent write-ups (layered.dev, PulseMCP client-capability-gap post) agree on the chicken-and-egg dynamic
+- [Claude Code MCP docs](https://code.claude.com/docs/en/mcp) — confirms resources are surfaced via manual `@mention`, not autonomous model access
+- [anthropics/claude-code#18763](https://github.com/anthropics/claude-code/issues/18763) — confirms host-side auto-namespacing (`mcp__server__tool` / `Server:tool`) so server authors don't need a redundant prefix
+- "ResourceLink for large datasets" / dual preview+reference pattern — futuresearch.ai and an arXiv write-up on large-dataset MCP patterns, used for the `list_dropped_flows`/`get_evidence` response-shape recommendation
 
 ---
-*Feature research for: cpg v1.3 — Cluster Health Surfacing*
-*Researched: 2026-04-26*
+*Feature research for: cpg v1.5 MCP server integration (readonly stdio tool surface only)*
+*Researched: 2026-07-20*

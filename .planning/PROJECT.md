@@ -8,6 +8,17 @@ A Go CLI tool that connects directly to Hubble Relay via gRPC, observes dropped/
 
 Automatically generate correct CiliumNetworkPolicies from observed Hubble denials so that SREs spend zero time manually writing network policies in default-deny environments.
 
+## Current Milestone: v1.5 MCP Integration
+
+**Goal:** Expose cpg as a readonly MCP server (stdio) so an LLM harness can run a live Hubble capture session, analyze dropped flows, and review generated policies — the LLM brings the intelligence, cpg stays deterministic.
+
+**Target features:**
+- `cpg mcp` subcommand — MCP server over stdio transport (the harness spawns the process)
+- Session tools: start_session / status / stop_session — background Hubble capture
+- Ephemeral session tmpdir (`os.MkdirTemp`, respects `$TMPDIR`): policies YAML + evidence + cluster-health.json written via the existing writers with existing FIFO caps — flat memory profile, no parallel in-memory path
+- Query tools: dropped flows (dropclass-classified), generated policies, explain/evidence, cluster health — all implemented as readers over the session tmpdir artifacts
+- Readonly guarantee: never mutates the cluster, never writes outside the session tmpdir; tmpdir cleaned at stop_session and server shutdown
+
 ## Requirements
 
 ### Validated
@@ -47,17 +58,32 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 - ✓ Zero reachable vulnerabilities: cilium v1.19.4, x/net v0.55.0, `toolchain go1.25.12` (govulncheck clean in CI) — v1.4
 - ✓ Genuine stream failures exit non-zero; LostEvents/PoliciesFailed counted; `--timeout` actually applied — v1.4
 - ✓ Policy-ref validation (empty/traversal) on evidence and output writers — v1.4
+- ✓ `cpg mcp` protocol-safe stdio skeleton: pure JSON-RPC stdout (IOTransport pre-swap capture + global os.Stdout→stderr backstop), zero tools registered (SRV-02) — v1.5 Phase 16
+- ✓ Unified stderr logging: zap + go-sdk logs bridged via zapslog (SRV-03) — v1.5 Phase 16
+- ✓ Atomic temp+rename policy writes in `pkg/output/writer.go` (torn-read safe for future concurrent MCP readers, SEC-02) — v1.5 Phase 16
+- ✓ `pkg/session` single-slot Manager: `capturing → stopped → gone` lifecycle with retention, idempotent stop, autonomous transition on both crash and clean pipeline exit (SESS-02, SESS-03) — v1.5 Phase 17
+- ✓ `start_session`/`get_status`/`stop_session` MCP tools wired into `cpg mcp`, opaque session_id, "session not found or expired" contract with D-02 stopped-session queryability (SESS-01, SESS-04, SESS-06) — v1.5 Phase 17
+- ✓ Bounded transport-kill cleanup: `Shutdown()` cancels session + setup contexts, per-step deadlines so one wedged cleanup cannot block process exit, tmpdir removal (SESS-05) — v1.5 Phase 17
+- ✓ `list_dropped_flows`: paginated composed view (`samples[]` live from evidence + `aggregates[]` from cluster-health.json with `available_after_stop` marker mid-capture), explicit "sampled/aggregated view, not a raw flow log" description (QRY-01) — v1.5 Phase 18
+- ✓ `list_policies` (paginated metadata) + `get_policy` (full CNP YAML + absolute tmpdir path, single atomic read) keyed by namespace+workload (QRY-02) — v1.5 Phase 18
+- ✓ `get_evidence`: paginated per-rule attribution byte-identical to `cpg explain --output json` via promoted `pkg/explain` (Filter/Output/Render*/ParsePeerLabel exported, flowsource-style promotion) (QRY-03) — v1.5 Phase 18
+- ✓ `get_cluster_health`: typed passthrough via `pkg/hubble.ReadClusterHealth`, 4-state branch (capturing → `available_after_stop`; stopped+absent+no-error → "zero drops"; crash → isError citing pipeline error), remediation URLs intact (QRY-04) — v1.5 Phase 18
+- ✓ QRY-05 contract on all 8 tools: `structuredContent`+`outputSchema` (explicit `*jsonschema.Schema` dropclass enum — go-sdk has no enum tags), truthful annotations, taxonomy-teaching descriptions, actionable `isError`; opaque fail-closed cursor; `session.DeriveSessionPaths` single source of truth for tmpdir layout — v1.5 Phase 18
+- ✓ SEC-01 structural readonly audit: `TestMCPAuditReadonlyReachability` — SSA/RTA callgraph from `runMCPServer`, BFS-filtered to cpg-owned functions, direct-call scan; K8s write verbs (incl. DeleteCollection/UpdateStatus/ApplyStatus) fail unconditionally, fs writes (incl. Chmod/Truncate/Symlink/…) gated by an exact 5-function allowlist; mutation-tested diagnostic (function symbol + call path) — v1.5 Phase 19
+- ✓ SRV-01 + SRV-04: real-subprocess stdio e2e — `-race`-built `cpg mcp` driven over real pipes against an in-process fake Hubble observer relay; graceful lifecycle (initialize → 8-tool handshake/schema/annotation proof → session + 5 query tools → stop → clean exit, byte-pure stdout) and ungraceful-disconnect variant (stdin kill → bounded self-exit, tmpdir removed, relay stream cancelled; 5/5 stability under `-race`) — v1.5 Phase 19
+- ✓ SEC-03 README `## MCP Server (cpg mcp)` section: harness `env` block (KUBECONFIG/PATH/TMPDIR + why), secrets posture (L7 paths/labels reach the LLM; headers never captured), exec-credential-plugin non-interactive caveat + credential-persistence note, session model — v1.5 Phase 19
 
 ### Active
 
-<!-- Awaiting v1.5 scoping via /gsd-new-milestone. -->
+<!-- v1.5 MCP Integration — requirements being defined via /gsd-new-milestone. -->
 
-- _(defined during `/gsd-new-milestone`)_
+- _(being defined — see REQUIREMENTS.md once written)_
 
 ### Planned
 
 <!-- v1.5 candidates: lint/release debt from the v1.4 audit + feature candidates carried over from earlier deferrals. -->
 
+- [ ] Audit-mode onboarding (default-deny sans casse) + cpg-dedicated skills/agents — v1.6 candidate — **full ideation doc: `.planning/drafts/v1.6-audit-onboarding-and-cpg-agent-tooling.md`** (verified code refs, design, open decision, research questions, candidate REQ IDs AUD-01..04 / SKL-01..05): (a) `--include-audit`/`include_audit` — étendre le filtre de verdict à `Verdict_AUDIT` (client.go:198/209/213, file.go:116, aggregator.go:417 — flows AUDIT portent le drop reason, vérifié parser threefour); (b) bootstrap: génération default-deny CNP (`enableDefaultDeny`, Cilium ≥1.15) + activation PolicyAuditMode per-endpoint namespace-scoped; (c) DÉCISION OUVERTE: mutation pilotée par cpg (flag serveur `cpg mcp --enable-audit-bootstrap`, audit = propriété de session, revert lifecycle-bound via fan-out SESS-05, watcher nouveaux pods, revert-only-ours + TTL, SEC-01 évolue en preuve 2-modes, RBAC pods/exec à documenter) vs CLI-only `cpg audit` (MCP reste readonly pur). Discuté 2026-07-22.
 - [ ] Lint debt zero: 16 errcheck + 10 staticcheck SA1019 + drop CI `only-new-issues` flag — v1.5 candidate (LINT-01..03, archived in milestones/v1.4-REQUIREMENTS.md)
 - [ ] Release hardening: `release.yml` minimal permissions review, govulncheck job pinning follow-through — v1.5 candidate (RELSEC-01..02)
 - [ ] `cpg replay` exit-code parity on truncated input (currently logs Error but exits 0; live stream exits non-zero) — v1.5 candidate (conscious call from PR #16 review)
@@ -141,14 +167,17 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 | GitHub Actions pinned to release-tag SHAs (verified via `git ls-remote`) | Mutable tags are a supply-chain risk; one agent-suggested pin pointed at an untagged branch commit — verification against real tags is part of the pin | ✓ Good — shipped v1.4 |
 | Stream failure ⇒ non-zero exit (behavior change) | Debug-logged clean exits hid mid-capture relay crashes; operators/CI must see failure | ✓ Good — shipped v1.4; replay truncation exit parity deferred (v1.5 candidate) |
 | Milestone executed via direct multi-agent workflow (no gsd plans) | Audit remediation with a complete findings inventory doesn't benefit from per-phase planning ceremony; review→verify→fix→PR pipeline replaces it | ✓ Good — v1.4 shipped same-day; keep gsd plans for feature milestones |
+| `mcp.IOTransport` with pre-swap stdout capture, never `mcp.StdioTransport{}` | StdioTransport reads package-level os.Stdout lazily inside Connect() — combined with the D-01 global swap it would bind the JSON-RPC wire to stderr and hang the server | ✓ Good — shipped v1.5 Phase 16; acceptance criteria forbid StdioTransport |
+| `go.uber.org/zap/exp` v0.3.0 as separate direct dependency | zapslog is NOT bundled in zap v1.27.1 (independently versioned module) — corrected a locked research claim via operator-approved legitimacy gate | ✓ Good — shipped v1.5 Phase 16 |
+| Seam-audit identity assertion guarded against test2json aliasing | `go test -json` makes the testing framework alias os.Stderr = os.Stdout in-process; unguarded global-identity assertions flake by mode, not by race | ✓ Good — root-caused and guarded v1.5 Phase 16 |
 
 ## Current State
 
 **Shipped:** v1.0 (2026-03-08), v1.1 (2026-04-24), v1.2 (2026-04-25), v1.3 (2026-04-26), and v1.4 (2026-07-20).
 
-**Codebase:** 10 packages (`pkg/{labels,policy,output,hubble,k8s,dedup,flowsource,evidence,diff,dropclass}` + `cmd/`). **484 tests passing with `-race`** across 10 packages (up from 418 at v1.3 close). CI green and operational for the first time (build + race tests + lint + govulncheck). Deps: cilium v1.19.4, toolchain go1.25.12. Known debt: 26 lint issues (16 errcheck + 10 SA1019) gated by `only-new-issues`, scoped to v1.5. Release-please continues to handle product SemVer tagging.
+**Codebase:** 12 packages (`pkg/{labels,policy,output,hubble,k8s,dedup,flowsource,evidence,diff,dropclass,session,explain}` + `cmd/`). **607 tests passing with `-race`** across 12 packages (up from 539 at Phase 17 close). CI green and operational (build + race tests + lint + govulncheck). Deps: cilium v1.19.4, go-sdk v1.6.1, jsonschema-go v0.4.3 (direct since Phase 18), toolchain go1.25.12. Known debt: 26 lint issues (16 errcheck + 10 SA1019) gated by `only-new-issues`, scoped to v1.5; pre-existing `pkg/session` shared-`/tmp` test flake documented in `phases/18-query-tools/deferred-items.md`. Release-please continues to handle product SemVer tagging.
 
-**Next milestone:** v1.5 — awaiting scoping. Candidates: lint debt zero, release hardening, replay exit parity, plus feature candidates in Planned.
+**Current milestone:** v1.5 MCP Integration — ALL 4 PHASES COMPLETE (16-19, 2026-07-20 → 2026-07-21). Phase 19 (Security Hardening & End-to-End Validation) closed 2026-07-21: SEC-01 audit (mutation-tested), SRV-01/SRV-04 real-stdio e2e both variants green under `-race`, SEC-03 README harness docs; verified 5/5 (one tracking-only gap closed same-day); code review (0 critical, 4 warnings) fixed same-day (audit self-check de-tautologized, verb/fs watchlists extended, subprocess t.Cleanup kill-guard). All 18 v1.5 requirements complete — milestone ready for `/gsd-complete-milestone`. Tests: 610 across 12 packages (607 at Phase 18 close + audit + 2 e2e variants), all `-race`.
 
 ## Evolution
 
@@ -168,4 +197,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-20 after v1.4 Audit Fable5 milestone (29 findings landed via PR #16, first green CI, 484 tests).*
+*Last updated: 2026-07-21 — v1.5 Phase 19 (Security Hardening & End-to-End Validation) completed, verified 5/5, review findings fixed; all v1.5 phases (16-19) done.*

@@ -1,14 +1,20 @@
 package output
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
+	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"sigs.k8s.io/yaml"
 
 	"github.com/SoulKyu/cpg/pkg/policy"
 	"github.com/SoulKyu/cpg/pkg/policy/testdata"
@@ -244,4 +250,175 @@ func TestWriter_RejectsInvalidPolicyRef(t *testing.T) {
 			assert.Empty(t, entries, "nothing may be created under the output root")
 		})
 	}
+}
+
+// TestWriter_AtomicNoLeftoverTempFiles verifies that after a successful
+// write, no leftover ".tmp-*" file remains in the namespace directory --
+// proving the temp file was renamed into place rather than left behind.
+func TestWriter_AtomicNoLeftoverTempFiles(t *testing.T) {
+	dir := t.TempDir()
+	logger := zap.NewNop()
+	w := NewWriter(dir, logger)
+
+	event := buildTestEvent("default", "server")
+	err := w.Write(event)
+	require.NoError(t, err)
+
+	nsDir := filepath.Join(dir, "default")
+	entries, err := os.ReadDir(nsDir)
+	require.NoError(t, err)
+
+	for _, entry := range entries {
+		assert.False(t, strings.Contains(entry.Name(), ".tmp-"), "leftover temp file found: %s", entry.Name())
+	}
+
+	path := filepath.Join(nsDir, "server.yaml")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+
+	var cnp ciliumv2.CiliumNetworkPolicy
+	require.NoError(t, yaml.Unmarshal(data, &cnp), "written file must be valid CNP YAML")
+}
+
+// TestReadPolicyFile_RoundTrips builds a CNP on disk via buildTestEvent/w.Write,
+// then reads it back with ReadPolicyFile and asserts the round-tripped fields
+// match what was written.
+func TestReadPolicyFile_RoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	logger := zap.NewNop()
+	w := NewWriter(dir, logger)
+
+	event := buildTestEvent("default", "server")
+	require.NoError(t, w.Write(event))
+
+	path := filepath.Join(dir, "default", "server.yaml")
+	cnp, err := ReadPolicyFile(path)
+	require.NoError(t, err)
+	require.NotNil(t, cnp)
+
+	assert.Equal(t, event.Policy.Name, cnp.Name)
+	assert.Equal(t, event.Policy.Spec.Ingress, cnp.Spec.Ingress)
+	assert.Equal(t, event.Policy.Spec.Egress, cnp.Spec.Egress)
+}
+
+// TestReadPolicyFile_MissingFile asserts a missing path returns a wrapped
+// fs.ErrNotExist error -- the wrapped-error convention ReadPolicyFile adopts,
+// deliberately NOT readExistingPolicy's silent (nil, nil) contract.
+func TestReadPolicyFile_MissingFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "missing", "workload.yaml")
+
+	cnp, err := ReadPolicyFile(path)
+	require.Error(t, err)
+	assert.Nil(t, cnp)
+	assert.True(t, errors.Is(err, fs.ErrNotExist), "expected wrapped fs.ErrNotExist, got: %v", err)
+}
+
+// TestReadPolicyFile_MalformedYAML asserts a genuine YAML syntax error
+// produces a non-nil error that is NOT fs.ErrNotExist -- distinguishable from
+// the missing-file case so callers never confuse "not found" with "corrupt".
+func TestReadPolicyFile_MalformedYAML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "garbage.yaml")
+	// Unterminated flow-collection bracket: a genuine YAML syntax error, not
+	// merely a wrong-shaped-but-parseable document.
+	require.NoError(t, os.WriteFile(path, []byte("apiVersion: cilium.io/v2\nspec: [unterminated\n"), 0644))
+
+	cnp, err := ReadPolicyFile(path)
+	require.Error(t, err)
+	assert.Nil(t, cnp)
+	assert.False(t, errors.Is(err, fs.ErrNotExist), "malformed YAML must not present as not-exist")
+}
+
+// TestUnmarshalPolicy_RoundTrips proves UnmarshalPolicy (WR-03: factored out
+// of ReadPolicyFile so a caller needing both the parsed struct and the raw
+// bytes, e.g. cmd/cpg's get_policy, can read a policy file exactly once)
+// parses the same bytes Writer.Write produces, independent of any file
+// access — the read/parse split's parse half in isolation.
+func TestUnmarshalPolicy_RoundTrips(t *testing.T) {
+	event := buildTestEvent("default", "server")
+	data, err := yaml.Marshal(event.Policy)
+	require.NoError(t, err)
+
+	cnp, err := UnmarshalPolicy(data)
+	require.NoError(t, err)
+	require.NotNil(t, cnp)
+	assert.Equal(t, event.Policy.Name, cnp.Name)
+	assert.Equal(t, event.Policy.Spec.Ingress, cnp.Spec.Ingress)
+	assert.Equal(t, event.Policy.Spec.Egress, cnp.Spec.Egress)
+}
+
+// TestUnmarshalPolicy_MalformedYAML mirrors TestReadPolicyFile_MalformedYAML
+// at the parse-only level: a genuine YAML syntax error must be a non-nil
+// error, never a panic.
+func TestUnmarshalPolicy_MalformedYAML(t *testing.T) {
+	cnp, err := UnmarshalPolicy([]byte("apiVersion: cilium.io/v2\nspec: [unterminated\n"))
+	require.Error(t, err)
+	assert.Nil(t, cnp)
+}
+
+// TestWriter_ConcurrentReaderNeverSeesPartialFile drives a writer goroutine
+// that repeatedly rewrites the same policy file -- varying the destination
+// port each iteration so every write is a genuine content change, forcing a
+// real temp+rename cycle every time instead of hitting the
+// equivalent-policy skip path -- concurrently with a reader goroutine that
+// repeatedly reads the same path. Atomic rename guarantees the reader
+// observes either the previous complete file or the new complete file,
+// never a partial one. Run under -race.
+func TestWriter_ConcurrentReaderNeverSeesPartialFile(t *testing.T) {
+	dir := t.TempDir()
+	logger := zap.NewNop()
+	w := NewWriter(dir, logger)
+
+	const (
+		ns       = "default"
+		workload = "server"
+		iters    = 100
+	)
+	path := filepath.Join(dir, ns, workload+".yaml")
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iters; i++ {
+			flows := []*flowpb.Flow{
+				testdata.IngressTCPFlow(
+					[]string{"k8s:app=client"},
+					[]string{"k8s:app=server"},
+					ns, uint32(8000+i),
+				),
+			}
+			cnp, _ := policy.BuildPolicy(ns, workload, flows, nil, policy.AttributionOptions{})
+			event := policy.PolicyEvent{
+				Namespace: ns,
+				Workload:  workload,
+				Policy:    cnp,
+			}
+			if err := w.Write(event); err != nil {
+				t.Errorf("writer goroutine: unexpected error: %v", err)
+			}
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iters; i++ {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue // valid before the first rename
+				}
+				t.Errorf("reader goroutine: unexpected read error: %v", err)
+				continue
+			}
+			var cnp ciliumv2.CiliumNetworkPolicy
+			if err := yaml.Unmarshal(data, &cnp); err != nil {
+				t.Errorf("reader observed a partial/corrupt file: %v", err)
+			}
+		}
+	}()
+
+	wg.Wait()
 }
