@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Audit-Mode Onboarding & cpg-Dedicated Agent Tooling
 status: executing
-last_updated: "2026-07-22T14:34:40.873Z"
+last_updated: "2026-07-22T16:39:17.813Z"
 last_activity: 2026-07-22
 progress:
   total_phases: 9
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 15
-  completed_plans: 9
-  percent: 22
+  completed_plans: 13
+  percent: 33
 ---
 
 # Project State
@@ -25,11 +25,11 @@ See: .planning/PROJECT.md (updated 2026-07-22)
 ## Current Position
 
 Phase: 23 (managed-audit-window-sec-01-evolution) — PLANNED
-Plan: 1 of 3
+Plan: 2 of 3
 Status: Ready to execute
 Last activity: 2026-07-22
 
-Progress: [████████░░] 82%
+Progress: [█████████░] 87%
 
 ## Performance Metrics
 
@@ -61,6 +61,7 @@ Progress: [████████░░] 82%
 | Phase 13-flags-and-exit-code P03 | 146 | 2 tasks | 4 files |
 | Phase 17 P08 | ~13min | 2 tasks | 3 files |
 | Phase 22 P01 | 15min | 2 tasks | 2 files |
+| Phase 23 P02 | 45min | 3 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -92,6 +93,9 @@ Decisions logged in PROJECT.md Key Decisions table.
 - [v1.6 roadmap]: Phase 23 (AUD-03/AUD-04) cannot be planned at file-level detail until `/gsd-discuss-phase` resolves (a) the surface decision — MCP flag-gated session property vs. CLI-only command — and (b), if MCP wins, the SEC-01 two-mode mechanism (build-tag split vs. path-scoped reachability assertion); both must land as recorded PROJECT.md Key Decisions before any audit-window mutation code is written
 - [v1.6 roadmap]: Research's 5-phase proposal adopted as-is (coarse granularity, 3-5 typical) — Phases 20/21 kept independent/parallelizable per both ARCHITECTURE.md and FEATURES.md; Phase 24 (SKL-01..06) sequenced last though most skills have no technical dependency forcing that position (scheduling flexibility noted, not a fixed constraint)
 - [Phase 22-bootstrap-artifact-generation]: Bootstrap CNP builder uses one-element-empty-rule form (from 22-RESEARCH.md verified Code Examples), not 22-PATTERNS.md's non-compiling sketch
+- [Phase 23]: auditwindow.Manager: preconditionFn error treated as undetermined (warn-and-proceed); active-with-no-error hard-refuses
+- [Phase 23]: resolveCurrentIDFn defaults to a listCEFn-based re-list-and-filter by UID, avoiding a new Get-by-name client path
+- [Phase 23]: rootCtx.Done()-triggered Shutdown goroutine spawned from Open, not NewManager, since nothing exists to revert before Open runs
 
 ### Pending Todos
 
@@ -123,8 +127,8 @@ Items acknowledged and deferred at milestone close on 2026-07-20 (v1.4); re-ackn
 
 ## Session Continuity
 
-Last session: 2026-07-22T14:33:49.898Z
-Stopped at: ROADMAP.md and STATE.md written for v1.6 Audit-Mode Onboarding & cpg-Dedicated Agent Tooling — Phases 20-24 created, 13/13 requirements mapped, REQUIREMENTS.md traceability updated
+Last session: 2026-07-22T16:39:17.807Z
+Stopped at: Completed 23-02-PLAN.md
 Resume: `/gsd-plan-phase 20` — plan `--include-audit` Verdict Ingestion (AUD-01)
 
 ## Operator Next Steps
