@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/yaml"
 
 	"github.com/SoulKyu/cpg/pkg/k8s"
@@ -20,7 +21,7 @@ import (
 // non-streaming command that emits a namespaced default-deny
 // CiliumNetworkPolicy (cilium/cilium#35558-safe, see pkg/policy.BuildBootstrapPolicy).
 // Mirrors replay.go's constructor simplicity — deliberately does NOT call
-// addCommonFlags (22-RESEARCH Pattern 2): bootstrap needs only -n/-o, none of
+// addCommonFlags (22-RESEARCH Pattern 2): bootstrap needs only -n, none of
 // generate/replay's streaming-pipeline flag set.
 func newBootstrapCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -106,6 +107,19 @@ func bootstrapVersionGate(compat k8s.CompatInfo) (warning string, err error) {
 	return "Cilium version undetermined; enableDefaultDeny requires >= 1.16 — proceeding", nil
 }
 
+// validateBootstrapNamespace rejects namespaces that are not valid DNS-1123
+// labels (the Kubernetes namespace-name rule) before they flow into
+// metadata.namespace. Typed-struct marshal already prevents YAML injection;
+// this guards against emitting a well-formed artifact the apiserver would
+// reject anyway (e.g. "Foo Bar", "../etc"). Shared by the CLI and the MCP
+// handler so the two surfaces cannot drift.
+func validateBootstrapNamespace(namespace string) error {
+	if errs := validation.IsDNS1123Label(namespace); len(errs) > 0 {
+		return fmt.Errorf("invalid namespace %q: %s", namespace, strings.Join(errs, "; "))
+	}
+	return nil
+}
+
 func runBootstrap(cmd *cobra.Command, _ []string) error {
 	namespace, err := cmd.Flags().GetString("namespace")
 	if err != nil {
@@ -113,6 +127,9 @@ func runBootstrap(cmd *cobra.Command, _ []string) error {
 	}
 	if namespace == "" {
 		return fmt.Errorf("--namespace is required")
+	}
+	if err := validateBootstrapNamespace(namespace); err != nil {
+		return err
 	}
 
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)

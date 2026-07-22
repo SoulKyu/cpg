@@ -52,6 +52,23 @@ func TestBootstrapMissingNamespace(t *testing.T) {
 	assert.Contains(t, err.Error(), "namespace")
 }
 
+// TestBootstrapInvalidNamespace asserts DNS-1123 validation fires before any
+// cluster access or artifact emission, on both the CLI and MCP surfaces.
+func TestBootstrapInvalidNamespace(t *testing.T) {
+	initLoggerForTesting(t)
+
+	for _, ns := range []string{"Foo Bar", "../etc", "UPPER", "trailing-"} {
+		cmd, buf := newBootstrapTestCmd(t, ns)
+		err := runBootstrap(cmd, nil)
+		require.Error(t, err, "namespace %q must be rejected", ns)
+		assert.Contains(t, err.Error(), "invalid namespace")
+		assert.Empty(t, buf.String())
+
+		_, _, mcpErr := handleGetBootstrapPolicy(context.Background(), bootstrapArgs{Namespace: ns})
+		require.Error(t, mcpErr, "MCP surface must reject namespace %q too", ns)
+	}
+}
+
 // TestBootstrapVersionGate proves the hard-refusal branch: a determined,
 // below-floor CompatInfo causes runBootstrap to return an error naming both
 // the detected version and the 1.16 floor, and asserts nothing is emitted on

@@ -45,8 +45,9 @@ enforce default-deny (an `enableDefaultDeny` field with no rule stanzas at all i
 footgun, cilium/cilium#35558). Once applied, every pod in `<namespace>` starts from zero implicit
 access: exactly the state the rest of this runbook safely fills in.
 
-Prefer to review before applying? Use `-o`/`--output` to write the artifact to a file instead of
-piping it, inspect it, then `kubectl apply -f` it yourself. The
+Prefer to review before applying? Redirect the artifact to a file instead of piping it
+(`cpg bootstrap -n <namespace> > default-deny.yaml`), inspect it, then `kubectl apply -f` it
+yourself. The
 [MCP](../README.md#mcp-server-cpg-mcp) `get_bootstrap_policy` tool returns the same YAML as
 read-only tool-result content, for harnesses that want to inspect it programmatically before an
 operator applies it.

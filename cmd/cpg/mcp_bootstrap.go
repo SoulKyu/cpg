@@ -64,6 +64,9 @@ func handleGetBootstrapPolicy(ctx context.Context, args bootstrapArgs) (*mcp.Cal
 	if args.Namespace == "" {
 		return nil, bootstrapResult{}, fmt.Errorf("namespace is required")
 	}
+	if err := validateBootstrapNamespace(args.Namespace); err != nil {
+		return nil, bootstrapResult{}, err
+	}
 
 	compat := bootstrapDetectVersion(ctx, logger)
 	warning, err := bootstrapVersionGate(compat)
