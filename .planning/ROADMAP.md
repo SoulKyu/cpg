@@ -270,12 +270,21 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 **Requirements**: AUD-02
 **Success Criteria** (what must be TRUE):
 
-  1. Operator runs `cpg bootstrap -n <ns>` (or calls the readonly MCP tool) and receives a CNP YAML carrying `enableDefaultDeny` AND explicit empty `ingress: []`/`egress: []` stanzas — tested as a named acceptance criterion (cilium/cilium#35558), so the artifact actually enforces default-deny rather than silently no-op'ing
+  1. Operator runs `cpg bootstrap -n <ns>` (or calls the readonly MCP tool) and receives a CNP YAML carrying `enableDefaultDeny` AND explicit empty-rule stanzas `ingress: [{}]`/`egress: [{}]` (one-element list holding an empty rule — the literal `ingress: []` form IS the cilium/cilium#35558 bug: rejected by Sanitize(), dropped by omitempty; see 22-RESEARCH.md Pitfall 1) — tested as a named acceptance criterion, so the artifact actually enforces default-deny rather than silently no-op'ing
   2. Below the Cilium 1.16 floor, the operator sees a hard refusal or a clearly documented legacy form — never a silently-pruned field that looks like it worked
   3. Operator receives a runbook modeled 1:1 on Cilium's own "Creating Policies from Verdicts" phase order, with an explicit first-lines warning against daemon-wide `policy-audit-mode`
   4. The MCP tool returns content directly with no new filesystem write call site — the artifact stays covered by SEC-01's existing readonly guarantee with zero new allowlist entries
 
-**Plans**: TBD
+**Plans**: 3 plans in 2 waves
+
+**Wave 1** *(parallel -- zero file overlap)*
+
+- [ ] 22-01-PLAN.md -- `pkg/policy.BuildBootstrapPolicy` + named cilium#35558 Sanitize()/marshal acceptance test (AUD-02 criterion 1)
+- [ ] 22-03-PLAN.md -- `docs/bootstrap-runbook.md` (verdict-driven phase order, first-lines daemon-wide-audit warning, `--include-audit` capture) + README cross-reference + golden tests (AUD-02 criteria 3, 5)
+
+**Wave 2** *(blocked on 22-01)*
+
+- [ ] 22-02-PLAN.md -- `cpg bootstrap` CLI + readonly `get_bootstrap_policy` MCP tool + shared version gate (reuses Phase 21 detection); SEC-01 zero-new-allowlist confirmation (AUD-02 criteria 2, 4)
 
 > **Decision gate before Phase 23:** AUD-03's surface — MCP flag-gated session property vs. CLI-only command (MCP stays pure-readonly) — and, if the MCP variant wins, the SEC-01 two-mode mechanism (build-tag split vs. path-scoped reachability assertion) must both be resolved via `/gsd-discuss-phase` before Phase 23 is planned at file-level detail. See REQUIREMENTS.md AUD-03/AUD-04 and research/SUMMARY.md Tension 4.
 

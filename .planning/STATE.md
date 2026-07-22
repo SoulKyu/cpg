@@ -4,13 +4,13 @@ milestone: v1.6
 milestone_name: Audit-Mode Onboarding & cpg-Dedicated Agent Tooling
 status: executing
 last_updated: "2026-07-22T12:11:59.071Z"
-last_activity: 2026-07-22 -- Phase 21 execution started
+last_activity: 2026-07-22 -- Phase 22 planned
 progress:
   total_phases: 9
-  completed_phases: 1
+  completed_phases: 6
   total_plans: 8
   completed_plans: 4
-  percent: 11
+  percent: 67
 ---
 
 # Project State
@@ -24,12 +24,12 @@ See: .planning/PROJECT.md (updated 2026-07-22)
 
 ## Current Position
 
-Phase: 21 (cilium-compatibility-matrix-runtime-detection) — EXECUTING
-Plan: 1 of 4
-Status: Executing Phase 21
-Last activity: 2026-07-22 -- Phase 21 execution started
+Phase: 22 (bootstrap-artifact-generation) — PLANNED
+Plan: 0 of 3
+Status: Phase 22 planned (3 plans, 2 waves) — ready to execute
+Last activity: 2026-07-22 -- Phase 21 complete (review+fix); Phase 22 planned
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██████░░░░] 67% (6/9 phases)
 
 ## Performance Metrics
 

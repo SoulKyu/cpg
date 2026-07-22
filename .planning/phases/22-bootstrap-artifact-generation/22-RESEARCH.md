@@ -338,14 +338,16 @@ for _, f := range compat.BelowFloorFeatures {
 
 **If this table is empty:** N/A — see above; both entries are low/medium risk and neither affects the artifact-shape finding (which is fully verified, not assumed).
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Does the README's existing `enableDefaultDeny` compat row (line 78, from Phase 21) already cover bootstrap's use, or does CONTEXT.md's "gains the bootstrap/enableDefaultDeny floor row" requirement mean a SECOND row / cross-reference is expected?**
+   - RESOLVED: extend the existing row's Notes with the `cpg bootstrap` cross-reference + runbook link, no duplicate row — implemented by 22-03-PLAN.md Task 2, keeping all `readme_compat_test.go` pins.
    - What we know: `README.md:78` already reads `| \`enableDefaultDeny\` CNP field | >= 1.16 | PR #30572 |` — generically worded, not tied to any specific command.
    - What's unclear: whether CONTEXT.md's phrasing implies the planner should add prose linking this existing row to `cpg bootstrap` specifically (e.g., "used by `cpg bootstrap`, see docs/bootstrap-runbook.md"), or whether the existing row already satisfies the requirement and no README diff is needed beyond the runbook link.
    - Recommendation: treat this as a small planner discretion item — the safe interpretation is to extend the existing row's prose/cross-reference rather than add a duplicate row, since `readme_compat_test.go` pins the existing row's tokens/PR citations and a naive second row risks satisfying CONTEXT.md's letter while fragmenting the single source of truth COMPAT-01 established.
 
 2. **Should the CLI hard-refusal (determined version < 1.16) exit before or after constructing the artifact in memory?**
+   - RESOLVED: gate strictly before `BuildBootstrapPolicy`, mirroring `generate.go`'s preflight-then-pipeline order — implemented by 22-02-PLAN.md Task 1(d).
    - What we know: CONTEXT.md specifies "hard refusal with an actionable error naming the detected version and the floor. No legacy-form emission."
    - What's unclear: whether the version preflight should run strictly before calling `BuildBootstrapPolicy` (cheaper, no wasted work) or whether building-then-discarding is acceptable for code simplicity.
    - Recommendation: gate before building — mirrors `generate.go`'s existing pattern of running `maybeRunVersionPreflight` before the pipeline does any real work, and avoids ever holding a known-broken-for-this-cluster artifact in memory even transiently.
