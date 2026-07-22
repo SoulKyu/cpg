@@ -17,7 +17,7 @@ import (
 //
 //  1. COMPAT-01: a "## Supported Cilium versions" section exists, declaring
 //     the documented floor (1.14) plus the PR-verified per-feature floor
-//     table (1.15 / 1.16 / 1.17 entries).
+//     table (1.15 / 1.16 / 1.17 entries and their merged-PR citations).
 //  2. COMPAT-03: the proxy-visibility annotation's documented boundary is
 //     the correct one (removed from the agent runtime at 1.17, works only
 //     through 1.16) — NOT the shipped bug that claimed support "through
@@ -39,6 +39,15 @@ func TestReadmeCompatSection(t *testing.T) {
 	for _, tok := range []string{"1.14", "1.15", "1.16", "1.17"} {
 		assert.Contains(t, readme, tok,
 			"COMPAT-01: README compat section must carry the PR-verified version token %q", tok)
+	}
+
+	// T-21-02-01 mitigation: pin the merged-PR citations backing the three
+	// version-boundary claims (cilium-dbg rename, enableDefaultDeny,
+	// proxy-visibility removal) so an unsourced future edit is caught, not
+	// just the bare version numbers.
+	for _, pr := range []string{"#28085", "#30572", "#35019"} {
+		assert.Contains(t, readme, pr,
+			"COMPAT-01: README compat table must cite merged PR %q backing its version claim", pr)
 	}
 
 	lines := strings.Split(readme, "\n")
