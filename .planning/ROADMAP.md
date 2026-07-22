@@ -251,7 +251,17 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
   3. cpg detects the connected cluster's Cilium version without requiring any new write-capable RBAC (privilege-neutral — never `pods/exec`), and warns-and-proceeds (never aborts) below a feature's floor, naming the affected feature(s)
   4. Version-dependent behavior is gated correctly (bootstrap CNP form, `cilium-dbg` vs `cilium` naming), and the detected version + compat verdict is visible via MCP, not just README prose
 
-**Plans**: TBD
+**Plans**: 4 plans in 2 waves
+
+**Wave 1** *(parallel -- zero file overlap)*
+
+- [ ] 21-01-PLAN.md -- `pkg/k8s/version.go` detection library: pod-list primary + bounded GetNodes secondary + per-feature floor table + min-version reduction (COMPAT-02 core)
+- [ ] 21-02-PLAN.md -- README `## Supported Cilium versions` section (PR-verified floor table) + proxy-visibility <=1.16 fix + golden consistency test (COMPAT-01, COMPAT-03)
+
+**Wave 2** *(blocked on 21-01; the two plans run in parallel -- zero file overlap)*
+
+- [ ] 21-03-PLAN.md -- CLI `maybeRunVersionPreflight` in `cpg generate` (warn-and-proceed) + replay-stays-offline regression guard (COMPAT-02)
+- [ ] 21-04-PLAN.md -- MCP surfacing: `StartResult`/`StatusResult` compat fields + `detectVersionFn` seam + bounded secondary + SEC-01 no-op confirmation (COMPAT-02)
 
 ### Phase 22: Bootstrap Artifact Generation
 
@@ -323,7 +333,7 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 | 18. Query Tools | v1.5 | 5/5 | Complete    | 2026-07-21 |
 | 19. Security Hardening & End-to-End Validation | v1.5 | 4/4 | Complete    | 2026-07-21 |
 | 20. `--include-audit` Verdict Ingestion | v1.6 | 4/4 | Complete    | 2026-07-22 |
-| 21. Cilium Compatibility Matrix + Runtime Detection | v1.6 | 0/TBD | Not started | - |
+| 21. Cilium Compatibility Matrix + Runtime Detection | v1.6 | 0/4 | Not started | - |
 | 22. Bootstrap Artifact Generation | v1.6 | 0/TBD | Not started | - |
 | 23. Managed Audit Window + SEC-01 Evolution | v1.6 | 0/TBD | Not started | - |
 | 24. cpg-Dedicated Skills & Agent Tooling | v1.6 | 0/TBD | Not started | - |
