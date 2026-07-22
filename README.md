@@ -75,9 +75,13 @@ Individual capabilities carry their own, higher floors:
 | `PolicyVerdictNotify` audit-action bit | >= 1.8 | PR [#11843](https://github.com/cilium/cilium/pull/11843) |
 | `Verdict_AUDIT` via the Hubble flow API (`--include-audit`) | >= 1.10 | PR [#14785](https://github.com/cilium/cilium/pull/14785) / [#14923](https://github.com/cilium/cilium/pull/14923) |
 | `cilium-dbg` binary naming (was `cilium`) | >= 1.15 | PR [#28085](https://github.com/cilium/cilium/pull/28085) |
-| `enableDefaultDeny` CNP field | >= 1.16 | PR [#30572](https://github.com/cilium/cilium/pull/30572) |
+| `enableDefaultDeny` CNP field | >= 1.16 | PR [#30572](https://github.com/cilium/cilium/pull/30572) -- used by `cpg bootstrap` / `get_bootstrap_policy`; see the [bootstrap runbook](docs/bootstrap-runbook.md) |
 | `policy.cilium.io/proxy-visibility` annotation | <= 1.16 | Removed from the agent runtime at 1.17 -- PR [#35019](https://github.com/cilium/cilium/pull/35019) |
 | Observer `GetNodes()` RPC / `version` field | >= 1.10 | PR [#13979](https://github.com/cilium/cilium/pull/13979) |
+
+`cpg bootstrap -n <namespace>` generates a namespaced default-deny `CiliumNetworkPolicy` --
+see the [bootstrap runbook](docs/bootstrap-runbook.md) for the full audit-mode onboarding
+workflow (per-endpoint audit mode, `cpg generate --include-audit`, and cleanup).
 
 ## Quick start
 

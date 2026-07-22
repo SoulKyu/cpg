@@ -50,6 +50,15 @@ func TestReadmeCompatSection(t *testing.T) {
 			"COMPAT-01: README compat table must cite merged PR %q backing its version claim", pr)
 	}
 
+	// AUD-02 c5 (22-03-PLAN.md): the existing enableDefaultDeny/1.16 compat
+	// row must stay cross-referenced to `cpg bootstrap` and the runbook it
+	// links to, rather than regressing to a bare, uncontextualized PR
+	// citation or -- worse -- fragmenting into a duplicate row.
+	assert.Contains(t, readme, "docs/bootstrap-runbook.md",
+		"AUD-02 c5: README must link docs/bootstrap-runbook.md")
+	assert.Contains(t, readme, "cpg bootstrap",
+		"AUD-02 c5: README must mention cpg bootstrap alongside its enableDefaultDeny compat row")
+
 	lines := strings.Split(readme, "\n")
 
 	// COMPAT-03 negative guard: the shipped bug paired "proxy-visibility"
