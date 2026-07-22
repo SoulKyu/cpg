@@ -13,6 +13,7 @@ import (
 	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
 	"github.com/SoulKyu/cpg/pkg/hubble"
@@ -61,7 +62,15 @@ type Manager struct {
 	// swap it to gate the setup window or inject a deterministic setup
 	// failure with no cluster. Unexported and NOT a NewManager parameter —
 	// the exported constructor signature plan 17-04 calls is unaffected.
-	resolveSetupFn func(setupCtx context.Context, args StartArgs) (server string, cleanup func(), clusterPolicies map[string]*ciliumv2.CiliumNetworkPolicy, err error)
+	resolveSetupFn func(setupCtx context.Context, args StartArgs) (server string, cleanup func(), clusterPolicies map[string]*ciliumv2.CiliumNetworkPolicy, compat k8s.CompatInfo, err error)
+
+	// detectVersionFn is a test-only injectable seam over m.detectVersion
+	// (COMPAT-02), mirroring resolveSetupFn's pattern exactly. NewManager
+	// defaults it to m.detectVersion (the production implementation);
+	// same-package tests swap it to a fixed CompatInfo stub so no
+	// pkg/session unit test's resolveSetup call ever dials the fake
+	// bypass address for version detection.
+	detectVersionFn func(ctx context.Context, kubeConfig *rest.Config, server string, tlsEnabled bool, timeout time.Duration) k8s.CompatInfo
 
 	// stopWait bounds Stop/Shutdown's wait for the pipeline goroutine to
 	// observe ctx cancellation and exit. removeWait independently bounds
@@ -90,6 +99,7 @@ func NewManager(rootCtx context.Context, logger *zap.Logger, stdout io.Writer, c
 	// Bind the seam as a method value AFTER m is fully constructed, so the
 	// default target is the finished Manager, not a partially-built one.
 	m.resolveSetupFn = m.resolveSetup
+	m.detectVersionFn = m.detectVersion
 	return m
 }
 
@@ -179,7 +189,7 @@ func (m *Manager) Start(reqCtx context.Context, args StartArgs) (StartResult, er
 	stopSetupOnShutdown := context.AfterFunc(sessionCtx, setupCancel)
 	defer stopSetupOnShutdown()
 
-	server, portForwardCleanup, clusterPolicies, err := m.resolveSetupFn(setupCtx, args)
+	server, portForwardCleanup, clusterPolicies, compat, err := m.resolveSetupFn(setupCtx, args)
 	if err != nil {
 		_ = os.RemoveAll(tmpDir)
 		return fail(err)
@@ -209,6 +219,7 @@ func (m *Manager) Start(reqCtx context.Context, args StartArgs) (StartResult, er
 		return StartResult{}, fmt.Errorf("server shutting down; session %s aborted", s.ID)
 	}
 	s.TmpDir = tmpDir
+	s.compat = compat
 	m.mu.Unlock()
 
 	go func() {
@@ -263,7 +274,14 @@ func (m *Manager) Start(reqCtx context.Context, args StartArgs) (StartResult, er
 		s.done <- err // observer of done also knows the port-forward is already closing
 	}()
 
-	return StartResult{SessionID: s.ID, DiscardedSession: discarded, Server: server}, nil
+	return StartResult{
+		SessionID:          s.ID,
+		DiscardedSession:   discarded,
+		Server:             server,
+		CiliumVersion:      compat.ClusterVersion,
+		CiliumVersionsSeen: compat.VersionsSeen,
+		BelowFloorFeatures: compat.BelowFloorFeatures,
+	}, nil
 }
 
 // resolveSetup is the production implementation bound to the
@@ -273,7 +291,7 @@ func (m *Manager) Start(reqCtx context.Context, args StartArgs) (StartResult, er
 // entirely; otherwise it auto-port-forwards to hubble-relay. cluster_dedup
 // independently (re-)loads a kubeconfig even when the server bypass was
 // used, mirroring generate.go's own independent-of-server nuance.
-func (m *Manager) resolveSetup(setupCtx context.Context, args StartArgs) (server string, cleanup func(), clusterPolicies map[string]*ciliumv2.CiliumNetworkPolicy, err error) {
+func (m *Manager) resolveSetup(setupCtx context.Context, args StartArgs) (server string, cleanup func(), clusterPolicies map[string]*ciliumv2.CiliumNetworkPolicy, compat k8s.CompatInfo, err error) {
 	var kubeConfig *rest.Config
 	if args.Server != "" {
 		// D-07: an explicit server bypasses kubeconfig + auto port-forward.
@@ -282,16 +300,16 @@ func (m *Manager) resolveSetup(setupCtx context.Context, args StartArgs) (server
 	} else {
 		kubeConfig, err = k8s.LoadKubeConfig()
 		if err != nil {
-			return "", nil, nil, fmt.Errorf("--server not provided and kubeconfig not available: %w", err)
+			return "", nil, nil, k8s.CompatInfo{}, fmt.Errorf("--server not provided and kubeconfig not available: %w", err)
 		}
 
 		localAddr, pfCleanup, pfErr := k8s.PortForwardToRelay(setupCtx, kubeConfig, m.logger)
 		if pfErr != nil {
 			if errors.Is(pfErr, context.DeadlineExceeded) {
-				return "", nil, nil, fmt.Errorf(
+				return "", nil, nil, k8s.CompatInfo{}, fmt.Errorf(
 					"kubeconfig auth did not complete within the setup timeout; re-authenticate outside the MCP session (e.g. run `kubectl get pods` once in a real shell) and retry: %w", pfErr)
 			}
-			return "", nil, nil, fmt.Errorf("auto port-forward to hubble-relay failed: %w", pfErr)
+			return "", nil, nil, k8s.CompatInfo{}, fmt.Errorf("auto port-forward to hubble-relay failed: %w", pfErr)
 		}
 		server = localAddr
 		cleanup = pfCleanup
@@ -302,17 +320,47 @@ func (m *Manager) resolveSetup(setupCtx context.Context, args StartArgs) (server
 			kubeConfig, err = k8s.LoadKubeConfig()
 			if err != nil {
 				cleanup()
-				return "", nil, nil, fmt.Errorf("cluster_dedup requires kubeconfig: %w", err)
+				return "", nil, nil, k8s.CompatInfo{}, fmt.Errorf("cluster_dedup requires kubeconfig: %w", err)
 			}
 		}
 		clusterPolicies, err = k8s.LoadClusterPoliciesForNamespaces(setupCtx, kubeConfig, dedupNamespaces(args))
 		if err != nil {
 			cleanup()
-			return "", nil, nil, fmt.Errorf("loading cluster policies for dedup: %w", err)
+			return "", nil, nil, k8s.CompatInfo{}, fmt.Errorf("loading cluster policies for dedup: %w", err)
 		}
 	}
 
-	return server, cleanup, clusterPolicies, nil
+	// COMPAT-02: detect the Cilium version once, reusing whatever
+	// kubeConfig is already in scope (pod-list primary) or, on the pure
+	// D-07 bypass with no kubeconfig at all, a bounded GetNodes secondary
+	// against the just-resolved server address. args.Timeout may be zero
+	// (omitted by the caller) — DetectCiliumVersionViaGetNodes's own
+	// versionDetectTimeout floor handles that case, and setupCtx's own
+	// deadline bounds this call regardless.
+	compat = m.detectVersionFn(setupCtx, kubeConfig, server, args.TLS, args.Timeout)
+
+	return server, cleanup, clusterPolicies, compat, nil
+}
+
+// detectVersion is the production implementation bound to the
+// detectVersionFn seam by NewManager (COMPAT-02). When kubeConfig is
+// available (pod-list primary, works identically to the CLI) it builds a
+// client and defers to k8s.DetectCiliumVersion; otherwise — the pure D-07
+// --server bypass, where no kubeconfig is ever loaded — it falls back to
+// the bounded k8s.DetectCiliumVersionViaGetNodes secondary against the
+// just-resolved server address. Never returns an error: an undetermined
+// verdict (k8s.CompatInfo{Source: "undetermined"}) is not a failure
+// condition, mirroring both underlying detection functions' own contracts.
+func (m *Manager) detectVersion(ctx context.Context, kubeConfig *rest.Config, server string, tlsEnabled bool, timeout time.Duration) k8s.CompatInfo {
+	if kubeConfig == nil {
+		return k8s.DetectCiliumVersionViaGetNodes(ctx, server, tlsEnabled, timeout, m.logger)
+	}
+	client, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		m.logger.Warn("version detection: failed to construct kubernetes client from kubeconfig", zap.Error(err))
+		return k8s.CompatInfo{Source: "undetermined"}
+	}
+	return k8s.DetectCiliumVersion(ctx, client, m.logger)
 }
 
 // dedupNamespaces mirrors generate.go's clusterDedupNamespaces: an
@@ -344,6 +392,7 @@ func (m *Manager) Status(id string) (StatusResult, error) {
 	stoppedAt := s.StoppedAt
 	tmpDir := s.TmpDir
 	sid := s.ID
+	compat := s.compat
 	m.mu.Unlock()
 
 	elapsed := time.Since(startedAt)
@@ -374,13 +423,16 @@ func (m *Manager) Status(id string) (StatusResult, error) {
 	}
 
 	return StatusResult{
-		SessionID:         sid,
-		State:             state.String(),
-		Elapsed:           elapsed.Round(time.Second).String(),
-		PolicyFileCount:   policyCount,
-		EvidenceFileCount: evidenceCount,
-		TmpDir:            tmpDir,
-		Error:             statusErr,
+		SessionID:          sid,
+		State:              state.String(),
+		Elapsed:            elapsed.Round(time.Second).String(),
+		PolicyFileCount:    policyCount,
+		EvidenceFileCount:  evidenceCount,
+		TmpDir:             tmpDir,
+		CiliumVersion:      compat.ClusterVersion,
+		CiliumVersionsSeen: compat.VersionsSeen,
+		BelowFloorFeatures: compat.BelowFloorFeatures,
+		Error:              statusErr,
 	}, nil
 }
 

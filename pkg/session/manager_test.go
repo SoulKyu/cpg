@@ -17,9 +17,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
+	"k8s.io/client-go/rest"
 
 	"github.com/SoulKyu/cpg/pkg/flowsource"
 	"github.com/SoulKyu/cpg/pkg/hubble"
+	"github.com/SoulKyu/cpg/pkg/k8s"
 	"github.com/SoulKyu/cpg/pkg/policy/testdata"
 )
 
@@ -137,6 +139,13 @@ func newTestManager(t *testing.T, source flowsource.FlowSource) *Manager {
 	}
 	m.stopWait = 100 * time.Millisecond
 	m.removeWait = 100 * time.Millisecond
+	// Stub the version-detection seam so no pkg/session unit test dials the
+	// fake bypass address (StartArgs{Server: "bypass:1"}) for GetNodes — same
+	// rationale as the resolveSetupFn overrides below, applied by default to
+	// every test-constructed Manager.
+	m.detectVersionFn = func(context.Context, *rest.Config, string, bool, time.Duration) k8s.CompatInfo {
+		return k8s.CompatInfo{ClusterVersion: "1.19.4", VersionsSeen: map[string]int{"1.19.4": 1}, Source: "test-stub"}
+	}
 	return m
 }
 
@@ -164,6 +173,8 @@ func TestManager_Start(t *testing.T) {
 	require.NoError(t, err)
 	assert.Less(t, elapsed, m.stopWait, "Start must return quickly, not block on the pipeline")
 	assert.True(t, strings.HasPrefix(result.SessionID, "sess_"))
+	assert.Equal(t, "1.19.4", result.CiliumVersion, "StartResult must surface the stubbed compat verdict (COMPAT-02)")
+	assert.Empty(t, result.BelowFloorFeatures, "the stubbed version is above every declared floor")
 
 	status, err := m.Status(result.SessionID)
 	require.NoError(t, err)
@@ -297,6 +308,7 @@ func TestManager_Status(t *testing.T) {
 	assert.NotEmpty(t, status.Elapsed)
 	assert.GreaterOrEqual(t, status.EvidenceFileCount, 0)
 	assert.NotEmpty(t, status.TmpDir)
+	assert.Equal(t, "1.19.4", status.CiliumVersion, "get_status must re-surface the cached compat verdict (COMPAT-02)")
 
 	_, err = m.Stop(res.SessionID)
 	require.NoError(t, err)
@@ -593,10 +605,10 @@ func TestManager_Start_ShutdownRacesSetup(t *testing.T) {
 	closeRelease := func() { releaseOnce.Do(func() { close(release) }) }
 	t.Cleanup(closeRelease)
 
-	m.resolveSetupFn = func(_ context.Context, _ StartArgs) (string, func(), map[string]*ciliumv2.CiliumNetworkPolicy, error) {
+	m.resolveSetupFn = func(_ context.Context, _ StartArgs) (string, func(), map[string]*ciliumv2.CiliumNetworkPolicy, k8s.CompatInfo, error) {
 		close(entered)
 		<-release
-		return "bypass:1", func() {}, nil, nil
+		return "bypass:1", func() {}, nil, k8s.CompatInfo{}, nil
 	}
 
 	before, err := filepath.Glob(filepath.Join(os.TempDir(), "cpg-session-*"))
@@ -654,8 +666,8 @@ func TestManager_Start_ShutdownRacesSetup(t *testing.T) {
 func TestManager_Start_SetupFailureRollsBackSlot(t *testing.T) {
 	m := newTestManager(t, &blockingFlowSource{flow: someFlow()})
 
-	m.resolveSetupFn = func(_ context.Context, _ StartArgs) (string, func(), map[string]*ciliumv2.CiliumNetworkPolicy, error) {
-		return "", func() {}, nil, fmt.Errorf("injected setup failure")
+	m.resolveSetupFn = func(_ context.Context, _ StartArgs) (string, func(), map[string]*ciliumv2.CiliumNetworkPolicy, k8s.CompatInfo, error) {
+		return "", func() {}, nil, k8s.CompatInfo{}, fmt.Errorf("injected setup failure")
 	}
 
 	before, err := filepath.Glob(filepath.Join(os.TempDir(), "cpg-session-*"))
@@ -669,8 +681,8 @@ func TestManager_Start_SetupFailureRollsBackSlot(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, after, len(before), "the pre-failure tmpdir must be removed, not orphaned")
 
-	m.resolveSetupFn = func(_ context.Context, _ StartArgs) (string, func(), map[string]*ciliumv2.CiliumNetworkPolicy, error) {
-		return "bypass:1", func() {}, nil, nil
+	m.resolveSetupFn = func(_ context.Context, _ StartArgs) (string, func(), map[string]*ciliumv2.CiliumNetworkPolicy, k8s.CompatInfo, error) {
+		return "bypass:1", func() {}, nil, k8s.CompatInfo{}, nil
 	}
 
 	res, err := m.Start(context.Background(), StartArgs{Server: "bypass:1"})
@@ -906,10 +918,10 @@ func TestManager_Start_ShutdownCancelsSetupCtx(t *testing.T) {
 	m := newTestManager(t, &blockingFlowSource{flow: someFlow()})
 
 	entered := make(chan struct{})
-	m.resolveSetupFn = func(setupCtx context.Context, _ StartArgs) (string, func(), map[string]*ciliumv2.CiliumNetworkPolicy, error) {
+	m.resolveSetupFn = func(setupCtx context.Context, _ StartArgs) (string, func(), map[string]*ciliumv2.CiliumNetworkPolicy, k8s.CompatInfo, error) {
 		close(entered)
 		<-setupCtx.Done() // load-bearing: inspects ctx instead of a manual release lever
-		return "", nil, nil, setupCtx.Err()
+		return "", nil, nil, k8s.CompatInfo{}, setupCtx.Err()
 	}
 
 	before, err := filepath.Glob(filepath.Join(os.TempDir(), "cpg-session-*"))
