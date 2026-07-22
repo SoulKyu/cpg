@@ -64,13 +64,25 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| — | — | — |
+| AUD-01 | Phase 20 | Pending |
+| AUD-02 | Phase 22 | Pending |
+| AUD-03 | Phase 23 | Pending |
+| AUD-04 | Phase 23 | Pending |
+| SKL-01 | Phase 24 | Pending |
+| SKL-02 | Phase 24 | Pending |
+| SKL-03 | Phase 24 | Pending |
+| SKL-04 | Phase 24 | Pending |
+| SKL-05 | Phase 24 | Pending |
+| SKL-06 | Phase 24 | Pending |
+| COMPAT-01 | Phase 21 | Pending |
+| COMPAT-02 | Phase 21 | Pending |
+| COMPAT-03 | Phase 21 | Pending |
 
 **Coverage:**
 - v1.6 requirements: 13 total
-- Mapped to phases: 0
-- Unmapped: 13 ⚠️
+- Mapped to phases: 13
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-07-22*
-*Last updated: 2026-07-22 after initial definition*
+*Last updated: 2026-07-22 after roadmap creation (Phases 20-24, full coverage)*

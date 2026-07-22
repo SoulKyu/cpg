@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Audit-Mode Onboarding & cpg-Dedicated Agent Tooling
 status: planning
-last_updated: "2026-07-22T07:03:57.914Z"
+last_updated: "2026-07-22T09:30:00.000Z"
 last_activity: 2026-07-22
 progress:
-  total_phases: 0
+  total_phases: 5
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -20,21 +20,23 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-22)
 
 **Core value:** Automatically generate correct CiliumNetworkPolicies from observed Hubble denials so that SREs spend zero time manually writing network policies in default-deny environments.
-**Current focus:** Milestone complete
+**Current focus:** Phase 20 — `--include-audit` Verdict Ingestion
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-07-22 — Milestone v1.6 started
+Phase: 20 of 24 (`--include-audit` Verdict Ingestion)
+Plan: — (not yet planned)
+Status: Ready to plan
+Last activity: 2026-07-22 — ROADMAP.md created for v1.6 (Phases 20-24), 13/13 requirements mapped
+
+Progress: [░░░░░░░░░░] 0%
 
 ## Performance Metrics
 
 **Velocity (cumulative):**
 
-- Total plans completed: 51 (across 13 phases, 4 milestones; v1.4 executed via direct workflow, no plans)
-- Total tests: 484 across 10 packages
+- Total plans completed: 51 (across 19 phases, 6 milestones; v1.4 executed via direct workflow, no plans)
+- Total tests: 610 across 12 packages
 
 **By Milestone:**
 
@@ -45,7 +47,8 @@ Last activity: 2026-07-22 — Milestone v1.6 started
 | v1.2 | 7-9 | 12 | 319 |
 | v1.3 | 10-13 | 8 | 418 |
 | v1.4 | 14-15 | 0 (direct workflow) | 484 |
-| v1.5 | 16-19 | TBD (planning not started) | - |
+| v1.5 | 16-19 | 21 | 610 |
+| v1.6 | 20-24 | TBD (planning not started) | - |
 
 *Updated after each plan completion.*
 | Phase 10-classifier-core P01 | 4 | 2 tasks | 5 files |
@@ -84,6 +87,9 @@ Decisions logged in PROJECT.md Key Decisions table.
 - [Phase 17-session-lifecycle]: s.cancel() releases sessionCtx on the autonomous-exit path, placed inside the existing genuine-failure guard (not a separate step) — idempotent and safe w.r.t. Start's context.AfterFunc(sessionCtx, setupCancel), already un-registered by then
 - [Phase 17-session-lifecycle]: WR-02: Session.explicitStopSeen atomic.Bool decouples 'was Stop() already called' from 'is State == StateStopped' — same per-session primitive placement as cancel/done/stopOnce, keeps Manager stateless across sessions
 - [Phase 17-session-lifecycle]: explicitStopSeen.Swap(true) applied at BOTH of Stop's buildSummary call sites (the state==StateStopped early-return AND the post-stopOnce path) — the early-return is exactly the path a first-post-crash Stop() takes, so it needs the same already_stopped semantics
+- [v1.6 roadmap]: Phase 21 (COMPAT-01/02/03) sequenced before Phase 22 (AUD-02) on ARCHITECTURE.md's technical-dependency read — AUD-02 needs COMPAT-02's version capability gate for correct `enableDefaultDeny` emission; overrides FEATURES.md's priority-tier grouping, which had no code-level blocker forcing a later placement
+- [v1.6 roadmap]: Phase 23 (AUD-03/AUD-04) cannot be planned at file-level detail until `/gsd-discuss-phase` resolves (a) the surface decision — MCP flag-gated session property vs. CLI-only command — and (b), if MCP wins, the SEC-01 two-mode mechanism (build-tag split vs. path-scoped reachability assertion); both must land as recorded PROJECT.md Key Decisions before any audit-window mutation code is written
+- [v1.6 roadmap]: Research's 5-phase proposal adopted as-is (coarse granularity, 3-5 typical) — Phases 20/21 kept independent/parallelizable per both ARCHITECTURE.md and FEATURES.md; Phase 24 (SKL-01..06) sequenced last though most skills have no technical dependency forcing that position (scheduling flexibility noted, not a fixed constraint)
 
 ### Pending Todos
 
@@ -91,7 +97,9 @@ None.
 
 ### Blockers/Concerns
 
-None open. v1.3 deferred items (L7-FUT-01, DNS-FUT-02, etc.) tracked in PROJECT.md Planned section. v1.4 lint debt (LINT-01..03) and release hardening (RELSEC-01..02) deliberately descoped — tracked in REQUIREMENTS.md v2 Requirements for v1.5+ (not in v1.5's 18 v1 requirements).
+Phase 23 (AUD-03/AUD-04) is blocked on an explicit `/gsd-discuss-phase` decision before it can be planned at file-level detail: AUD-03's surface (MCP flag-gated session property vs. CLI-only command, MCP staying pure-readonly) and, if the MCP variant wins, the SEC-01 two-mode mechanism (build-tag split vs. path-scoped reachability assertion) — see ROADMAP.md's decision-gate note and research/SUMMARY.md Tension 4. Does not block Phases 20, 21, 22, or 24.
+
+v1.3 deferred items (L7-FUT-01, DNS-FUT-02, etc.) tracked in PROJECT.md Planned section. v1.4 lint debt (LINT-01..03) and release hardening (RELSEC-01..02) deliberately descoped from v1.5 — remain tracked in PROJECT.md Planned, not yet claimed by v1.6.
 
 ### Quick Tasks Completed
 
@@ -113,10 +121,12 @@ Items acknowledged and deferred at milestone close on 2026-07-20 (v1.4); re-ackn
 
 ## Session Continuity
 
-Last session: 2026-07-21T16:45:44.013Z
-Stopped at: Phase 19 context gathered (auto)
-Resume: `/gsd-verify-phase 17` — verify Phase 17 session-lifecycle (all 8 plans complete, gap closures WR-01/WR-02/WR-03/WR-04/D-02 done)
+Last session: 2026-07-22T09:30:00.000Z
+Stopped at: ROADMAP.md and STATE.md written for v1.6 Audit-Mode Onboarding & cpg-Dedicated Agent Tooling — Phases 20-24 created, 13/13 requirements mapped, REQUIREMENTS.md traceability updated
+Resume: `/gsd-plan-phase 20` — plan `--include-audit` Verdict Ingestion (AUD-01)
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Review the roadmap draft in .planning/ROADMAP.md
+- Start planning with /gsd-plan-phase 20
+- Note: Phase 23 requires /gsd-discuss-phase (AUD-03 surface + SEC-01 mechanism decisions) before it can be planned
