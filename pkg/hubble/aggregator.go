@@ -439,12 +439,17 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan *flowpb.Flow, out chan<-
 					}
 				}
 			}
-			// HEALTH-01/05: Classification gate — applies only to flows with an
-			// explicit DROPPED verdict and a non-zero drop reason. Zero-value
-			// DropReasonDesc on non-DROPPED flows (e.g. forwarded/unknown) must
-			// pass through unmodified (PITFALLS Integration Gotchas: always check
-			// Verdict == DROPPED before classifying).
-			if f.Verdict == flowpb.Verdict_DROPPED && f.GetDropReasonDesc() != flowpb.DropReason_DROP_REASON_UNKNOWN {
+			// HEALTH-01/05 + AUD-01: applies to flows with an explicit DROPPED
+			// (or, when includeAudit, AUDIT) verdict and a non-zero drop
+			// reason. Zero-value DropReasonDesc on non-DROPPED/non-AUDIT flows
+			// must pass through unmodified. Note (Pitfall 4, non-blocking): if
+			// an AUDIT flow's DropReasonDesc is UNKNOWN on some Cilium
+			// version/deployment, this condition is simply false for that flow
+			// and it falls through to keyFromFlow() → still bucketed → still
+			// generates a policy (same safe fallback as any DROPPED flow with
+			// an unknown reason today; no flow is silently lost).
+			if (f.Verdict == flowpb.Verdict_DROPPED || (a.includeAudit && f.Verdict == flowpb.Verdict_AUDIT)) &&
+				f.GetDropReasonDesc() != flowpb.DropReason_DROP_REASON_UNKNOWN {
 				class := dropclass.Classify(f.GetDropReasonDesc())
 				switch class {
 				case dropclass.DropClassInfra, dropclass.DropClassTransient:
