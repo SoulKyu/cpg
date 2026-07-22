@@ -73,6 +73,11 @@ type PipelineConfig struct {
 	// L7Enabled: no-op in v1.2 Phase 7; Phase 8 (HTTP) and Phase 9 (DNS) light up codegen.
 	L7Enabled bool
 
+	// IncludeAudit: when true, Verdict_AUDIT flows are ingested alongside
+	// Verdict_DROPPED at every filter site (sites 1-5). Default false
+	// preserves byte-identical pre-v1.6 DROPPED-only behavior.
+	IncludeAudit bool
+
 	// IgnoreProtocols is the lowercase, already-validated set of L4 protocol
 	// names whose flows must be dropped before bucketing (PA5). Caller
 	// (cmd/cpg) is responsible for normalization + allowlist validation.
@@ -168,7 +173,7 @@ func RunPipeline(ctx context.Context, cfg PipelineConfig) error {
 // RunPipelineWithSource runs the pipeline with an injectable flow source.
 // This enables testing without a real gRPC connection.
 func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flowsource.FlowSource) error {
-	flows, lostEvents, err := source.StreamDroppedFlows(ctx, cfg.Namespaces, cfg.AllNamespaces)
+	flows, lostEvents, err := source.StreamDroppedFlows(ctx, cfg.Namespaces, cfg.AllNamespaces, cfg.IncludeAudit)
 	if err != nil {
 		return err
 	}
@@ -182,6 +187,7 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 	tracker := NewUnhandledTracker(cfg.Logger)
 	agg := NewAggregator(cfg.FlushInterval, cfg.Logger, tracker)
 	agg.SetL7Enabled(cfg.L7Enabled)
+	agg.SetIncludeAudit(cfg.IncludeAudit)
 	agg.SetIgnoreProtocols(cfg.IgnoreProtocols)
 	agg.SetIgnoreDropReasons(cfg.IgnoreDropReasons)
 	if cfg.EvidenceEnabled {
@@ -347,6 +353,18 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 			zap.Strings("workloads", agg.ObservedWorkloads()),
 			zap.Uint64("flows", stats.FlowsSeen),
 			zap.String("hint", "see README L7 prerequisites: #l7-prerequisites"),
+		)
+	}
+
+	// AUD-01: passive empty-AUDIT-records detection. Single warning per
+	// pipeline run, fired only when --include-audit was requested AND at
+	// least one flow was observed AND zero AUDIT-verdict flows materialized.
+	// Mirrors VIS-01's shape exactly — a bare post-g.Wait() check, NOT a
+	// dedup map (see Pitfall 2 / warnedReserved correction in RESEARCH.md).
+	if cfg.IncludeAudit && stats.FlowsSeen > 0 && agg.AuditVerdictCount() == 0 {
+		cfg.Logger.Warn("--include-audit set but no AUDIT-verdict flows observed in window",
+			zap.Strings("workloads", agg.ObservedWorkloads()),
+			zap.Uint64("flows", stats.FlowsSeen),
 		)
 	}
 

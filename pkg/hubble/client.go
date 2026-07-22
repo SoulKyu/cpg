@@ -50,7 +50,7 @@ type flowStream interface {
 // StreamDroppedFlows connects to Hubble Relay and streams dropped flows into
 // typed channels. The caller owns the context; cancelling it stops the stream.
 // Both returned channels are closed when the stream ends.
-func (c *Client) StreamDroppedFlows(ctx context.Context, namespaces []string, allNS bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
+func (c *Client) StreamDroppedFlows(ctx context.Context, namespaces []string, allNS bool, includeAudit bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
 	var transportCreds grpc.DialOption
 	if c.tlsEnabled {
 		transportCreds = grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{}))
@@ -78,7 +78,7 @@ func (c *Client) StreamDroppedFlows(ctx context.Context, namespaces []string, al
 
 	req := &observerpb.GetFlowsRequest{
 		Follow:    true,
-		Whitelist: buildFilters(namespaces, allNS),
+		Whitelist: buildFilters(namespaces, allNS, includeAudit),
 	}
 
 	stream, err := client.GetFlows(ctx, req)
@@ -191,11 +191,17 @@ func streamFromSource(stream flowStream, logger *zap.Logger, onClose io.Closer, 
 
 // buildFilters constructs FlowFilter whitelist entries to filter dropped flows
 // by namespace. Multiple whitelist filters are OR-ed; fields within a single
-// filter are AND-ed.
-func buildFilters(namespaces []string, allNS bool) []*flowpb.FlowFilter {
+// filter are AND-ed. includeAudit widens the verdict set to also match
+// Verdict_AUDIT (opt-in; default false preserves DROPPED-only behavior).
+func buildFilters(namespaces []string, allNS bool, includeAudit bool) []*flowpb.FlowFilter {
+	verdicts := []flowpb.Verdict{flowpb.Verdict_DROPPED}
+	if includeAudit {
+		verdicts = append(verdicts, flowpb.Verdict_AUDIT)
+	}
+
 	if allNS || len(namespaces) == 0 {
 		return []*flowpb.FlowFilter{
-			{Verdict: []flowpb.Verdict{flowpb.Verdict_DROPPED}},
+			{Verdict: verdicts},
 		}
 	}
 
@@ -206,11 +212,11 @@ func buildFilters(namespaces []string, allNS bool) []*flowpb.FlowFilter {
 
 	return []*flowpb.FlowFilter{
 		{
-			Verdict:   []flowpb.Verdict{flowpb.Verdict_DROPPED},
+			Verdict:   verdicts,
 			SourcePod: prefixes,
 		},
 		{
-			Verdict:        []flowpb.Verdict{flowpb.Verdict_DROPPED},
+			Verdict:        verdicts,
 			DestinationPod: prefixes,
 		},
 	}
