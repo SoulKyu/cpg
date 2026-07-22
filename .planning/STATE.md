@@ -2,35 +2,32 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: MCP Integration
-status: milestone_complete
-last_updated: 2026-07-21T19:56:03.636Z
-last_activity: 2026-07-21 -- Phase 19 execution started
+status: Awaiting next milestone
+last_updated: "2026-07-22T06:38:35.932Z"
+last_activity: 2026-07-22 — Milestone v1.5 completed and archived
 progress:
   total_phases: 4
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 21
   completed_plans: 21
-  percent: 75
-stopped_at: Milestone complete (Phase 19 was final phase)
+  percent: 100
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-07-20)
+See: .planning/PROJECT.md (updated 2026-07-22)
 
 **Core value:** Automatically generate correct CiliumNetworkPolicies from observed Hubble denials so that SREs spend zero time manually writing network policies in default-deny environments.
 **Current focus:** Milestone complete
 
 ## Current Position
 
-Phase: 19
-Plan: Not started
-Status: Milestone complete
-Last activity: 2026-07-21
-
-Progress: [██████████] 100%
+Phase: Milestone v1.5 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-07-22 — Milestone v1.5 completed and archived
 
 ## Performance Metrics
 
@@ -106,7 +103,7 @@ None open. v1.3 deferred items (L7-FUT-01, DNS-FUT-02, etc.) tracked in PROJECT.
 
 ## Deferred Items
 
-Items acknowledged and deferred at milestone close on 2026-07-20:
+Items acknowledged and deferred at milestone close on 2026-07-20 (v1.4); re-acknowledged unchanged at v1.5 close on 2026-07-22:
 
 | Category | Item | Status |
 |----------|------|--------|
@@ -122,5 +119,4 @@ Resume: `/gsd-verify-phase 17` — verify Phase 17 session-lifecycle (all 8 plan
 
 ## Operator Next Steps
 
-- Phase 16 (MCP Server Foundation & Write Safety) and Phase 17 (session-lifecycle) are both fully executed
-- Verify Phase 17 before proceeding to Phase 18 (Query Tools) planning
+- Start the next milestone with /gsd-new-milestone

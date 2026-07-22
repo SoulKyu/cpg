@@ -1,5 +1,38 @@
 # Milestones — CPG (Cilium Policy Generator)
 
+## v1.5 MCP Integration (Shipped: 2026-07-22)
+
+**Phases completed:** 4 phases (16-19), 21 plans, 44 tasks
+**Delivered:** `cpg mcp` — a readonly MCP server over stdio: one live Hubble capture session at a time, 8 tools (3 session + 5 query), structural readonly proof (RTA/SSA audit, mutation-tested), real-subprocess stdio e2e under `-race` (graceful + ungraceful-disconnect), README harness docs. Tests 484 → 610, all `-race`. Shipped via PR #18 (merge `81ebf2c`), incl. same-day fix of GO-2026-5970 (x/text v0.39.0).
+**Timeline:** 2026-07-20 → 2026-07-22 · **Requirements:** 18/18 complete (SRV-01..04, SESS-01..06, QRY-01..05, SEC-01..03)
+**Known deferred items at close:** 3 (pre-v1.5 quick-task artifacts lacking closure markers, work shipped in April — see STATE.md Deferred Items; re-acknowledged at this close)
+
+**Key accomplishments:**
+
+- Same-dir temp+rename atomic write for `pkg/output/writer.go` with explicit 0644 chmod, proven torn-read-safe by a race-clean concurrent writer/reader test.
+- Pinned github.com/modelcontextprotocol/go-sdk v1.6.1 into go.mod/go.sum behind an operator-approved Package Legitimacy Gate
+- `cpg mcp` cobra subcommand wiring a zero-tool go-sdk v1.6.1 server over `mcp.IOTransport` (stdout captured before the `os.Stdout=os.Stderr` backstop swap), with go-sdk logs bridged into cpg's existing stderr zap stream via the newly-added `go.uber.org/zap/exp/zapslog` dependency, verified by a reusable in-memory-transport stdout-purity harness.
+- Nil-safe `PipelineConfig.OnFinal func(SessionStats)` hook fired exactly once at end-of-run with fully populated stats, landed and tested as the interface-first foundation for 17-02's session manager.
+- `pkg/session`'s state model (capturing/stopped), MCP result shapes (StartResult/StatusResult/StopResult), and `buildPipelineConfig` — a session-tmpdir-scoped port of `generate.go`'s `PipelineConfig` recipe that makes a zero-value `flush_interval`/`timeout` crash structurally impossible.
+- Mutex-guarded `pkg/session.Manager` (Start/Status/Stop/Shutdown) implementing the capturing→stopped→gone state machine with a TOCTOU-safe slot claim, copy-under-lock reads, an injectable setup seam, and a 16-test `-race` suite closing both concurrency Blockers identified in research.
+- `start_session`/`get_status`/`stop_session` registered with typed schemas in `cmd/cpg/mcp_tools.go`, `runMCPServer` now constructs `pkg/session.Manager` from its own server-root ctx with `mcpModeStdout()` wired and calls `mgr.Shutdown()` after `server.Run` returns — completing the Phase 16 stdout handoff and the SESS-05 cleanup fan-out, proven by 3 cluster-free integration tests over the in-memory transport.
+- Session.pipelineErr atomic slot + a guarded autonomous State transition make `get_status` truthfully report a crashed Hubble capture as "stopped" instead of "capturing" forever, closing reopened gap WR-01 (Truth 2 / SESS-03) and WR-04's DropReason key-collapse bug.
+- context.AfterFunc(sessionCtx, setupCancel) merges Shutdown's cancellation into an in-flight Start()'s setup phase, and a 24h maxSessionDuration ceiling bounds MCP-supplied timeout/flush_interval — closing reopened gaps WR-02 (Truth 4 / SESS-05) and WR-03.
+- Reworded ROADMAP Phase 17 SC5 and REQUIREMENTS SESS-06 to scope the "not found or expired" error to unknown/purged/replaced `session_id` and cite D-02's retained-stopped-session-stays-queryable behavior, closing the 17-VERIFICATION.md Truth 5 documentation gap.
+- Reclassified the launch goroutine's genuine-failure guard on `sessionCtx.Err() == nil` (not the returned error's identity) and added `Session.explicitStopSeen atomic.Bool` swapped at both `Stop()` call sites — closing WR-01 (a scoped dial-timeout `DeadlineExceeded` no longer wedges `get_status` at "capturing" forever) and WR-02 (the first `stop_session` after an autonomous crash no longer wrongly reports `already_stopped: true`).
+- Broadened `pkg/session/manager.go`'s autonomous-exit guard from `err != nil && sessionCtx.Err() == nil` to `sessionCtx.Err() == nil` alone, so a pipeline that drains cleanly (nil error, e.g. Hubble Relay closing its gRPC stream on io.EOF) now autonomously transitions the session to stopped instead of wedging at "capturing" forever.
+- Moved `cpg explain`'s filter/render logic into an importable `pkg/explain` package (exported `Filter.Match`, `Output`, `RenderJSON/RenderText/RenderYAML`, `ParsePeerLabel`), thinning `cmd/cpg/explain.go` to call it — byte-identical CLI output, ready for the get_evidence MCP tool to reuse directly.
+- Exported `output.ReadPolicyFile` and `hubble.ReadClusterHealth` with a uniform wrapped-`fs.ErrNotExist` reader contract, plus a regression test proving `hw.finalize()` writes `cluster-health.json` unconditionally even after a mid-capture pipeline error.
+- registerQueryTools composition root plus list_policies/get_policy/get_cluster_health MCP tools, with get_cluster_health's D-13 crash-vs-healthy branch logic factored into a directly unit-tested pure function.
+- Shared mustQuerySchema/cursor/paginate primitives plus get_evidence (QRY-03): paginated per-rule flow evidence reusing pkg/explain.Filter/Output verbatim, with a direction-enum schema and D-05/D-06 fail-closed cursor handling.
+- list_dropped_flows (QRY-01) ships the honest two-section samples[]/aggregates[] composed view with combined pagination, dropclass/direction enum schema, and closes Phase 18 with the final 8-tool integration test (QRY-05 fully satisfied).
+- Re-runnable Go test proves zero K8s write verbs and zero unallowlisted filesystem writes are reachable from the MCP composition root, via RTA callgraph + direct SSA call-instruction scan; golang.org/x/tools promoted to a direct test-only dependency with zero new go.sum hashes.
+- Real `-race`-built `cpg mcp` subprocess driven over OS stdin/stdout pipes against an in-process fake Hubble gRPC relay, proving the full session lifecycle and the all-8-tool SRV-01 handshake on real stdio (not the in-memory transport).
+- New `## MCP Server (cpg mcp)` README section covering the 8-tool table, harness `env` (KUBECONFIG/PATH/TMPDIR) contract, LLM secrets posture, and the exec-credential-plugin non-interactive-hang caveat — written from scratch since README had zero prior MCP mentions.
+- TestMCPE2EUngracefulDisconnect proves the SESS-05 bounded cleanup fan-out fires on transport death (no stop_session): bounded self-exit, tmpdir removal, and fake-relay stream cancellation -- stabilized against a real, empirically-reproduced async race by adding an artifact-based synchronization gate beyond the planned relay-reached signal.
+
+---
+
 Historical record of shipped milestones. Each entry links to its archived roadmap and requirements.
 
 ---

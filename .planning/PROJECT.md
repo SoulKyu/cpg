@@ -8,16 +8,11 @@ A Go CLI tool that connects directly to Hubble Relay via gRPC, observes dropped/
 
 Automatically generate correct CiliumNetworkPolicies from observed Hubble denials so that SREs spend zero time manually writing network policies in default-deny environments.
 
-## Current Milestone: v1.5 MCP Integration
+## Current Milestone: none — v1.5 shipped 2026-07-22
 
-**Goal:** Expose cpg as a readonly MCP server (stdio) so an LLM harness can run a live Hubble capture session, analyze dropped flows, and review generated policies — the LLM brings the intelligence, cpg stays deterministic.
+v1.5 MCP Integration is complete and archived ([milestones/v1.5-ROADMAP.md](milestones/v1.5-ROADMAP.md)). `cpg mcp` ships a readonly MCP stdio server: single live Hubble capture session, 8 tools (3 session + 5 query), structural readonly proof, real-stdio e2e under `-race`, README harness docs. Delivered via PR #18.
 
-**Target features:**
-- `cpg mcp` subcommand — MCP server over stdio transport (the harness spawns the process)
-- Session tools: start_session / status / stop_session — background Hubble capture
-- Ephemeral session tmpdir (`os.MkdirTemp`, respects `$TMPDIR`): policies YAML + evidence + cluster-health.json written via the existing writers with existing FIFO caps — flat memory profile, no parallel in-memory path
-- Query tools: dropped flows (dropclass-classified), generated policies, explain/evidence, cluster health — all implemented as readers over the session tmpdir artifacts
-- Readonly guarantee: never mutates the cluster, never writes outside the session tmpdir; tmpdir cleaned at stop_session and server shutdown
+**Next milestone (ideation ready):** v1.6 — Audit-Mode Onboarding & cpg-Dedicated Agent Tooling. Full PRD-shaped draft with verified code refs, open decisions, and candidate requirement IDs (AUD-01..04, SKL-01..05, COMPAT-01..02): [drafts/v1.6-audit-onboarding-and-cpg-agent-tooling.md](drafts/v1.6-audit-onboarding-and-cpg-agent-tooling.md). Start with `/gsd-new-milestone`.
 
 ## Requirements
 
@@ -75,9 +70,9 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 
 ### Active
 
-<!-- v1.5 MCP Integration — requirements being defined via /gsd-new-milestone. -->
+<!-- No active milestone. v1.6 requirements to be defined via /gsd-new-milestone from the ideation draft. -->
 
-- _(being defined — see REQUIREMENTS.md once written)_
+- _(none — v1.6 candidates in [drafts/v1.6-audit-onboarding-and-cpg-agent-tooling.md](drafts/v1.6-audit-onboarding-and-cpg-agent-tooling.md))_
 
 ### Planned
 
@@ -170,14 +165,17 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 | `mcp.IOTransport` with pre-swap stdout capture, never `mcp.StdioTransport{}` | StdioTransport reads package-level os.Stdout lazily inside Connect() — combined with the D-01 global swap it would bind the JSON-RPC wire to stderr and hang the server | ✓ Good — shipped v1.5 Phase 16; acceptance criteria forbid StdioTransport |
 | `go.uber.org/zap/exp` v0.3.0 as separate direct dependency | zapslog is NOT bundled in zap v1.27.1 (independently versioned module) — corrected a locked research claim via operator-approved legitimacy gate | ✓ Good — shipped v1.5 Phase 16 |
 | Seam-audit identity assertion guarded against test2json aliasing | `go test -json` makes the testing framework alias os.Stderr = os.Stdout in-process; unguarded global-identity assertions flake by mode, not by race | ✓ Good — root-caused and guarded v1.5 Phase 16 |
+| SEC-01 audit = function-level RTA callgraph + direct SSA call scan (never package-level import scan) | `cmd/cpg` is one `package main` mixing MCP and CLI write paths; only reachability from `runMCPServer` proves the readonly claim; naive whole-graph scans produced 70-102 third-party false positives | ✓ Good — shipped v1.5 Phase 19, mutation-tested |
+| SRV-04 e2e = real `-race` subprocess + in-process fake observerpb relay via `start_session{server}` bypass | "Full stdio" can't be proven on the in-memory transport; the D-07 server arg was designed for cluster-free e2e | ✓ Good — shipped v1.5 Phase 19; both variants stable 5/5 |
+| No GSD milestone git tags (v1.5 close) | release-please owns vX.Y.Z tags (product already at v1.9.x incl. an unrelated v1.5.0); bare milestone tags would collide/confuse; MILESTONES.md + archives are the record | ✓ Good — decided 2026-07-22, matches v1.0-v1.4 precedent |
 
 ## Current State
 
-**Shipped:** v1.0 (2026-03-08), v1.1 (2026-04-24), v1.2 (2026-04-25), v1.3 (2026-04-26), and v1.4 (2026-07-20).
+**Shipped:** v1.0 (2026-03-08), v1.1 (2026-04-24), v1.2 (2026-04-25), v1.3 (2026-04-26), v1.4 (2026-07-20), and v1.5 (2026-07-22).
 
 **Codebase:** 12 packages (`pkg/{labels,policy,output,hubble,k8s,dedup,flowsource,evidence,diff,dropclass,session,explain}` + `cmd/`). **607 tests passing with `-race`** across 12 packages (up from 539 at Phase 17 close). CI green and operational (build + race tests + lint + govulncheck). Deps: cilium v1.19.4, go-sdk v1.6.1, jsonschema-go v0.4.3 (direct since Phase 18), toolchain go1.25.12. Known debt: 26 lint issues (16 errcheck + 10 SA1019) gated by `only-new-issues`, scoped to v1.5; pre-existing `pkg/session` shared-`/tmp` test flake documented in `phases/18-query-tools/deferred-items.md`. Release-please continues to handle product SemVer tagging.
 
-**Current milestone:** v1.5 MCP Integration — ALL 4 PHASES COMPLETE (16-19, 2026-07-20 → 2026-07-21). Phase 19 (Security Hardening & End-to-End Validation) closed 2026-07-21: SEC-01 audit (mutation-tested), SRV-01/SRV-04 real-stdio e2e both variants green under `-race`, SEC-03 README harness docs; verified 5/5 (one tracking-only gap closed same-day); code review (0 critical, 4 warnings) fixed same-day (audit self-check de-tautologized, verb/fs watchlists extended, subprocess t.Cleanup kill-guard). All 18 v1.5 requirements complete — milestone ready for `/gsd-complete-milestone`. Tests: 610 across 12 packages (607 at Phase 18 close + audit + 2 e2e variants), all `-race`.
+**Current milestone:** none — v1.5 MCP Integration shipped 2026-07-22 (PR #18, merge `81ebf2c`; incl. same-day GO-2026-5970 fix: x/text v0.39.0). Tests: 610 across 12 packages, all `-race`. Next: v1.6 (Audit-Mode Onboarding & cpg-Dedicated Agent Tooling) — ideation draft ready in `drafts/`, start with `/gsd-new-milestone`.
 
 ## Evolution
 
@@ -197,4 +195,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-21 — v1.5 Phase 19 (Security Hardening & End-to-End Validation) completed, verified 5/5, review findings fixed; all v1.5 phases (16-19) done.*
+*Last updated: 2026-07-22 after v1.5 milestone (MCP Integration shipped and archived).*
