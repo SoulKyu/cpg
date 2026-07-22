@@ -87,6 +87,17 @@ type Aggregator struct {
 	// increments it.
 	l7DNSCount uint64
 
+	// includeAudit gates whether the classification gate treats Verdict_AUDIT
+	// the same as Verdict_DROPPED; forwarded from PipelineConfig.IncludeAudit
+	// via SetIncludeAudit before Run().
+	includeAudit bool
+
+	// auditVerdictCount counts Verdict_AUDIT flows observed during the
+	// session, incremented unconditionally in Run() — powers the AUD-01
+	// empty-records warning in pipeline.go regardless of whether includeAudit
+	// is set.
+	auditVerdictCount uint64
+
 	// flowsSeen counts every flow that survived keyFromFlow() (i.e. landed in
 	// a bucket). Surfaced via FlowsSeen() so SessionStats reports a real
 	// number rather than the always-zero placeholder shipped through v1.1
@@ -320,6 +331,18 @@ func (a *Aggregator) L7DNSCount() uint64 {
 	return a.l7DNSCount
 }
 
+// SetIncludeAudit toggles whether the classification gate treats
+// Verdict_AUDIT the same as Verdict_DROPPED. Safe to call before Run().
+func (a *Aggregator) SetIncludeAudit(enabled bool) {
+	a.includeAudit = enabled
+}
+
+// AuditVerdictCount returns the number of Verdict_AUDIT flows observed
+// across the session. Populated regardless of includeAudit; used by AUD-01.
+func (a *Aggregator) AuditVerdictCount() uint64 {
+	return a.auditVerdictCount
+}
+
 // FlowsSeen returns the count of flows that survived keyFromFlow (i.e.
 // landed in an aggregation bucket). Used by SessionStats for the VIS-01
 // gate (`flows > 0`).
@@ -383,6 +406,13 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan *flowpb.Flow, out chan<-
 			}
 			if f.GetL7().GetDns() != nil {
 				a.l7DNSCount++
+			}
+			// Count AUDIT-verdict flows unconditionally, regardless of
+			// includeAudit — mirrors the L7 counters' "regardless of flag"
+			// rationale. Powers the AUD-01 empty-records warning in
+			// pipeline.go.
+			if f.Verdict == flowpb.Verdict_AUDIT {
+				a.auditVerdictCount++
 			}
 			// FILTER-01: drop flows matching --ignore-drop-reason BEFORE the
 			// protocol filter and classification gate. User-explicit exclusion
