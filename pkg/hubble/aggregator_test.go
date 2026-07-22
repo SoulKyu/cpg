@@ -366,6 +366,54 @@ func TestAggregator_L7DNSCount_IndependentOfL7Enabled(t *testing.T) {
 	assert.Equal(t, uint64(1), agg.L7DNSCount(), "counter is diagnostic, not gated by L7Enabled")
 }
 
+// TestAggregator_AuditVerdictCount_Increments asserts that observing an
+// AUDIT-verdict flow increments the diagnostic AuditVerdictCount counter,
+// mirroring TestAggregator_L7DNSCount_Increments. A DROPPED flow in the same
+// batch must not move the AUDIT counter.
+func TestAggregator_AuditVerdictCount_Increments(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+
+	auditFlow := makePolicyFlow()
+	auditFlow.Verdict = flowpb.Verdict_AUDIT
+
+	in <- auditFlow
+	in <- makePolicyFlow() // DROPPED flow — must not move the AUDIT counter
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out, nil))
+	_ = drainEvents(out)
+
+	assert.Equal(t, uint64(1), agg.AuditVerdictCount(), "one AUDIT flow → AuditVerdictCount==1")
+}
+
+// TestAggregator_AuditVerdictCount_IndependentOfIncludeAudit mirrors the L7
+// counter contract: the diagnostic counter increments regardless of
+// SetIncludeAudit (default false, and intentionally not called here).
+func TestAggregator_AuditVerdictCount_IndependentOfIncludeAudit(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+	// SetIncludeAudit intentionally NOT called — default false; counter must still move.
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+
+	auditFlow := makePolicyFlow()
+	auditFlow.Verdict = flowpb.Verdict_AUDIT
+	in <- auditFlow
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out, nil))
+	_ = drainEvents(out)
+
+	assert.Equal(t, uint64(1), agg.AuditVerdictCount(), "counter is diagnostic, not gated by includeAudit")
+}
+
 func TestAggregator_TracksNilEndpoint(t *testing.T) {
 	core, logs := observer.New(zapcore.DebugLevel)
 	logger := zap.New(core)
