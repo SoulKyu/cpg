@@ -27,7 +27,7 @@ Operators can generate a namespaced default-deny bootstrap artifact (`cpg bootst
 - The MCP tool applies the same gate and includes detected version/compat info in its result so the LLM can reason about applicability.
 
 ### Artifact Content
-- CNP carries `spec.enableDefaultDeny: {ingress: true, egress: true}` AND explicit empty `ingress: []` / `egress: []` stanzas — both present, tested as a named acceptance criterion (cilium/cilium#35558 silent-no-op guard).
+- CNP carries `spec.enableDefaultDeny: {ingress: true, egress: true}` AND explicit empty-rule stanzas `ingress: [{}]` / `egress: [{}]` (one-element list holding an empty rule object) — tested as a named acceptance criterion. **Research correction (22-RESEARCH.md, empirically verified against vendored cilium v1.19.4):** the ROADMAP's literal `ingress: []` form IS the cilium/cilium#35558 bug — `Sanitize()` rejects it and `omitempty` drops it at marshal; `ingress: [- {}]` is the enforcing, marshal-surviving form. The criterion's intent (artifact actually enforces default-deny, guarded by a named test) is unchanged.
 - `metadata.name: default-deny-<ns>`, `metadata.namespace: <ns>`; empty `endpointSelector: {}` (selects all endpoints in the namespace).
 - Reuse `pkg/policy` types/marshaling if they can express `enableDefaultDeny`; otherwise a minimal dedicated builder — planner's discretion, but YAML output must go through the same marshal path as generate for byte-consistent style.
 
