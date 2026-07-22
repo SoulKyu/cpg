@@ -303,8 +303,8 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 
 **Plans**: 4 plans across 3 waves (CLI-only surface, Variant B; zero MCP surface change)
 
-- [ ] 23-01-PLAN.md (wave 1) — pkg/k8s exec plumbing: SPDY pods/exec, node→agent-pod mapping, read-before-flip, canonical flip, daemon-wide precondition read (AUD-03)
-- [ ] 23-02-PLAN.md (wave 2) — pkg/auditwindow.Manager: Open/Close/Shutdown state machine, UID-keyed revert-only-ours, SESS-05 bounded fan-out, new-endpoint watcher (AUD-03)
+- [x] 23-01-PLAN.md (wave 1) — pkg/k8s exec plumbing: SPDY pods/exec, node→agent-pod mapping, read-before-flip, canonical flip, daemon-wide precondition read (AUD-03)
+- [x] 23-02-PLAN.md (wave 2) — pkg/auditwindow.Manager: Open/Close/Shutdown state machine, UID-keyed revert-only-ours, SESS-05 bounded fan-out, new-endpoint watcher (AUD-03)
 - [ ] 23-03-PLAN.md (wave 3) — cpg audit-window cobra command (foreground, signal-bound, always-bounded TTL) + SEC-01 tripwire TestAuditWindowNotReachableFromMCP via Edge.Site==nil filter (AUD-03, AUD-04)
 - [ ] 23-04-PLAN.md (wave 3) — README readonly-by-default + audit-window exclusive RBAC; runbook wires real command + honest race; golden pins (AUD-03, criterion 5)
 
@@ -349,7 +349,7 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 | 20. `--include-audit` Verdict Ingestion | v1.6 | 4/4 | Complete    | 2026-07-22 |
 | 21. Cilium Compatibility Matrix + Runtime Detection | v1.6 | 4/4 | Complete   | 2026-07-22 |
 | 22. Bootstrap Artifact Generation | v1.6 | 1/3 | In Progress | - |
-| 23. Managed Audit Window + SEC-01 Evolution | v1.6 | 0/TBD | Not started | - |
+| 23. Managed Audit Window + SEC-01 Evolution | v1.6 | 2/4 | In Progress|  |
 | 24. cpg-Dedicated Skills & Agent Tooling | v1.6 | 0/TBD | Not started | - |
 
 **Milestone status:** v1.0 ✅ shipped · v1.1 ✅ shipped · v1.2 ✅ shipped · v1.3 ✅ shipped · v1.4 ✅ shipped · v1.5 ✅ shipped · v1.6 📋 in progress
