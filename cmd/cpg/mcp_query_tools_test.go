@@ -671,10 +671,11 @@ func TestCapClusterHealthReport(t *testing.T) {
 // TestMCPQueryToolsListed is Phase 18's closing tool-count assertion: now
 // that list_dropped_flows (18-05) is the 5th and last query tool, the
 // composition root's total is pinned exactly — 3 session tools (Phase 17)
-// plus 5 query tools (Phase 18). Earlier per-plan tests deliberately used
-// GreaterOrEqual/Contains while the tool table was still growing
-// (mcp_session_test.go's TestMCPSessionToolsListed, this file's own
-// pre-18-05 history) — this is the one place the exact total is checked.
+// plus 5 query tools (Phase 18) plus get_bootstrap_policy (Phase 22).
+// Earlier per-plan tests deliberately used GreaterOrEqual/Contains while the
+// tool table was still growing (mcp_session_test.go's
+// TestMCPSessionToolsListed, this file's own pre-18-05 history) — this is
+// the one place the exact total is checked.
 func TestMCPQueryToolsListed(t *testing.T) {
 	initLoggerForTesting(t)
 
@@ -683,7 +684,7 @@ func TestMCPQueryToolsListed(t *testing.T) {
 
 	toolsResult, err := cs.ListTools(ctx, nil)
 	require.NoError(t, err)
-	require.Len(t, toolsResult.Tools, 8, "3 session + 5 query tools")
+	require.Len(t, toolsResult.Tools, 9, "3 session + 5 query tools + get_bootstrap_policy")
 
 	byName := make(map[string]*mcp.Tool, len(toolsResult.Tools))
 	for _, tool := range toolsResult.Tools {
@@ -692,6 +693,7 @@ func TestMCPQueryToolsListed(t *testing.T) {
 	for _, name := range []string{
 		"start_session", "get_status", "stop_session",
 		"list_dropped_flows", "list_policies", "get_policy", "get_evidence", "get_cluster_health",
+		"get_bootstrap_policy",
 	} {
 		assert.Contains(t, byName, name)
 	}
