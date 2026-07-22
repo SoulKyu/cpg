@@ -98,7 +98,8 @@ func buildPipelineConfig(
 		SessionSource: evidence.SourceInfo{Type: "live", Server: server},
 		CPGVersion:    cpgVersion,
 
-		L7Enabled: args.L7,
+		L7Enabled:    args.L7,
+		IncludeAudit: args.IncludeAudit,
 
 		IgnoreProtocols:   args.IgnoreProtocols,
 		IgnoreDropReasons: args.IgnoreDropReasons,

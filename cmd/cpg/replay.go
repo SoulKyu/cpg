@@ -122,7 +122,8 @@ func runReplay(cmd *cobra.Command, args []string) error {
 
 		// L7Enabled is plumbed through but is a no-op for codegen in v1.2 Phase 7.
 		// cpg replay NEVER invokes L7 pre-flight (offline path) regardless of --l7.
-		L7Enabled: f.l7,
+		L7Enabled:    f.l7,
+		IncludeAudit: f.includeAudit,
 
 		IgnoreProtocols:   ignoreProtocols,
 		IgnoreDropReasons: ignoreDropReasons,
