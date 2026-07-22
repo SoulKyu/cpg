@@ -184,6 +184,17 @@ func (m *Manager) Open(ctx context.Context, ns string) error {
 		m.flipIfNeeded(ctx, &endpoints[i])
 	}
 
+	// Watch for rootCtx cancellation on any path — SIGINT/SIGTERM, parent
+	// context death — and revert unconditionally exactly once. This is what
+	// makes "every exit path reverts" true even if the CLI caller forgets to
+	// call Shutdown explicitly (mirrors Shutdown's own sole responsibility:
+	// nothing to revert exists before Open runs, so this is started here,
+	// not in NewManager).
+	go func() {
+		<-m.rootCtx.Done()
+		m.Shutdown()
+	}()
+
 	return nil
 }
 
@@ -247,4 +258,107 @@ func (m *Manager) defaultResolveCurrentID(ctx context.Context, ns string, uid ty
 		}
 	}
 	return 0, fmt.Errorf("endpoint %s no longer exists in namespace %s", uid, ns)
+}
+
+// Close reverts every endpoint cpg flipped, guarded by closeOnce so only the
+// first caller (whether Close itself or Shutdown's internal call) performs
+// the real sweep — a second call returns the identical cached summary, never
+// double-flipping. Each endpoint's current integer ID is re-resolved fresh
+// from its UID (via resolveCurrentIDFn) immediately before reverting, since
+// it may have drifted since Open (T-23-05: never revert via a stale,
+// possibly-reused ID). Every endpoint is reverted concurrently (a bounded
+// fan-out, not a sequential loop) so one wedged transport can never prevent
+// the others from completing and being reported — per-endpoint success or
+// failure is always recorded, never swallowed (T-23-06).
+func (m *Manager) Close(ctx context.Context) (RevertResult, error) {
+	m.closeOnce.Do(func() {
+		m.mu.Lock()
+		recs := make([]*endpointRecord, 0, len(m.ours))
+		for _, rec := range m.ours {
+			recs = append(recs, rec)
+		}
+		ns := m.ns
+		m.mu.Unlock()
+
+		result := RevertResult{EndpointResults: make(map[types.UID]error, len(recs))}
+		var resultMu sync.Mutex
+		var wg sync.WaitGroup
+		for _, rec := range recs {
+			wg.Add(1)
+			go func(rec *endpointRecord) {
+				defer wg.Done()
+
+				id := rec.currentID
+				if m.resolveCurrentIDFn != nil {
+					freshID, err := m.resolveCurrentIDFn(ctx, ns, rec.uid)
+					if err != nil {
+						m.logger.Warn("re-resolving endpoint's current ID failed; reverting with the ID recorded at Open",
+							zap.String("uid", string(rec.uid)), zap.Error(err))
+					} else {
+						id = freshID
+					}
+				}
+
+				revertErr := m.setFn(ctx, rec.nodeIP, id, false)
+				if revertErr != nil {
+					m.logger.Warn("reverting policy-audit-mode failed",
+						zap.String("uid", string(rec.uid)), zap.Error(revertErr))
+				}
+
+				resultMu.Lock()
+				result.EndpointResults[rec.uid] = revertErr
+				resultMu.Unlock()
+			}(rec)
+		}
+		wg.Wait()
+
+		m.closeResult = result
+	})
+	return m.closeResult, nil
+}
+
+// Shutdown unconditionally, boundedly tears down the audit window on every
+// process-exit path (SESS-05 shape): cancel the watcher ctx, bounded-wait
+// for it to exit, then run the revert fan-out (Close, via the same
+// closeOnce this method shares with an explicit Close call) inside an
+// independent bounded deadline — a wedged exec transport can never prevent
+// process exit. Safe to call multiple times and concurrently with Close:
+// closeOnce guarantees the real sweep runs exactly once regardless of which
+// caller reaches it first.
+func (m *Manager) Shutdown() {
+	m.mu.Lock()
+	cancel := m.watchCancel
+	done := m.watchDone
+	m.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		select {
+		case <-done:
+		case <-time.After(m.stopWait):
+			m.logger.Warn("audit window: watcher did not exit within the bounded deadline; proceeding to revert anyway")
+		}
+	}
+
+	m.mu.Lock()
+	n := len(m.ours)
+	m.mu.Unlock()
+	if n < 1 {
+		n = 1
+	}
+	deadline := m.removeWait * time.Duration(n)
+
+	revertDone := make(chan struct{})
+	go func() {
+		_, _ = m.Close(context.Background())
+		close(revertDone)
+	}()
+
+	select {
+	case <-revertDone:
+	case <-time.After(deadline):
+		m.logger.Warn("audit window: revert fan-out did not complete within the bounded deadline; proceeding with shutdown regardless")
+	}
 }
