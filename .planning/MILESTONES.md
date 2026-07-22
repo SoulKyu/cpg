@@ -4,7 +4,7 @@
 
 **Phases completed:** 4 phases (16-19), 21 plans, 44 tasks
 **Delivered:** `cpg mcp` — a readonly MCP server over stdio: one live Hubble capture session at a time, 8 tools (3 session + 5 query), structural readonly proof (RTA/SSA audit, mutation-tested), real-subprocess stdio e2e under `-race` (graceful + ungraceful-disconnect), README harness docs. Tests 484 → 610, all `-race`. Shipped via PR #18 (merge `81ebf2c`), incl. same-day fix of GO-2026-5970 (x/text v0.39.0).
-**Timeline:** 2026-07-20 → 2026-07-22 · **Requirements:** 18/18 complete (SRV-01..04, SESS-01..06, QRY-01..05, SEC-01..03)
+**Timeline:** 2026-07-20 → 2026-07-22 · **Requirements:** 18/18 complete (SRV-01..04, SESS-01..06, QRY-01..05, SEC-01..03) · **Product release:** v1.10.0 (release-please, tagged 2026-07-22)
 **Known deferred items at close:** 3 (pre-v1.5 quick-task artifacts lacking closure markers, work shipped in April — see STATE.md Deferred Items; re-acknowledged at this close)
 
 **Key accomplishments:**
