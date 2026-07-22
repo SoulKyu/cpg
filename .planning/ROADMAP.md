@@ -255,8 +255,8 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 
 **Wave 1** *(parallel -- zero file overlap)*
 
-- [ ] 21-01-PLAN.md -- `pkg/k8s/version.go` detection library: pod-list primary + bounded GetNodes secondary + per-feature floor table + min-version reduction (COMPAT-02 core)
-- [ ] 21-02-PLAN.md -- README `## Supported Cilium versions` section (PR-verified floor table) + proxy-visibility <=1.16 fix + golden consistency test (COMPAT-01, COMPAT-03)
+- [x] 21-01-PLAN.md -- `pkg/k8s/version.go` detection library: pod-list primary + bounded GetNodes secondary + per-feature floor table + min-version reduction (COMPAT-02 core)
+- [x] 21-02-PLAN.md -- README `## Supported Cilium versions` section (PR-verified floor table) + proxy-visibility <=1.16 fix + golden consistency test (COMPAT-01, COMPAT-03)
 
 **Wave 2** *(blocked on 21-01; the two plans run in parallel -- zero file overlap)*
 
@@ -333,7 +333,7 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 | 18. Query Tools | v1.5 | 5/5 | Complete    | 2026-07-21 |
 | 19. Security Hardening & End-to-End Validation | v1.5 | 4/4 | Complete    | 2026-07-21 |
 | 20. `--include-audit` Verdict Ingestion | v1.6 | 4/4 | Complete    | 2026-07-22 |
-| 21. Cilium Compatibility Matrix + Runtime Detection | v1.6 | 0/4 | Not started | - |
+| 21. Cilium Compatibility Matrix + Runtime Detection | v1.6 | 2/4 | In Progress|  |
 | 22. Bootstrap Artifact Generation | v1.6 | 0/TBD | Not started | - |
 | 23. Managed Audit Window + SEC-01 Evolution | v1.6 | 0/TBD | Not started | - |
 | 24. cpg-Dedicated Skills & Agent Tooling | v1.6 | 0/TBD | Not started | - |
