@@ -68,23 +68,46 @@ covered by a policy. Before applying:
 
 ## Enable Per-Endpoint Audit Mode
 
-For the specific endpoint(s) you're onboarding, enable `PolicyAuditMode` on that endpoint only --
-this reports policy-verdict violations without dropping traffic, so you can observe what a
+Run `cpg audit-window` to enable `PolicyAuditMode` on the endpoints you're onboarding -- this
+reports policy-verdict violations without dropping traffic, so you can observe what a
 freshly-bootstrapped default-deny namespace needs before it starts actually blocking:
+
+```bash
+cpg audit-window -n <namespace> --ttl 30m
+```
+
+This is a foreground, supervised command -- leave it running in its own terminal for the
+duration of your onboarding capture (the next two sections). It discovers every
+`CiliumEndpoint` already in `<namespace>`, flips `PolicyAuditMode` on each one via `pods/exec`
+into that endpoint's node's cilium-agent pod (the same passthrough `kubectl exec` uses), and
+keeps watching for newly-created endpoints in the namespace so they get flipped too as they
+appear. Stop it -- Ctrl+C, SIGTERM, or let `--ttl` expire -- and it reverts every endpoint it
+flipped, on every exit path, before it exits: there is no separate manual disable step to
+forget (see below). It never touches an endpoint that was already in audit mode before it
+started, and it never touches the daemon-wide audit mode setting.
+
+**NEW-ENDPOINT RACE (documented, not solved):** a pod whose `CiliumEndpoint` object `cpg
+audit-window` has not yet observed and flipped is still in enforcing mode for that brief
+interval -- traffic it generates during the race window can be dropped instead of audited. The
+watch typically reacts within the same second the `CiliumEndpoint` appears, but there is no hard
+upper bound on that lag (apiserver load, watch reconnects after a transient disconnect). If you
+need airtight audit coverage for a bursty scale-up, wait a few seconds after scaling before
+generating the traffic you want captured.
+
+**RBAC:** `cpg audit-window` needs `pods/exec` (create, in `kube-system`) to reach each node's
+cilium-agent, and `ciliumendpoints` (list/watch) to discover endpoints -- a step-up beyond
+anything else this runbook or `cpg generate` needs. See the main README's
+[Readonly by default](../README.md#readonly-by-default) section for the full RBAC posture and
+its scoping limitation.
+
+If you need the underlying `$ENDPOINT`/`$CILIUM_POD` values for the Hubble observation step
+below (independent of `cpg audit-window`'s own internal exec calls):
 
 ```bash
 ENDPOINT=$(kubectl get cep -n <namespace> <pod-name> -o jsonpath='{.status.id}')
 CILIUM_POD=$(kubectl -n kube-system get pod -l k8s-app=cilium \
   --field-selector spec.nodeName=<node-name> -o jsonpath='{.items[0].metadata.name}')
-kubectl -n kube-system exec "$CILIUM_POD" -c cilium-agent -- \
-  cilium-dbg endpoint config "$ENDPOINT" PolicyAuditMode=Enabled
 ```
-
-This is deliberately temporary and scoped to one endpoint -- restarting the Cilium pod resets it
-to the daemon's configured default. A managed, time-bounded audit window (start it, forget it, it
-turns itself back off automatically) is planned as a dedicated `cpg` feature (AUD-03, a later
-phase) and not yet available; until then, remember to disable it manually (see below) once you've
-captured enough traffic.
 
 ## Observe Policy Verdicts
 
@@ -131,16 +154,10 @@ else denied by default.
 
 ## Disable Per-Endpoint Audit Mode
 
-Once the generated policy covers the traffic you observed, turn audit mode back off for the
-endpoint so it starts enforcing:
-
-```bash
-kubectl -n kube-system exec "$CILIUM_POD" -c cilium-agent -- \
-  cilium-dbg endpoint config "$ENDPOINT" PolicyAuditMode=Disabled
-```
-
-These steps are nearly identical to enabling it -- re-derive `$ENDPOINT`/`$CILIUM_POD` if the
-shell session that set them has since ended.
+There is no separate disable step to remember. Once the generated policy covers the traffic you
+observed, stop `cpg audit-window` -- Ctrl+C in its terminal, SIGTERM, or let `--ttl` expire --
+and it reverts `PolicyAuditMode` on every endpoint it flipped, on every exit path, before it
+exits. The endpoint starts enforcing again as soon as the revert lands.
 
 ## Verify Enforcement
 
