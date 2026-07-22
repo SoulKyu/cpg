@@ -2,7 +2,7 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Audit-Mode Onboarding & cpg-Dedicated Agent Tooling
-status: executing
+status: milestone_complete
 last_updated: "2026-07-22T16:39:17.813Z"
 last_activity: 2026-07-22
 progress:
@@ -24,7 +24,7 @@ See: .planning/PROJECT.md (updated 2026-07-22)
 
 ## Current Position
 
-Phase: 24 (cpg-dedicated-skills-agent-tooling) — COMPLETE
+Phase: — (milestone v1.6 shipped 2026-07-22, archived)
 Plan: 2 of 3
 Status: Ready to execute
 Last activity: 2026-07-22

@@ -12,7 +12,7 @@ CPG delivers a Go CLI tool that turns Hubble dropped flows into ready-to-apply C
 - ✅ **v1.3 Cluster Health Surfacing** — Phases 10-13 (shipped 2026-04-26) — [archive](milestones/v1.3-ROADMAP.md)
 - ✅ **v1.4 Audit Fable5** — Phases 14-15 (shipped 2026-07-20) — [archive](milestones/v1.4-ROADMAP.md)
 - ✅ **v1.5 MCP Integration** — Phases 16-19 (shipped 2026-07-22) — [archive](milestones/v1.5-ROADMAP.md)
-- 📋 **v1.6 Audit-Mode Onboarding & cpg-Dedicated Agent Tooling** — Phases 20-24 (in progress)
+- ✅ **v1.6 Audit-Mode Onboarding & cpg-Dedicated Agent Tooling** — Phases 20-24 (shipped 2026-07-22) — [archive](milestones/v1.6-ROADMAP.md)
 
 ## Phases
 
@@ -83,15 +83,18 @@ Full details: [milestones/v1.5-ROADMAP.md](milestones/v1.5-ROADMAP.md)
 
 </details>
 
-### 📋 v1.6 Audit-Mode Onboarding & cpg-Dedicated Agent Tooling (Phases 20-24)
+<details>
+<summary>✅ v1.6 Audit-Mode Onboarding & cpg-Dedicated Agent Tooling (Phases 20-24) — SHIPPED 2026-07-22</summary>
 
-- [x] **Phase 20: `--include-audit` Verdict Ingestion** - AUDIT-verdict flows widen the same pipeline as DROPPED across all filter sites, byte-identical default behavior, single zero-signal warning (completed 2026-07-22)
-- [x] **Phase 21: Cilium Compatibility Matrix + Runtime Detection** - Declared version floor + per-feature table (PR-verified numbers), warn-and-proceed runtime detection, live README proxy-visibility bug fixed (completed 2026-07-22)
-- [x] **Phase 22: Bootstrap Artifact Generation** - Namespaced default-deny CNP (`enableDefaultDeny` + one-element empty-rule stanzas, #35558-safe) + onboarding runbook, stdout-only CLI + readonly MCP tool, SEC-01 intact (completed 2026-07-22)
-- [x] **Phase 23: Managed Audit Window + SEC-01 Evolution** - CLI-only `cpg audit-window` (user gate decision): lifecycle-bound per-endpoint audit flips with bounded guaranteed revert on every exit path; MCP stays pure-readonly, SEC-01 proof byte-identical + tripwire (completed 2026-07-22)
-- [x] **Phase 24: cpg-Dedicated Skills & Agent Tooling** - 5 repo-local cpg-* skills + cpg-operator agent (workflow routers over live tools/list) + consistency tripwire pinning the 9-tool registry (completed 2026-07-22)
+- [x] Phase 20: `--include-audit` Verdict Ingestion (4/4 plans) — completed 2026-07-22
+- [x] Phase 21: Cilium Compatibility Matrix + Runtime Detection (4/4 plans) — completed 2026-07-22
+- [x] Phase 22: Bootstrap Artifact Generation (3/3 plans) — completed 2026-07-22
+- [x] Phase 23: Managed Audit Window + SEC-01 Evolution (4/4 plans, CLI-only per gate decision) — completed 2026-07-22
+- [x] Phase 24: cpg-Dedicated Skills & Agent Tooling (2/2 plans) — completed 2026-07-22
 
-> **Decision gate before Phase 23:** AUD-03's surface — MCP flag-gated session property vs. CLI-only command (MCP stays pure-readonly) — and, if the MCP variant wins, the SEC-01 two-mode mechanism (build-tag split vs. path-scoped reachability assertion) must both be resolved via `/gsd-discuss-phase` before Phase 23 is planned at file-level detail. See Phase 23 detail below, REQUIREMENTS.md AUD-03/AUD-04, and research/SUMMARY.md Tension 4.
+Full details: [milestones/v1.6-ROADMAP.md](milestones/v1.6-ROADMAP.md)
+
+</details>
 
 ## Phase Details
 
@@ -212,124 +215,7 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 
 - [x] 19-04-PLAN.md — SRV-04 ungraceful-disconnect variant (bounded self-exit + tmpdir removal + relay stream cancel)
 
-### Phase 20: `--include-audit` Verdict Ingestion
-
-**Goal**: Operators can capture Cilium's would-be-drop AUDIT verdicts through the exact same generation pipeline as DROPPED flows, with zero change to default (flag-unset) behavior
-**Depends on**: Nothing new (builds on the v1.5 codebase); independent of Phase 21 — both can run in parallel if desired
-**Requirements**: AUD-01
-**Success Criteria** (what must be TRUE):
-
-  1. Operator passes `--include-audit` on `generate`/`replay` (or `include_audit` on MCP `start_session`) and AUDIT-verdict flows are classified, aggregated, and turned into generated policies exactly like DROPPED flows are today
-  2. Without the flag, CLI and MCP output is byte-identical to pre-v1.6 behavior — proven by a golden/regression test, not asserted by inspection alone
-  3. When the flag is set but zero AUDIT flows arrive during a session, the operator sees exactly one clear warning — never silence, never a repeated WARN storm
-  4. All 5 verdict-filter sites (3 gRPC server-side filters, the replay verdict gate, the aggregator classifier gate) are provably widened to `{DROPPED, AUDIT}` — including any additional site an exhaustive re-grep for `Verdict ==`/`Verdict_DROPPED` turns up beyond the 5 pre-enumerated in research
-
-**Plans**: 4 plans in 3 waves (linear layer dependency — aggregator → interface/filters/pipeline → surface+tests)
-
-**Wave 1**
-
-- [x] 20-01-PLAN.md — Aggregator AUDIT counter + classification-gate widening (verdict-filter site 5)
-
-**Wave 2** *(blocked on Wave 1 — pipeline wiring calls the aggregator's SetIncludeAudit/AuditVerdictCount)*
-
-- [x] 20-02-PLAN.md — FlowSource interface widening + verdict-filter sites 1-4 + PipelineConfig.IncludeAudit threading + AUD-01 warning + 19-location compile ripple + buildFilters regression tests
-
-**Wave 3** *(blocked on Wave 2; the two plans run in parallel — zero file overlap)*
-
-- [x] 20-03-PLAN.md — End-to-end AUDIT behavioral tests (byte-identical off, ingested on, warning-exactly-once) + with_audit.jsonl fixture
-- [x] 20-04-PLAN.md — CLI `--include-audit` + MCP `include_audit` surface threading + README docs
-
-### Phase 21: Cilium Compatibility Matrix + Runtime Detection
-
-**Goal**: Operators and the LLM harness can trust a single, correct statement of which Cilium versions cpg supports, and cpg detects a cluster's version at connect without ever silently misbehaving off-floor
-**Depends on**: Nothing new (independent of Phase 20; can run in parallel). Must land before Phase 22, which consumes its capability-gate output
-**Requirements**: COMPAT-01, COMPAT-02, COMPAT-03
-**Success Criteria** (what must be TRUE):
-
-  1. README's "Supported Cilium versions" section states one documented floor plus a per-feature table carrying the PR-verified numbers (`cilium-dbg` rename = 1.15, `enableDefaultDeny` = 1.16, `proxy-visibility` removed = 1.17), with the same merged-PR-plus-release-tag verification completed for the remaining unpinned entries (`Verdict_AUDIT`/`PolicyVerdictNotify` vintage, observer gRPC API window)
-  2. README's proxy-visibility L7 section states the ≤1.16 boundary explicitly — the live shipped bug claiming support through 1.19 is gone
-  3. cpg detects the connected cluster's Cilium version without requiring any new write-capable RBAC (privilege-neutral — never `pods/exec`), and warns-and-proceeds (never aborts) below a feature's floor, naming the affected feature(s)
-  4. Version-dependent behavior is gated correctly (bootstrap CNP form, `cilium-dbg` vs `cilium` naming), and the detected version + compat verdict is visible via MCP, not just README prose
-
-**Plans**: 4 plans in 2 waves
-
-**Wave 1** *(parallel -- zero file overlap)*
-
-- [x] 21-01-PLAN.md -- `pkg/k8s/version.go` detection library: pod-list primary + bounded GetNodes secondary + per-feature floor table + min-version reduction (COMPAT-02 core)
-- [x] 21-02-PLAN.md -- README `## Supported Cilium versions` section (PR-verified floor table) + proxy-visibility <=1.16 fix + golden consistency test (COMPAT-01, COMPAT-03)
-
-**Wave 2** *(blocked on 21-01; the two plans run in parallel -- zero file overlap)*
-
-- [x] 21-03-PLAN.md -- CLI `maybeRunVersionPreflight` in `cpg generate` (warn-and-proceed) + replay-stays-offline regression guard (COMPAT-02)
-- [x] 21-04-PLAN.md -- MCP surfacing: `StartResult`/`StatusResult` compat fields + `detectVersionFn` seam + bounded secondary + SEC-01 no-op confirmation (COMPAT-02)
-
-### Phase 22: Bootstrap Artifact Generation
-
-**Goal**: Operators can generate a namespaced default-deny bootstrap artifact that actually enforces default-deny once applied, plus a runbook that never suggests the dangerous daemon-wide shortcut
-**Depends on**: Phase 21 (Cilium version capability gate for `enableDefaultDeny` emission); conceptually Phase 20 (the runbook references `cpg generate --include-audit`)
-**Requirements**: AUD-02
-**Success Criteria** (what must be TRUE):
-
-  1. Operator runs `cpg bootstrap -n <ns>` (or calls the readonly MCP tool) and receives a CNP YAML carrying `enableDefaultDeny` AND explicit empty-rule stanzas `ingress: [{}]`/`egress: [{}]` (one-element list holding an empty rule — the literal `ingress: []` form IS the cilium/cilium#35558 bug: rejected by Sanitize(), dropped by omitempty; see 22-RESEARCH.md Pitfall 1) — tested as a named acceptance criterion, so the artifact actually enforces default-deny rather than silently no-op'ing
-  2. Below the Cilium 1.16 floor, the operator sees a hard refusal or a clearly documented legacy form — never a silently-pruned field that looks like it worked
-  3. Operator receives a runbook modeled 1:1 on Cilium's own "Creating Policies from Verdicts" phase order, with an explicit first-lines warning against daemon-wide `policy-audit-mode`
-  4. The MCP tool returns content directly with no new filesystem write call site — the artifact stays covered by SEC-01's existing readonly guarantee with zero new allowlist entries
-
-**Plans**: 3 plans in 2 waves
-
-**Wave 1** *(parallel -- zero file overlap)*
-
-- [x] 22-01-PLAN.md -- `pkg/policy.BuildBootstrapPolicy` + named cilium#35558 Sanitize()/marshal acceptance test (AUD-02 criterion 1)
-- [x] 22-03-PLAN.md -- `docs/bootstrap-runbook.md` (verdict-driven phase order, first-lines daemon-wide-audit warning, `--include-audit` capture) + README cross-reference + golden tests (AUD-02 criteria 3, 5)
-
-**Wave 2** *(blocked on 22-01)*
-
-- [x] 22-02-PLAN.md -- `cpg bootstrap` CLI + readonly `get_bootstrap_policy` MCP tool + shared version gate (reuses Phase 21 detection); SEC-01 zero-new-allowlist confirmation (AUD-02 criteria 2, 4)
-
-> **Decision gate before Phase 23:** AUD-03's surface — MCP flag-gated session property vs. CLI-only command (MCP stays pure-readonly) — and, if the MCP variant wins, the SEC-01 two-mode mechanism (build-tag split vs. path-scoped reachability assertion) must both be resolved via `/gsd-discuss-phase` before Phase 23 is planned at file-level detail. See REQUIREMENTS.md AUD-03/AUD-04 and research/SUMMARY.md Tension 4.
-
-### Phase 23: Managed Audit Window + SEC-01 Evolution
-
-**Goal**: Operators can open a supervised, lifecycle-bound audit window on a namespace that cannot structurally be left open by accident, with cpg's readonly guarantee evolved honestly to cover the new mutation
-**Depends on**: Phase 22 (bootstrap artifact + capability gate); the decision gate above (AUD-03 surface, and if applicable the SEC-01 mechanism, both resolved via `/gsd-discuss-phase` before file-level planning)
-**Requirements**: AUD-03, AUD-04
-**Success Criteria** (what must be TRUE):
-
-  1. Operator can open an audit window on a namespace (via the decided surface) that flips per-endpoint audit mode, watches for new endpoints and flips those too, and never touches an endpoint that was already in audit before cpg started — revert-only-ours bookkeeping keyed on `CiliumEndpoint` UID, never a raw endpoint ID
-  2. Every exit path — explicit stop, transport death, SIGTERM, TTL expiry — reverts the audit flips via the same SESS-05 bounded cleanup fan-out; no exit path leaves the cluster in audit
-  3. cpg refuses to open a window if daemon-wide `policy-audit-mode` is already active — a precondition check, not a silent proceed
-  4. SEC-01's structural proof honestly covers both modes: the default (flag-off) build/state keeps the existing zero-write-verbs guarantee completely unchanged; the mutation mode's reachable calls are provably confined to the expected entry point
-  5. README states "readonly by default; scoped, lifecycle-bound mutations behind an explicit launch flag" — no longer "readonly, period"
-
-**Plans**: 4 plans across 3 waves (CLI-only surface, Variant B; zero MCP surface change)
-
-- [x] 23-01-PLAN.md (wave 1) — pkg/k8s exec plumbing: SPDY pods/exec, node→agent-pod mapping, read-before-flip, canonical flip, daemon-wide precondition read (AUD-03)
-- [x] 23-02-PLAN.md (wave 2) — pkg/auditwindow.Manager: Open/Close/Shutdown state machine, UID-keyed revert-only-ours, SESS-05 bounded fan-out, new-endpoint watcher (AUD-03)
-- [x] 23-03-PLAN.md (wave 3) — cpg audit-window cobra command (foreground, signal-bound, always-bounded TTL) + SEC-01 tripwire TestAuditWindowNotReachableFromMCP via Edge.Site==nil filter (AUD-03, AUD-04)
-- [x] 23-04-PLAN.md (wave 3) — README readonly-by-default + audit-window exclusive RBAC; runbook wires real command + honest race; golden pins (AUD-03, criterion 5)
-
-### Phase 24: cpg-Dedicated Skills & Agent Tooling
-
-**Goal**: An LLM operator has repo-local, cpg-specific skills (and optionally a dedicated subagent) that drive real onboarding/triage/review workflows instead of generic prompting against raw tool schemas
-**Depends on**: Phase 20 + Phase 22 for `cpg-audit-onboard` (SKL-02) specifically — plus Phase 23 if the MCP-gated surface variant is chosen for AUD-03; the other five items (SKL-01, SKL-03, SKL-04, SKL-05, SKL-06) depend only on the existing v1.5 MCP/CLI surface and carry no hard ordering constraint against Phases 20-23
-**Requirements**: SKL-01, SKL-02, SKL-03, SKL-04, SKL-05, SKL-06
-**Success Criteria** (what must be TRUE):
-
-  1. `cpg-triage` drives a live MCP session end-to-end: start → classify drops (policy vs infra) → present each CNP with its evidence → recommend what to apply
-  2. `cpg-audit-onboard` guides/drives the full onboarding workflow: bootstrap → audit window → `include_audit` capture → enforce checklist
-  3. `cpg-policy-review` and `cpg-health-report` produce useful offline artifacts (CNP review findings; an HTML infra-drop report) without needing a live session
-  4. `cpg-mcp-smoke` runs a post-release smoke test asserting the real 8-tool handshake plus full session lifecycle against the e2e fake relay
-  5. Every skill (and the optional `cpg-operator` subagent, if built) lives repo-local under `.claude/skills/cpg-*`/`.claude/agents/cpg-operator.md` only, is written as a workflow router pointing at live `tools/list` discovery, and is tied to the Go `Description:` strings by an automated consistency tripwire — never a third, drifting copy of tool semantics
-
-**Plans**: 2 plans in 2 waves
-
-**Wave 1**
-
-- [x] 24-01-PLAN.md — six repo-local markdown artifacts: cpg-operator agent + 5 cpg-* skills (triage/audit-onboard/policy-review/health-report/mcp-smoke) + README ## Agent tooling section
-
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 24-02-PLAN.md — cmd/cpg/skills_test.go TestSkillsConsistencyTripwire (phantom-check + coverage floor + count-pin 9 + README pins) + full race-suite gate incl. TestMCPE2EGracefulLifecycle without -short
+Archived per-phase details for shipped milestones live in [milestones/](milestones/).
 
 ## Progress
 

@@ -184,11 +184,13 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 
 ## Current State
 
-**Shipped:** v1.0 (2026-03-08), v1.1 (2026-04-24), v1.2 (2026-04-25), v1.3 (2026-04-26), v1.4 (2026-07-20), and v1.5 (2026-07-22).
+**Shipped:** v1.0 (2026-03-08), v1.1 (2026-04-24), v1.2 (2026-04-25), v1.3 (2026-04-26), v1.4 (2026-07-20), v1.5 (2026-07-22), and v1.6 (2026-07-22).
 
 **Codebase:** 12 packages (`pkg/{labels,policy,output,hubble,k8s,dedup,flowsource,evidence,diff,dropclass,session,explain}` + `cmd/`). **607 tests passing with `-race`** across 12 packages (up from 539 at Phase 17 close). CI green and operational (build + race tests + lint + govulncheck). Deps: cilium v1.19.4, go-sdk v1.6.1, jsonschema-go v0.4.3 (direct since Phase 18), toolchain go1.25.12. Known debt: 26 lint issues (16 errcheck + 10 SA1019) gated by `only-new-issues`, scoped to v1.5; pre-existing `pkg/session` shared-`/tmp` test flake documented in `phases/18-query-tools/deferred-items.md`. Release-please continues to handle product SemVer tagging.
 
-**Current milestone:** v1.6 Audit-Mode Onboarding & cpg-Dedicated Agent Tooling (started 2026-07-22, from the ideation draft in `drafts/`). Phase 20 complete (2026-07-22) — `--include-audit`/`include_audit` AUDIT-verdict ingestion shipped end-to-end (5 filter sites widened, byte-identical default regression-pinned, single zero-signal warning, AuditVerdictCount surfaced in SessionStats/StopResult). Previous: v1.5 MCP Integration shipped 2026-07-22 (PR #18, merge `81ebf2c`; incl. same-day GO-2026-5970 fix: x/text v0.39.0). Tests: 610 across 12 packages, all `-race`.
+**Current milestone:** none — v1.6 shipped 2026-07-22 (phases 20-24: AUDIT-verdict ingestion, PR-verified Cilium compat matrix + runtime detection, #35558-safe bootstrap artifact (stdout-only CLI + readonly MCP tool) with onboarding runbook, CLI-only `cpg audit-window` with bounded guaranteed revert + SEC-01 tripwire, and 5 repo-local cpg-* skills + `cpg-operator` agent pinned to the live 9-tool registry by `TestSkillsConsistencyTripwire`). Milestone audit passed; archives in `milestones/v1.6-*`. Next: `/gsd-new-milestone`.
+
+**Next milestone goals (candidates, not committed):** lint-debt zero (LINT-01..03), release hardening (RELSEC-01..02), AUD-FUT-01 WebSocket exec fallback, AUD-FUT-02 flag-gated bootstrap CNP apply/delete, Variant A MCP-gated audit window if LLM-driven onboarding demand materializes — see § Planned.
 
 ## Evolution
 
