@@ -122,6 +122,8 @@ Filtering:
                              repeatable / comma-separated / case-insensitive.
                              Passing a reason already classified as infra or transient emits
                              a warning (it is already suppressed by default).
+      --include-audit        Also ingest Verdict_AUDIT flows alongside DROPPED (opt-in).
+                             Default: DROPPED-only (pre-v1.6 behavior unchanged).
 
 CI integration:
       --fail-on-infra-drops  Exit with code 1 when ≥1 infra drop is observed (default:
@@ -241,7 +243,7 @@ cpg replay drops.jsonl.gz -n production    # gzip transparent
 cat drops.jsonl | cpg replay -              # stdin
 ```
 
-Flags shared with `generate` (`--output-dir`, `--cluster-dedup`, `--flush-interval`, `--ignore-protocol`, `--ignore-drop-reason`, `--fail-on-infra-drops`) work identically. Non-DROPPED verdicts and malformed lines are skipped with counters surfaced in the session summary.
+Flags shared with `generate` (`--output-dir`, `--cluster-dedup`, `--flush-interval`, `--ignore-protocol`, `--ignore-drop-reason`, `--fail-on-infra-drops`, `--include-audit`) work identically. Non-DROPPED verdicts (unless `--include-audit` also admits AUDIT) and malformed lines are skipped with counters surfaced in the session summary.
 
 ## L7 Prerequisites <a id="l7-prerequisites"></a>
 
@@ -509,7 +511,7 @@ Disable capture with `--no-evidence`. Tune retention per rule with `--evidence-s
 
 | Tool | Description |
 |------|-------------|
-| `start_session` | Start a live Hubble capture session in the background; returns an opaque `session_id` immediately. Only one session at a time — stop the current one before starting another. |
+| `start_session` | Start a live Hubble capture session in the background; returns an opaque `session_id` immediately. Only one session at a time — stop the current one before starting another. Accepts `include_audit` to also ingest `Verdict_AUDIT` flows alongside DROPPED (opt-in; default preserves pre-v1.6 DROPPED-only behavior). |
 | `get_status` | Coarse session state (capturing/stopped), elapsed time, and on-disk artifact counts. Works for a stopped-but-retained session too. |
 | `stop_session` | Cancel the capture, finalize `cluster-health.json` and session stats, and return the final summary. Idempotent — a second call returns the same summary, never an error. |
 | `list_dropped_flows` | Paginated, two-section view of dropped flows: policy-actionable samples plus infra/transient/noise aggregate counts. Sampled/aggregated, not a raw flow log. |
