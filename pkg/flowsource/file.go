@@ -69,7 +69,7 @@ func (s *FileSource) Stats() FileSourceStats {
 // StreamDroppedFlows opens the file and streams DROPPED flows to the returned
 // channel. The lost-events channel is pre-closed (file sources have no such
 // signal). Both channels are closed when the file is consumed or ctx is canceled.
-func (s *FileSource) StreamDroppedFlows(ctx context.Context, _ []string, _ bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
+func (s *FileSource) StreamDroppedFlows(ctx context.Context, _ []string, _ bool, includeAudit bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
 	r, cleanup, err := s.openReader()
 	if err != nil {
 		return nil, nil, err
@@ -113,7 +113,7 @@ func (s *FileSource) StreamDroppedFlows(ctx context.Context, _ []string, _ bool)
 				s.stats.malformed.Add(1)
 				continue
 			}
-			if f.Verdict != flowpb.Verdict_DROPPED {
+			if !(f.Verdict == flowpb.Verdict_DROPPED || (includeAudit && f.Verdict == flowpb.Verdict_AUDIT)) {
 				s.stats.nonDroppedSkipped.Add(1)
 				continue
 			}

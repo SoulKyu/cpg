@@ -12,5 +12,5 @@ import (
 // FlowSource abstracts the streaming source for testability and offline replay.
 // Implementations MUST close both returned channels when the stream ends.
 type FlowSource interface {
-	StreamDroppedFlows(ctx context.Context, namespaces []string, allNS bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error)
+	StreamDroppedFlows(ctx context.Context, namespaces []string, allNS bool, includeAudit bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error)
 }

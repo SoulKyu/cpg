@@ -29,7 +29,7 @@ type mockFlowSource struct {
 	lostEvents []*flowpb.LostEvent
 }
 
-func (m *mockFlowSource) StreamDroppedFlows(_ context.Context, _ []string, _ bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
+func (m *mockFlowSource) StreamDroppedFlows(_ context.Context, _ []string, _ bool, _ bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
 	flowCh := make(chan *flowpb.Flow, len(m.flows))
 	lostCh := make(chan *flowpb.LostEvent, len(m.lostEvents))
 
@@ -301,7 +301,7 @@ type errStreamSource struct {
 	err error
 }
 
-func (e *errStreamSource) StreamDroppedFlows(_ context.Context, _ []string, _ bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
+func (e *errStreamSource) StreamDroppedFlows(_ context.Context, _ []string, _ bool, _ bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
 	fc := make(chan *flowpb.Flow)
 	close(fc)
 	lc := make(chan *flowpb.LostEvent)
@@ -359,7 +359,7 @@ type errStreamSourceWithInfraDrop struct {
 	flow *flowpb.Flow
 }
 
-func (e *errStreamSourceWithInfraDrop) StreamDroppedFlows(_ context.Context, _ []string, _ bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
+func (e *errStreamSourceWithInfraDrop) StreamDroppedFlows(_ context.Context, _ []string, _ bool, _ bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
 	fc := make(chan *flowpb.Flow, 1)
 	fc <- e.flow
 	close(fc)
@@ -450,7 +450,7 @@ type channelFlowSource struct {
 	lost  chan *flowpb.LostEvent
 }
 
-func (c *channelFlowSource) StreamDroppedFlows(_ context.Context, _ []string, _ bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
+func (c *channelFlowSource) StreamDroppedFlows(_ context.Context, _ []string, _ bool, _ bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
 	return c.flows, c.lost, nil
 }
 

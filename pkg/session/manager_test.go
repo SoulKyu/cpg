@@ -32,7 +32,7 @@ type closedFlowSource struct {
 	flows []*flowpb.Flow
 }
 
-func (c *closedFlowSource) StreamDroppedFlows(_ context.Context, _ []string, _ bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
+func (c *closedFlowSource) StreamDroppedFlows(_ context.Context, _ []string, _ bool, _ bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
 	flowCh := make(chan *flowpb.Flow, len(c.flows))
 	lostCh := make(chan *flowpb.LostEvent)
 	for _, f := range c.flows {
@@ -52,7 +52,7 @@ type blockingFlowSource struct {
 	flow *flowpb.Flow
 }
 
-func (b *blockingFlowSource) StreamDroppedFlows(ctx context.Context, _ []string, _ bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
+func (b *blockingFlowSource) StreamDroppedFlows(ctx context.Context, _ []string, _ bool, _ bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
 	flowCh := make(chan *flowpb.Flow, 1)
 	lostCh := make(chan *flowpb.LostEvent)
 	if b.flow != nil {
