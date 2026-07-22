@@ -39,7 +39,7 @@ func (m *mockStream) Context() context.Context {
 }
 
 func TestBuildFilters_AllNamespaces(t *testing.T) {
-	filters := buildFilters(nil, true)
+	filters := buildFilters(nil, true, false)
 
 	require.Len(t, filters, 1, "all-namespaces should produce a single filter")
 	assert.Equal(t, []flowpb.Verdict{flowpb.Verdict_DROPPED}, filters[0].Verdict)
@@ -48,7 +48,7 @@ func TestBuildFilters_AllNamespaces(t *testing.T) {
 }
 
 func TestBuildFilters_SingleNamespace(t *testing.T) {
-	filters := buildFilters([]string{"production"}, false)
+	filters := buildFilters([]string{"production"}, false, false)
 
 	require.Len(t, filters, 2, "single namespace should produce two OR-ed filters")
 
@@ -64,7 +64,7 @@ func TestBuildFilters_SingleNamespace(t *testing.T) {
 }
 
 func TestBuildFilters_MultipleNamespaces(t *testing.T) {
-	filters := buildFilters([]string{"prod", "staging"}, false)
+	filters := buildFilters([]string{"prod", "staging"}, false, false)
 
 	require.Len(t, filters, 2, "multiple namespaces should produce two OR-ed filters")
 
@@ -80,7 +80,7 @@ func TestBuildFilters_MultipleNamespaces(t *testing.T) {
 }
 
 func TestBuildFilters_EmptyNamespaces(t *testing.T) {
-	filters := buildFilters(nil, false)
+	filters := buildFilters(nil, false, false)
 
 	require.Len(t, filters, 1, "empty namespaces should behave like all-namespaces")
 	assert.Equal(t, []flowpb.Verdict{flowpb.Verdict_DROPPED}, filters[0].Verdict)

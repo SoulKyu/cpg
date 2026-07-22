@@ -39,7 +39,7 @@ func TestFileSourceHappyPath(t *testing.T) {
 	src, err := NewFileSource("../../testdata/flows/small.jsonl", zap.NewNop())
 	require.NoError(t, err)
 
-	flows, lost, err := src.StreamDroppedFlows(context.Background(), nil, false)
+	flows, lost, err := src.StreamDroppedFlows(context.Background(), nil, false, false)
 	require.NoError(t, err)
 
 	got := drain(t, flows)
@@ -56,7 +56,7 @@ func TestFileSourceHappyPath(t *testing.T) {
 func TestFileSourceFiltersNonDropped(t *testing.T) {
 	src, err := NewFileSource("../../testdata/flows/with_non_dropped.jsonl", zap.NewNop())
 	require.NoError(t, err)
-	flows, _, err := src.StreamDroppedFlows(context.Background(), nil, false)
+	flows, _, err := src.StreamDroppedFlows(context.Background(), nil, false, false)
 	require.NoError(t, err)
 
 	got := drain(t, flows)
@@ -67,7 +67,7 @@ func TestFileSourceFiltersNonDropped(t *testing.T) {
 func TestFileSourceSkipsMalformed(t *testing.T) {
 	src, err := NewFileSource("../../testdata/flows/malformed.jsonl", zap.NewNop())
 	require.NoError(t, err)
-	flows, _, err := src.StreamDroppedFlows(context.Background(), nil, false)
+	flows, _, err := src.StreamDroppedFlows(context.Background(), nil, false, false)
 	require.NoError(t, err)
 
 	got := drain(t, flows)
@@ -78,7 +78,7 @@ func TestFileSourceSkipsMalformed(t *testing.T) {
 func TestFileSourceEmptyFile(t *testing.T) {
 	src, err := NewFileSource("../../testdata/flows/empty.jsonl", zap.NewNop())
 	require.NoError(t, err)
-	flows, _, err := src.StreamDroppedFlows(context.Background(), nil, false)
+	flows, _, err := src.StreamDroppedFlows(context.Background(), nil, false, false)
 	require.NoError(t, err)
 
 	got := drain(t, flows)
@@ -97,7 +97,7 @@ func TestFileSourceContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	flows, _, err := src.StreamDroppedFlows(ctx, nil, false)
+	flows, _, err := src.StreamDroppedFlows(ctx, nil, false, false)
 	require.NoError(t, err)
 
 	_ = drain(t, flows)
@@ -119,7 +119,7 @@ func TestFileSourceOversizedLineTruncates(t *testing.T) {
 	src, err := NewFileSource(path, zap.New(core))
 	require.NoError(t, err)
 
-	flows, _, err := src.StreamDroppedFlows(context.Background(), nil, false)
+	flows, _, err := src.StreamDroppedFlows(context.Background(), nil, false, false)
 	require.NoError(t, err)
 
 	_ = drain(t, flows)
@@ -144,7 +144,7 @@ func TestFileSourceContextCancellationNonDropped(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	flows, _, err := src.StreamDroppedFlows(ctx, nil, false)
+	flows, _, err := src.StreamDroppedFlows(ctx, nil, false, false)
 	require.NoError(t, err)
 
 	_ = drain(t, flows)
@@ -156,7 +156,7 @@ func TestFileSourceGzip(t *testing.T) {
 	src, err := NewFileSource("../../testdata/flows/small.jsonl.gz", zap.NewNop())
 	require.NoError(t, err)
 
-	flows, _, err := src.StreamDroppedFlows(context.Background(), nil, false)
+	flows, _, err := src.StreamDroppedFlows(context.Background(), nil, false, false)
 	require.NoError(t, err)
 
 	got := drain(t, flows)

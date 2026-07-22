@@ -10,7 +10,7 @@ import (
 
 type stubSource struct{}
 
-func (stubSource) StreamDroppedFlows(_ context.Context, _ []string, _ bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
+func (stubSource) StreamDroppedFlows(_ context.Context, _ []string, _ bool, _ bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
 	return nil, nil, nil
 }
 
