@@ -566,7 +566,7 @@ Disable capture with `--no-evidence`. Tune retention per rule with `--evidence-s
 | `list_dropped_flows` | Paginated, two-section view of dropped flows: policy-actionable samples plus infra/transient/noise aggregate counts. Sampled/aggregated, not a raw flow log. |
 | `list_policies` | Paginated metadata for every generated CiliumNetworkPolicy in the session — namespace, workload, rule counts, YAML path. |
 | `get_policy` | Full CiliumNetworkPolicy YAML plus metadata for one namespace/workload pair (discover pairs via `list_policies`). |
-| `get_evidence` | Paginated per-rule flow evidence for one policy, byte-identical in shape to `cpg explain --output json`. |
+| `get_evidence` | Paginated per-rule flow evidence for one policy, byte-identical in shape to `cpg explain --json`. |
 | `get_cluster_health` | The session's finalized cluster-health report: per-drop-reason counts by node/workload, plus Cilium-docs remediation URLs. |
 
 ### Harness configuration
