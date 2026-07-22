@@ -105,3 +105,13 @@ None - no external service configuration required.
 ---
 *Phase: 23-managed-audit-window-sec-01-evolution*
 *Completed: 2026-07-22*
+
+## Self-Check: PASSED
+
+- FOUND: cmd/cpg/audit_window.go
+- FOUND: cmd/cpg/audit_window_test.go
+- FOUND: cmd/cpg/main.go
+- FOUND: cmd/cpg/mcp_audit_test.go
+- FOUND: .planning/phases/23-managed-audit-window-sec-01-evolution/23-03-SUMMARY.md
+- FOUND commit: 6b7157a (feat(23): add cpg audit-window command)
+- FOUND commit: 1c1077d (test(23): SEC-01 tripwire proving exec path unreachable from MCP)
