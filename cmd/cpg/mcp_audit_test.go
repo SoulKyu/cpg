@@ -244,6 +244,18 @@ func bfsFromRootGenuine(cg *callgraph.Graph, root *ssa.Function) bfsResult {
 // the bare, zero-parameter, zero-result `func()` type — the specific shape
 // RTA resolves via a whole-program address-taken sweep rather than any
 // traceable dataflow fact (see bfsFromRootGenuine's doc comment).
+//
+// WR-02 soundness note: pruning this edge is unavoidable (it is the only way
+// to stay immune to RTA's spurious cross-package `func()` sweep — the sweep
+// even connects to genuinely-cpg-owned closures like
+// (*auditwindow.Manager).Close$1, so a callee-package filter cannot
+// distinguish it). The accepted cost — dropping the pruned edge's own callee
+// closure from reachability — is compensated in the negative half by
+// withAnonFuncs, which re-scans the LEXICALLY-nested closures (once/defer/go
+// bodies) of every genuinely-reachable cpg-owned function. A hypothetical exec
+// constructor inside a cpg-owned once/defer/go closure reachable from
+// runMCPServer is therefore still caught, without reintroducing the spurious
+// sweep (nesting is lexical, not a callgraph edge).
 func isBareFuncValueDispatch(common *ssa.CallCommon) bool {
 	if common == nil || common.StaticCallee() != nil || common.IsInvoke() {
 		return false
@@ -300,6 +312,42 @@ func symbolSet(fns map[*ssa.Function]bool) []string {
 	out := make([]string, 0, len(fns))
 	for f := range fns {
 		out = append(out, f.String())
+	}
+	return out
+}
+
+// withAnonFuncs expands a set of functions to also include every anonymous
+// function LEXICALLY nested within them (transitively, via (*ssa.Function).
+// AnonFuncs). This is the WR-02 compensating scan: bfsFromRootGenuine must
+// prune bare-func() indirect-dispatch edges to stay immune to RTA's
+// whole-program address-taken sweep, but that prune would otherwise cut the
+// BFS at a `sync.Once.Do(func(){...})`, `defer func(){...}()`, or
+// `go func(){...}()` call and silently drop the closure's body from the
+// scanned set — so a hypothetical exec constructor call inside a cpg-owned
+// once/defer/go closure reachable from runMCPServer would escape the negative
+// assertion (the precise false-negative class WR-02 flags).
+//
+// Nesting is a purely lexical relationship (a closure is genuinely executed by
+// its enclosing function — Once.Do/defer/go all run it), NOT a callgraph edge,
+// so expanding along it re-includes exactly those closures WITHOUT reintroducing
+// the spurious cross-package sweep: e.g. (*auditwindow.Manager).Close$1 is a
+// lexical child of (*auditwindow.Manager).Close (never genuinely reachable from
+// MCP), so it stays excluded — only the spurious bare-func() edge ever connected
+// it to runMCPServer.
+func withAnonFuncs(fns map[*ssa.Function]bool) map[*ssa.Function]bool {
+	out := make(map[*ssa.Function]bool, len(fns))
+	var add func(f *ssa.Function)
+	add = func(f *ssa.Function) {
+		if f == nil || out[f] {
+			return
+		}
+		out[f] = true
+		for _, anon := range f.AnonFuncs {
+			add(anon)
+		}
+	}
+	for f := range fns {
+		add(f)
 	}
 	return out
 }
@@ -538,7 +586,24 @@ func TestAuditWindowNotReachableFromMCP(t *testing.T) {
 	// from runMCPServer may contain a static call instruction to
 	// remotecommand.NewSPDYExecutor.
 	genuineCpgOwnedFromMCP := restrictToCpgOwned(genuineFromMCPAll.visited)
-	for f := range genuineCpgOwnedFromMCP {
+
+	// WR-03: non-vacuity floor for the negative half. Without this, an
+	// over-pruned or refactor-broken BFS that reduced the genuine MCP-reachable
+	// set to near-empty would pass this security assertion silently (Property 3
+	// is not covered by the unfiltered sibling test). runMCPServer STATICALLY
+	// calls session.NewManager (cmd/cpg/mcp.go) — a guaranteed genuine
+	// (non-bare, non-synthetic) edge — so that symbol MUST be present; its
+	// absence means the BFS is broken and the audit is worthless.
+	require.Greater(t, len(genuineCpgOwnedFromMCP), 1,
+		"the genuine MCP-reachable cpg-owned set must be non-trivially populated; a size of 1 means the BFS never descended and this security half passes vacuously (WR-03)")
+	require.Contains(t, symbolSet(genuineCpgOwnedFromMCP), "github.com/SoulKyu/cpg/pkg/session.NewManager",
+		"session.NewManager is a static callee of runMCPServer and MUST appear in the genuine MCP-reachable set; its absence means the BFS is broken and the negative assertion below is vacuous (WR-03)")
+
+	// WR-02: scan not only the genuinely-reachable functions but also their
+	// lexically-nested closures (once/defer/go bodies), which bfsFromRootGenuine
+	// necessarily prunes at the bare-func() edge — so an exec constructor buried
+	// inside such a closure of an MCP-reachable cpg function is still caught.
+	for f := range withAnonFuncs(genuineCpgOwnedFromMCP) {
 		for _, b := range f.Blocks {
 			for _, instr := range b.Instrs {
 				call, ok := instr.(ssa.CallInstruction)
@@ -546,8 +611,15 @@ func TestAuditWindowNotReachableFromMCP(t *testing.T) {
 					continue
 				}
 				if callee := call.Common().StaticCallee(); callee != nil && callee.String() == execConstructorSymbol {
+					// f may be a nested closure not itself in the BFS parent
+					// map; anchor the diagnostic path on its outermost lexical
+					// ancestor, which IS a genuinely-reachable function.
+					enclosing := f
+					for enclosing.Parent() != nil {
+						enclosing = enclosing.Parent()
+					}
 					t.Errorf("SEC-01/AUD-04: %s genuinely (non-reflect) reaches %s from runMCPServer\n  call path: %s",
-						f.String(), execConstructorSymbol, callPathFrom(genuineFromMCPAll, mcpRoot, f))
+						f.String(), execConstructorSymbol, callPathFrom(genuineFromMCPAll, mcpRoot, enclosing))
 				}
 			}
 		}
