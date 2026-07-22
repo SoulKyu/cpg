@@ -272,3 +272,55 @@ func TestDetectCiliumVersionViaGetNodes_UnreachableIsBoundedUndetermined(t *test
 		t.Fatal("DetectCiliumVersionViaGetNodes did not return within 5s against an unreachable relay — bounded-dial guarantee violated")
 	}
 }
+
+// TestParseAgentVersionString directly covers the component-prefix-stripping
+// fix in parseAgentVersionString: GetNodes' per-node Version field is
+// formatted "<component> v<version>" by cilium's own
+// pkg/hubble/build.Version.String() (verified against the vendored
+// github.com/cilium/cilium@v1.19.4 source), e.g. "cilium v1.19.2+g3977f6a1"
+// — never a bare version string. A direct apiversion.ParseGeneric call on
+// the raw field would fail on every real value; this test proves the
+// stripped-and-parsed result is correct.
+func TestParseAgentVersionString(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		wantStr string
+		wantOK  bool
+	}{
+		{
+			name:    "component_prefixed_with_build_metadata",
+			raw:     "cilium v1.19.2+g3977f6a1",
+			wantStr: "1.19.2",
+			wantOK:  true,
+		},
+		{
+			name:    "component_prefixed_no_build_metadata",
+			raw:     "cilium v1.19.3",
+			wantStr: "1.19.3",
+			wantOK:  true,
+		},
+		{
+			name:   "unparseable_garbage",
+			raw:    "garbage",
+			wantOK: false,
+		},
+		{
+			name:   "empty_string",
+			raw:    "",
+			wantOK: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			v, ok := parseAgentVersionString(tc.raw)
+			if ok != tc.wantOK {
+				t.Fatalf("parseAgentVersionString(%q) ok = %v, want %v", tc.raw, ok, tc.wantOK)
+			}
+			if ok && v.String() != tc.wantStr {
+				t.Errorf("parseAgentVersionString(%q) = %q, want %q", tc.raw, v.String(), tc.wantStr)
+			}
+		})
+	}
+}
