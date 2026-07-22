@@ -86,7 +86,7 @@ Full details: [milestones/v1.5-ROADMAP.md](milestones/v1.5-ROADMAP.md)
 ### 📋 v1.6 Audit-Mode Onboarding & cpg-Dedicated Agent Tooling (Phases 20-24)
 
 - [x] **Phase 20: `--include-audit` Verdict Ingestion** - AUDIT-verdict flows widen the same pipeline as DROPPED across all filter sites, byte-identical default behavior, single zero-signal warning (completed 2026-07-22)
-- [ ] **Phase 21: Cilium Compatibility Matrix + Runtime Detection** - Declared version floor + per-feature table (PR-verified numbers), warn-and-proceed runtime detection, live README proxy-visibility bug fixed
+- [x] **Phase 21: Cilium Compatibility Matrix + Runtime Detection** - Declared version floor + per-feature table (PR-verified numbers), warn-and-proceed runtime detection, live README proxy-visibility bug fixed (completed 2026-07-22)
 - [ ] **Phase 22: Bootstrap Artifact Generation** - Namespaced default-deny CNP (`enableDefaultDeny` + empty rule stanzas) + onboarding runbook, CLI + readonly MCP tool
 - [ ] **Phase 23: Managed Audit Window + SEC-01 Evolution** - Lifecycle-bound per-endpoint audit flips with guaranteed revert; two-mode structural readonly proof
 - [ ] **Phase 24: cpg-Dedicated Skills & Agent Tooling** - Repo-local skills (+ optional subagent) driving real MCP/CLI workflows
@@ -260,8 +260,8 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 
 **Wave 2** *(blocked on 21-01; the two plans run in parallel -- zero file overlap)*
 
-- [ ] 21-03-PLAN.md -- CLI `maybeRunVersionPreflight` in `cpg generate` (warn-and-proceed) + replay-stays-offline regression guard (COMPAT-02)
-- [ ] 21-04-PLAN.md -- MCP surfacing: `StartResult`/`StatusResult` compat fields + `detectVersionFn` seam + bounded secondary + SEC-01 no-op confirmation (COMPAT-02)
+- [x] 21-03-PLAN.md -- CLI `maybeRunVersionPreflight` in `cpg generate` (warn-and-proceed) + replay-stays-offline regression guard (COMPAT-02)
+- [x] 21-04-PLAN.md -- MCP surfacing: `StartResult`/`StatusResult` compat fields + `detectVersionFn` seam + bounded secondary + SEC-01 no-op confirmation (COMPAT-02)
 
 ### Phase 22: Bootstrap Artifact Generation
 
@@ -333,7 +333,7 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 | 18. Query Tools | v1.5 | 5/5 | Complete    | 2026-07-21 |
 | 19. Security Hardening & End-to-End Validation | v1.5 | 4/4 | Complete    | 2026-07-21 |
 | 20. `--include-audit` Verdict Ingestion | v1.6 | 4/4 | Complete    | 2026-07-22 |
-| 21. Cilium Compatibility Matrix + Runtime Detection | v1.6 | 2/4 | In Progress|  |
+| 21. Cilium Compatibility Matrix + Runtime Detection | v1.6 | 4/4 | Complete   | 2026-07-22 |
 | 22. Bootstrap Artifact Generation | v1.6 | 0/TBD | Not started | - |
 | 23. Managed Audit Window + SEC-01 Evolution | v1.6 | 0/TBD | Not started | - |
 | 24. cpg-Dedicated Skills & Agent Tooling | v1.6 | 0/TBD | Not started | - |
