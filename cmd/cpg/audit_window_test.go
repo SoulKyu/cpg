@@ -23,10 +23,12 @@ type stubAuditWindowManager struct {
 	closeErr    error
 	closeResult auditwindow.RevertResult
 
-	mu          sync.Mutex
-	revertOnce  sync.Once
-	revertCount int
-	openCalled  bool
+	mu             sync.Mutex
+	revertOnce     sync.Once
+	revertCount    int
+	openCalled     bool
+	closeCalled    bool
+	shutdownCalled bool
 }
 
 func (s *stubAuditWindowManager) Open(_ context.Context, _ string) error {
@@ -42,15 +44,37 @@ func (s *stubAuditWindowManager) Close(_ context.Context) (auditwindow.RevertRes
 		s.revertCount++
 		s.mu.Unlock()
 	})
+	s.mu.Lock()
+	s.closeCalled = true
+	s.mu.Unlock()
 	return s.closeResult, s.closeErr
 }
 
-func (s *stubAuditWindowManager) Shutdown() {
+func (s *stubAuditWindowManager) Shutdown() auditwindow.RevertResult {
 	s.revertOnce.Do(func() {
 		s.mu.Lock()
 		s.revertCount++
 		s.mu.Unlock()
 	})
+	s.mu.Lock()
+	s.shutdownCalled = true
+	s.mu.Unlock()
+	return s.closeResult
+}
+
+// closeWasCalled reports whether the bare Close path was ever taken — the
+// command must revert through the bounded Shutdown, never a direct Close.
+func (s *stubAuditWindowManager) closeWasCalled() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closeCalled
+}
+
+// shutdownWasCalled reports whether the bounded Shutdown revert path was taken.
+func (s *stubAuditWindowManager) shutdownWasCalled() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.shutdownCalled
 }
 
 func (s *stubAuditWindowManager) reverts() int {
@@ -154,4 +178,34 @@ func TestAuditWindow_TTLExpiryTriggersRevert(t *testing.T) {
 
 	assert.True(t, stub.wasOpened())
 	assert.Equal(t, 1, stub.reverts(), "expected the revert path to run exactly once on TTL expiry")
+	assert.True(t, stub.shutdownWasCalled(), "the TTL-path revert must go through the bounded Shutdown (CR-02)")
+	assert.False(t, stub.closeWasCalled(), "the TTL-path revert must never bypass the bound via an unbounded bare Close (CR-02)")
+}
+
+// TestAuditWindow_SignalPathRevertsViaBoundedShutdown proves the SIGINT/SIGTERM
+// exit path routes its revert through the bounded Shutdown, never a bare Close
+// under the already-cancelled signal ctx. A pre-cancelled command context makes
+// the signal branch of runAuditWindow's select fire immediately after Open, and
+// the revert must still run exactly once via Shutdown (CR-01, CR-02).
+func TestAuditWindow_SignalPathRevertsViaBoundedShutdown(t *testing.T) {
+	initLoggerForTesting(t)
+
+	stub := &stubAuditWindowManager{}
+	withFakeAuditWindowSeams(t, stub)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // simulate a signal already delivered: the ctx is Done before the select
+
+	cmd := newAuditWindowCmd()
+	cmd.SetContext(ctx)
+	// A long TTL guarantees the signal branch — not TTL expiry — drives the exit.
+	cmd.SetArgs([]string{"-n", "test-ns", "--ttl", "1h"})
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+
+	assert.True(t, stub.wasOpened())
+	assert.Equal(t, 1, stub.reverts(), "the signal path must revert exactly once")
+	assert.True(t, stub.shutdownWasCalled(), "the signal-path revert must go through the bounded Shutdown (CR-01/CR-02)")
+	assert.False(t, stub.closeWasCalled(), "the signal-path revert must never bypass the bound via a bare Close under the cancelled signal ctx")
 }

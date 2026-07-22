@@ -407,7 +407,16 @@ func (m *Manager) Close(ctx context.Context) (RevertResult, error) {
 // process exit. Safe to call multiple times and concurrently with Close:
 // closeOnce guarantees the real sweep runs exactly once regardless of which
 // caller reaches it first.
-func (m *Manager) Shutdown() {
+//
+// The revert always runs under context.Background(), NEVER the caller's
+// signal-bound ctx — so a SIGINT/SIGTERM that already cancelled the command
+// ctx can never make the revert fail with context.Canceled for every
+// endpoint (CR-01). Because the watcher is cancelled and drained BEFORE the
+// Close snapshot, no endpoint the watcher flips can escape the sweep (WR-01).
+// Shutdown returns the RevertResult so a command caller can route its revert
+// through this single bounded path (CR-02) and still report per-endpoint
+// outcomes, instead of calling the unbounded Close directly.
+func (m *Manager) Shutdown() RevertResult {
 	m.mu.Lock()
 	cancel := m.watchCancel
 	done := m.watchDone
@@ -440,7 +449,15 @@ func (m *Manager) Shutdown() {
 
 	select {
 	case <-revertDone:
+		// The fan-out completed: closeResult is fully published, and the
+		// channel close synchronizes-with its write inside closeOnce.Do, so
+		// reading it here is race-free.
+		return m.closeResult
 	case <-time.After(deadline):
 		m.logger.Warn("audit window: revert fan-out did not complete within the bounded deadline; proceeding with shutdown regardless")
+		// A wedged transport is still inside Close's wg.Wait, so closeResult
+		// may be written concurrently — do NOT read it here (data race).
+		// Report an empty summary; the bounded process-exit guarantee wins.
+		return RevertResult{EndpointResults: map[types.UID]error{}}
 	}
 }

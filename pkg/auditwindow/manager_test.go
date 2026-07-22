@@ -315,6 +315,95 @@ func TestManager_Shutdown_OnCtxCancel(t *testing.T) {
 	mu.Unlock()
 }
 
+// TestManager_Shutdown_RevertsUnderNonCancelledContext proves the CR-01 fix:
+// even when rootCtx is cancelled (a SIGINT/SIGTERM landing), the revert sweep
+// runs under a fresh, non-cancelled context — every setFn revert call observes
+// ctx.Err() == nil — so the revert cannot fail with context.Canceled for every
+// endpoint the way a bare Close(cancelledCtx) would.
+func TestManager_Shutdown_RevertsUnderNonCancelledContext(t *testing.T) {
+	rootCtx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	m := newTestManagerCtx(t, rootCtx)
+	m.readFn = func(context.Context, string, int64) (bool, error) { return false, nil }
+	m.listCEFn = func(context.Context, string) ([]ciliumv2.CiliumEndpoint, error) {
+		return []ciliumv2.CiliumEndpoint{fakeEndpoint("uid-1", "10.0.0.1", 5)}, nil
+	}
+
+	reverted := make(chan struct{})
+	var once sync.Once
+	var mu sync.Mutex
+	var revertCtxErr error
+	m.setFn = func(ctx context.Context, _ string, _ int64, enable bool) error {
+		if !enable {
+			mu.Lock()
+			revertCtxErr = ctx.Err()
+			mu.Unlock()
+			once.Do(func() { close(reverted) })
+		}
+		return nil
+	}
+
+	require.NoError(t, m.Open(rootCtx, "test-ns"))
+
+	cancel() // simulate SIGTERM: the signal-bound rootCtx is now Done
+
+	select {
+	case <-reverted:
+	case <-time.After(4 * (m.stopWait + m.removeWait)):
+		t.Fatal("revert never ran after rootCtx cancellation")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.NoError(t, revertCtxErr,
+		"revert must run under a fresh, non-cancelled context even though rootCtx was cancelled (CR-01)")
+}
+
+// TestManager_Shutdown_RevertsWatcherFlippedEndpoint proves the WR-01 fix: an
+// endpoint the watcher flips is reverted by Shutdown. Because Shutdown cancels
+// and drains the watcher BEFORE Close snapshots m.ours, no endpoint the watcher
+// recorded can escape the revert sweep — the snapshot/watcher-flip leak the
+// direct-Close path had is closed.
+func TestManager_Shutdown_RevertsWatcherFlippedEndpoint(t *testing.T) {
+	m := newTestManager(t)
+	m.readFn = func(context.Context, string, int64) (bool, error) { return false, nil }
+
+	var mu sync.Mutex
+	var disableCalls []int64
+	m.setFn = func(_ context.Context, _ string, id int64, enable bool) error {
+		if !enable {
+			mu.Lock()
+			disableCalls = append(disableCalls, id)
+			mu.Unlock()
+		}
+		return nil
+	}
+
+	fw := newFakeWatch()
+	m.watchCEFn = func(context.Context, string) (watch.Interface, error) { return fw, nil }
+
+	require.NoError(t, m.Open(context.Background(), "test-ns"))
+
+	newEP := fakeEndpoint("uid-watched", "10.0.0.9", 42)
+	fw.ch <- watch.Event{Type: watch.Added, Object: &newEP}
+
+	require.Eventually(t, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		_, ok := m.ours[types.UID("uid-watched")]
+		return ok
+	}, 2*time.Second, 5*time.Millisecond, "watcher must record the flipped endpoint before Shutdown")
+
+	result := m.Shutdown()
+	require.Contains(t, result.EndpointResults, types.UID("uid-watched"),
+		"a watcher-flipped endpoint must be reverted by Shutdown (WR-01)")
+	assert.NoError(t, result.EndpointResults[types.UID("uid-watched")])
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Contains(t, disableCalls, int64(42), "the watcher-flipped endpoint must be disabled on revert")
+}
+
 // TestManager_Shutdown_WedgedExecDoesNotBlock proves the bounded revert
 // fan-out: even when setFn never observes ctx cancellation, Shutdown still
 // returns within a small multiple of stopWait+removeWait, logging a
@@ -374,7 +463,7 @@ func TestManager_Watcher_FlipsNewEndpoint(t *testing.T) {
 	m.watchCEFn = func(context.Context, string) (watch.Interface, error) { return fw, nil }
 
 	require.NoError(t, m.Open(context.Background(), "test-ns"))
-	t.Cleanup(m.Shutdown)
+	t.Cleanup(func() { m.Shutdown() })
 
 	newEP := fakeEndpoint("uid-new", "10.0.0.9", 42)
 	fw.ch <- watch.Event{Type: watch.Added, Object: &newEP}

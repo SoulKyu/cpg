@@ -29,7 +29,7 @@ const auditWindowDefaultTTL = 30 * time.Minute
 type auditWindowManager interface {
 	Open(ctx context.Context, ns string) error
 	Close(ctx context.Context) (auditwindow.RevertResult, error)
-	Shutdown()
+	Shutdown() auditwindow.RevertResult
 }
 
 // auditWindowDetectVersion mirrors bootstrapDetectVersion's best-effort,
@@ -160,7 +160,14 @@ func runAuditWindow(cmd *cobra.Command, _ []string) error {
 		logger.Info("audit window: TTL expired, reverting")
 	}
 
-	result, closeErr := wm.Close(ctx)
+	// Revert through the bounded Shutdown path — NEVER a bare Close under the
+	// signal ctx (which is already cancelled on the SIGINT/SIGTERM branch).
+	// Shutdown runs the revert sweep under context.Background() with its own
+	// internal bounded deadline, so an already-cancelled ctx can never fail
+	// the revert for every endpoint (CR-01) and a wedged exec transport can
+	// never block process exit (CR-02); it also cancels the watcher before
+	// snapshotting, closing the TTL-path snapshot/watcher-flip leak (WR-01).
+	result := wm.Shutdown()
 	for uid, revertErr := range result.EndpointResults {
 		if revertErr != nil {
 			logger.Warn("audit window: revert failed for endpoint",
@@ -169,5 +176,5 @@ func runAuditWindow(cmd *cobra.Command, _ []string) error {
 			logger.Info("audit window: reverted endpoint", zap.String("uid", string(uid)))
 		}
 	}
-	return closeErr
+	return nil
 }
