@@ -28,6 +28,14 @@ var l7ClientFactory = func(cfg *rest.Config) (kubernetes.Interface, error) {
 	return kubernetes.NewForConfig(cfg)
 }
 
+// versionPreflightTimeout hard-bounds the always-on CLI version preflight so a
+// kubeconfig pointing at an unreachable or wedged apiserver can never stall
+// cpg startup (WR-01). Mirrors pkg/k8s.versionDetectTimeout (unexported there,
+// hence duplicated here): "warn-and-proceed, never blocking" must survive a
+// hung apiserver, so the probe carries its own deadline even when the caller
+// ctx has none.
+const versionPreflightTimeout = 3 * time.Second
+
 // maybeRunL7Preflight runs pkg/k8s.RunL7Preflight when L7 generation is
 // requested and pre-flight is not explicitly disabled. Pre-flight is advisory:
 // any failure to construct a client is logged as a warning and the pipeline
@@ -79,7 +87,12 @@ func maybeRunVersionPreflight(ctx context.Context, kubeConfig *rest.Config, logg
 		logger.Warn("version preflight skipped: failed to construct kubernetes client", zap.Error(err))
 		return
 	}
-	k8s.DetectCiliumVersion(ctx, client, logger)
+	// WR-01: bound the probe with its own deadline. The signal ctx carries no
+	// deadline and LoadKubeConfig sets no rest.Config.Timeout, so without this
+	// an unreachable apiserver would stall startup indefinitely.
+	detectCtx, cancel := context.WithTimeout(ctx, versionPreflightTimeout)
+	defer cancel()
+	k8s.DetectCiliumVersion(detectCtx, client, logger)
 }
 
 func newGenerateCmd() *cobra.Command {

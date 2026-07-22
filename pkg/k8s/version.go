@@ -3,6 +3,7 @@ package k8s
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -155,7 +156,13 @@ func DetectCiliumVersion(ctx context.Context, client kubernetes.Interface, logge
 		logger.Warn(warnPodsListForbidden, zap.Error(err))
 		return finalizeCompat(CompatInfo{Source: "undetermined"}, logger)
 	default:
-		logger.Warn(warnPodsListFailed, zap.Error(err))
+		// WR-01: a SIGINT during the CLI preflight cancels ctx and surfaces
+		// here as context.Canceled — that is the operator's own shutdown, not
+		// a detection failure, so suppress the alarming warning. A genuine
+		// deadline (our own budget) or list error still warns.
+		if !errors.Is(ctx.Err(), context.Canceled) {
+			logger.Warn(warnPodsListFailed, zap.Error(err))
+		}
 		return finalizeCompat(CompatInfo{Source: "undetermined"}, logger)
 	}
 }
