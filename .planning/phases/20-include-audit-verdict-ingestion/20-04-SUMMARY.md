@@ -128,3 +128,9 @@ None - no external service configuration required.
 ---
 *Phase: 20-include-audit-verdict-ingestion*
 *Completed: 2026-07-22*
+
+## Self-Check: PASSED
+
+- All 11 claimed files verified present on disk (10 code/doc files + this SUMMARY.md).
+- All 4 commit hashes (`4e397d1`, `e49e93d`, `a849b27`, `a380c71`) verified present in `git log --oneline --all`.
+- Content spot-checks confirmed: `includeAudit` field/flag/parse in `commonflags.go`; `IncludeAudit: f.includeAudit` in both `generate.go`/`replay.go`; `include_audit` jsonschema tag in `mcp_tools.go`; `StartArgs.IncludeAudit` in `session.go`; `IncludeAudit: args.IncludeAudit` in `pipeline_config.go`; both `include-audit` and `include_audit` present in `README.md`.
