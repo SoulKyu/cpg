@@ -180,6 +180,12 @@ func TestMCPSessionLifecycleWiringAndStdoutPurity(t *testing.T) {
 	// kubeconfig/port-forward entirely, so this test needs no cluster. A
 	// short timeout/flush_interval keeps the background pipeline goroutine's
 	// eventual dial failure fast and irrelevant to what this test checks.
+	// COMPAT-02: resolveSetup now also runs a bounded version-detect against
+	// this same fake address (no kubeconfig -> GetNodes secondary); it is
+	// capped by the same "timeout": "2s" and returns an undetermined verdict
+	// (empty cilium_version / below_floor_features) well within that bound —
+	// this test proves wire round-trip presence of those fields, not a real
+	// detected version.
 	startResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
 		Name: "start_session",
 		Arguments: map[string]any{
@@ -192,10 +198,14 @@ func TestMCPSessionLifecycleWiringAndStdoutPurity(t *testing.T) {
 	require.False(t, startResp.IsError, "start_session against the D-07 bypass address must not error")
 
 	var startOut struct {
-		SessionID string `json:"session_id"`
+		SessionID          string   `json:"session_id"`
+		CiliumVersion      string   `json:"cilium_version"`
+		BelowFloorFeatures []string `json:"below_floor_features"`
 	}
 	decodeStructured(t, startResp.StructuredContent, &startOut)
 	require.NotEmpty(t, startOut.SessionID)
+	assert.Empty(t, startOut.CiliumVersion, "the fake bypass address must decode to an undetermined (empty) version, proving wire presence without a real cluster")
+	assert.Empty(t, startOut.BelowFloorFeatures, "no floor verdict when the version itself is undetermined")
 
 	statusResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "get_status",
@@ -205,11 +215,15 @@ func TestMCPSessionLifecycleWiringAndStdoutPurity(t *testing.T) {
 	require.False(t, statusResp.IsError)
 
 	var statusOut struct {
-		TmpDir string `json:"tmp_dir"`
+		TmpDir             string   `json:"tmp_dir"`
+		CiliumVersion      string   `json:"cilium_version"`
+		BelowFloorFeatures []string `json:"below_floor_features"`
 	}
 	decodeStructured(t, statusResp.StructuredContent, &statusOut)
 	require.NotEmpty(t, statusOut.TmpDir)
 	require.DirExists(t, statusOut.TmpDir, "Manager.Start must have created the session tmpdir")
+	assert.Empty(t, statusOut.CiliumVersion, "get_status must re-surface the same undetermined verdict cached at setup")
+	assert.Empty(t, statusOut.BelowFloorFeatures)
 
 	// Simulate transport death: cancel the server-root ctx. drain() blocks
 	// on runMCPServer's own return, which only happens AFTER mgr.Shutdown()
