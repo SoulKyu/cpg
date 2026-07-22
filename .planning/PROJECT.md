@@ -33,6 +33,7 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 - ✓ Observe dropped flows filtered by namespace or all-namespaces — v1.0
 - ✓ Generate CiliumNetworkPolicy for ingress/egress traffic — v1.0
 - ✓ Generate CIDR-based policies for external traffic — v1.0
+- ✓ AUDIT verdict ingestion via `--include-audit` (CLI) / `include_audit` (MCP session arg) — AUD-01, validated in Phase 20: `--include-audit` Verdict Ingestion
 - ✓ Exact ports (port number + protocol) in generated policies — v1.0
 - ✓ Smart label selection (app.kubernetes.io/*, workload name) — v1.0
 - ✓ One YAML file per policy in organized directory structure — v1.0
@@ -80,7 +81,6 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 
 <!-- v1.6 scope. Detailed REQ-IDs in REQUIREMENTS.md. -->
 
-- [ ] AUDIT verdict ingestion via `--include-audit` (CLI) / `include_audit` (MCP session arg) — AUD-01
 - [ ] Bootstrap default-deny CNP + audit-window runbook generation — AUD-02
 - [ ] Managed audit window with lifecycle-bound revert + TTL — AUD-03 (surface TBD in discuss-phase)
 - [ ] SEC-01 two-mode structural proof + README guarantee rewording — AUD-04
@@ -187,7 +187,7 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 
 **Codebase:** 12 packages (`pkg/{labels,policy,output,hubble,k8s,dedup,flowsource,evidence,diff,dropclass,session,explain}` + `cmd/`). **607 tests passing with `-race`** across 12 packages (up from 539 at Phase 17 close). CI green and operational (build + race tests + lint + govulncheck). Deps: cilium v1.19.4, go-sdk v1.6.1, jsonschema-go v0.4.3 (direct since Phase 18), toolchain go1.25.12. Known debt: 26 lint issues (16 errcheck + 10 SA1019) gated by `only-new-issues`, scoped to v1.5; pre-existing `pkg/session` shared-`/tmp` test flake documented in `phases/18-query-tools/deferred-items.md`. Release-please continues to handle product SemVer tagging.
 
-**Current milestone:** v1.6 Audit-Mode Onboarding & cpg-Dedicated Agent Tooling (started 2026-07-22, from the ideation draft in `drafts/`). Previous: v1.5 MCP Integration shipped 2026-07-22 (PR #18, merge `81ebf2c`; incl. same-day GO-2026-5970 fix: x/text v0.39.0). Tests: 610 across 12 packages, all `-race`.
+**Current milestone:** v1.6 Audit-Mode Onboarding & cpg-Dedicated Agent Tooling (started 2026-07-22, from the ideation draft in `drafts/`). Phase 20 complete (2026-07-22) — `--include-audit`/`include_audit` AUDIT-verdict ingestion shipped end-to-end (5 filter sites widened, byte-identical default regression-pinned, single zero-signal warning, AuditVerdictCount surfaced in SessionStats/StopResult). Previous: v1.5 MCP Integration shipped 2026-07-22 (PR #18, merge `81ebf2c`; incl. same-day GO-2026-5970 fix: x/text v0.39.0). Tests: 610 across 12 packages, all `-race`.
 
 ## Evolution
 
@@ -207,4 +207,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-22 after starting milestone v1.6 (Audit-Mode Onboarding & cpg-Dedicated Agent Tooling).*
+*Last updated: 2026-07-22 after Phase 20 (`--include-audit` Verdict Ingestion) completion.*
