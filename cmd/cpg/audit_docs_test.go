@@ -43,3 +43,30 @@ func TestReadmeAuditWindowSection(t *testing.T) {
 	assert.Contains(t, readme, "ciliumendpoints",
 		"AUD-03 c5: README must list the ciliumendpoints RBAC step-up")
 }
+
+// TestRunbookAuditWindowStep is the golden pinning test for AUD-03
+// criterion 5's runbook half. It pins that docs/bootstrap-runbook.md wires
+// the real `cpg audit-window --ttl` command (not the old manual kubectl-exec
+// steps), documents the new-endpoint race honestly, and mentions the
+// pods/exec RBAC step-up it needs.
+//
+// This test does NOT touch TestRunbookNeverSuggestsDaemonWideAudit's
+// existing assertions or helpers -- it only reads the same file
+// independently, so both tests stay green side by side.
+func TestRunbookAuditWindowStep(t *testing.T) {
+	data, err := os.ReadFile("../../docs/bootstrap-runbook.md")
+	require.NoError(t, err, "docs/bootstrap-runbook.md must exist and be readable")
+	runbook := string(data)
+
+	assert.Contains(t, runbook, "cpg audit-window",
+		"AUD-03 c5: runbook must wire the real cpg audit-window command")
+
+	assert.Contains(t, runbook, "--ttl",
+		"AUD-03 c5: runbook must show the --ttl flag")
+
+	assert.Contains(t, runbook, "race",
+		"AUD-03 c5: runbook must honestly document the new-endpoint race window")
+
+	assert.Contains(t, runbook, "pods/exec",
+		"AUD-03 c5: runbook must mention the pods/exec RBAC step-up")
+}
