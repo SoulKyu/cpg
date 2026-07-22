@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Audit-Mode Onboarding & cpg-Dedicated Agent Tooling
 status: executing
-last_updated: "2026-07-22T09:50:20.111Z"
-last_activity: 2026-07-22 -- Phase 20 planning complete
+last_updated: "2026-07-22T09:51:05.220Z"
+last_activity: 2026-07-22 -- Phase 20 execution started
 progress:
   total_phases: 9
   completed_phases: 0
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-22)
 
 **Core value:** Automatically generate correct CiliumNetworkPolicies from observed Hubble denials so that SREs spend zero time manually writing network policies in default-deny environments.
-**Current focus:** Phase 20 — `--include-audit` Verdict Ingestion
+**Current focus:** Phase 20 — include-audit-verdict-ingestion
 
 ## Current Position
 
-Phase: 20 of 24 (`--include-audit` Verdict Ingestion)
-Plan: — (not yet planned)
-Status: Ready to execute
-Last activity: 2026-07-22 -- Phase 20 planning complete
+Phase: 20 (include-audit-verdict-ingestion) — EXECUTING
+Plan: 1 of 4
+Status: Executing Phase 20
+Last activity: 2026-07-22 -- Phase 20 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
