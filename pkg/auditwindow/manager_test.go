@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"go.uber.org/zap/zaptest"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/rest"
 )
 
@@ -41,8 +43,32 @@ func newTestManagerCtx(t *testing.T, rootCtx context.Context) *Manager {
 	m.removeWait = 50 * time.Millisecond
 	m.preconditionFn = func(context.Context) (bool, error) { return false, nil }
 	m.listCEFn = func(context.Context, string) ([]ciliumv2.CiliumEndpoint, error) { return nil, nil }
+	// Default watchCEFn to a fake watch.Interface whose ResultChan() never
+	// emits or closes on its own: without this, Open's watcher goroutine
+	// would call through to NewManager's real production watchCEFn (bound
+	// against the never-dialed fake rest.Config), dialing 127.0.0.1:6443
+	// repeatedly on a bounded-backoff loop for the remainder of the test
+	// binary's life in every test that doesn't care about the watcher at
+	// all (Task 1/2 tests) — including logging via zaptest.NewLogger(t)
+	// after the individual test has already completed.
+	m.watchCEFn = func(context.Context, string) (watch.Interface, error) {
+		return newFakeWatch(), nil
+	}
 	return m
 }
+
+// fakeWatch is a minimal watch.Interface stand-in: ResultChan() is a plain
+// unbuffered channel the test writes watch.Event values to directly (or
+// closes, to simulate a dropped connection); Stop() is a no-op (nothing to
+// release — the test owns ch's lifecycle directly).
+type fakeWatch struct {
+	ch chan watch.Event
+}
+
+func newFakeWatch() *fakeWatch { return &fakeWatch{ch: make(chan watch.Event)} }
+
+func (f *fakeWatch) Stop()                          {}
+func (f *fakeWatch) ResultChan() <-chan watch.Event { return f.ch }
 
 // fakeEndpoint builds a minimal CiliumEndpoint with the fields Open/the
 // watcher actually read: UID, node IP, and the per-node integer ID.
@@ -324,4 +350,104 @@ func TestManager_Shutdown_WedgedExecDoesNotBlock(t *testing.T) {
 	case <-time.After(4 * (m.stopWait + m.removeWait)):
 		t.Fatal("Shutdown did not return within the bounded deadline despite a wedged setFn")
 	}
+}
+
+// TestManager_Watcher_FlipsNewEndpoint proves the watcher applies the same
+// read-then-flip-if-needed logic Open's initial sweep uses to a
+// newly-observed (ADDED) endpoint, recording its UID in ours.
+func TestManager_Watcher_FlipsNewEndpoint(t *testing.T) {
+	m := newTestManager(t)
+	m.readFn = func(context.Context, string, int64) (bool, error) { return false, nil }
+
+	var mu sync.Mutex
+	var enableCalls []int64
+	m.setFn = func(_ context.Context, _ string, id int64, enable bool) error {
+		if enable {
+			mu.Lock()
+			enableCalls = append(enableCalls, id)
+			mu.Unlock()
+		}
+		return nil
+	}
+
+	fw := newFakeWatch()
+	m.watchCEFn = func(context.Context, string) (watch.Interface, error) { return fw, nil }
+
+	require.NoError(t, m.Open(context.Background(), "test-ns"))
+	t.Cleanup(m.Shutdown)
+
+	newEP := fakeEndpoint("uid-new", "10.0.0.9", 42)
+	fw.ch <- watch.Event{Type: watch.Added, Object: &newEP}
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, id := range enableCalls {
+			if id == 42 {
+				return true
+			}
+		}
+		return false
+	}, 2*time.Second, 5*time.Millisecond, "watcher must flip the newly-observed endpoint")
+
+	m.mu.Lock()
+	_, recorded := m.ours[types.UID("uid-new")]
+	m.mu.Unlock()
+	assert.True(t, recorded, "the new endpoint's UID must be recorded in ours")
+}
+
+// TestManager_Watcher_ReconnectsOnChannelClose proves that when the first
+// fake watch's ResultChan() closes while ctx is live, the watcher re-Watch()es
+// (bounded backoff) and a subsequent ADDED event from the reconnected watch
+// is still flipped; Shutdown then exits the loop and returns promptly.
+func TestManager_Watcher_ReconnectsOnChannelClose(t *testing.T) {
+	m := newTestManager(t)
+	m.readFn = func(context.Context, string, int64) (bool, error) { return false, nil }
+
+	var mu sync.Mutex
+	var enableCalls []int64
+	m.setFn = func(_ context.Context, _ string, id int64, enable bool) error {
+		if enable {
+			mu.Lock()
+			enableCalls = append(enableCalls, id)
+			mu.Unlock()
+		}
+		return nil
+	}
+
+	firstWatch := newFakeWatch()
+	secondWatch := newFakeWatch()
+	var watchCallCount int32
+	m.watchCEFn = func(context.Context, string) (watch.Interface, error) {
+		if atomic.AddInt32(&watchCallCount, 1) == 1 {
+			return firstWatch, nil
+		}
+		return secondWatch, nil
+	}
+
+	require.NoError(t, m.Open(context.Background(), "test-ns"))
+
+	close(firstWatch.ch) // simulate a dropped watch connection
+
+	require.Eventually(t, func() bool {
+		return atomic.LoadInt32(&watchCallCount) >= 2
+	}, 2*time.Second, 5*time.Millisecond, "watcher must re-Watch() after ResultChan() closes while ctx is live")
+
+	newEP := fakeEndpoint("uid-second", "10.0.0.10", 7)
+	secondWatch.ch <- watch.Event{Type: watch.Added, Object: &newEP}
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, id := range enableCalls {
+			if id == 7 {
+				return true
+			}
+		}
+		return false
+	}, 2*time.Second, 5*time.Millisecond, "the reconnected watch's ADDED event must still be flipped")
+
+	begin := time.Now()
+	m.Shutdown()
+	assert.Less(t, time.Since(begin), 4*(m.stopWait+m.removeWait), "Shutdown must exit the watcher loop promptly once ctx is done")
 }

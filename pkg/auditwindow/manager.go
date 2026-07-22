@@ -184,6 +184,14 @@ func (m *Manager) Open(ctx context.Context, ns string) error {
 		m.flipIfNeeded(ctx, &endpoints[i])
 	}
 
+	watchCtx, cancel := context.WithCancel(ctx)
+	watchDone := make(chan struct{})
+	m.mu.Lock()
+	m.watchCancel = cancel
+	m.watchDone = watchDone
+	m.mu.Unlock()
+	go m.startWatcher(watchCtx, ns, watchDone)
+
 	// Watch for rootCtx cancellation on any path — SIGINT/SIGTERM, parent
 	// context death — and revert unconditionally exactly once. This is what
 	// makes "every exit path reverts" true even if the CLI caller forgets to
@@ -196,6 +204,80 @@ func (m *Manager) Open(ctx context.Context, ns string) error {
 	}()
 
 	return nil
+}
+
+// startWatcher watches ns's CiliumEndpoints for newly-created endpoints
+// (ADDED, or MODIFIED for a UID not yet ours) and applies the same
+// read-then-flip-if-needed logic Open's initial sweep uses. When
+// ResultChan() closes while ctx is still live, it reconnects with a bounded
+// backoff (scaled off stopWait) and re-Watch()es — a deliberate one-line
+// reconnect loop, NOT a cache.Reflector/informer (RESEARCH.md's locked "no
+// parallel construct" decision). The honest residual race: a brand-new
+// endpoint may be policy-enforced for the reconnect interval before its flip
+// lands — documented here and in the runbook, not solved. Exits and closes
+// done when ctx is done.
+func (m *Manager) startWatcher(ctx context.Context, ns string, done chan struct{}) {
+	defer close(done)
+
+	backoff := m.stopWait
+	if backoff <= 0 {
+		backoff = 5 * time.Second
+	}
+
+	for ctx.Err() == nil {
+		w, err := m.watchCEFn(ctx, ns)
+		if err != nil {
+			m.logger.Warn("audit window watcher: Watch failed; retrying with bounded backoff", zap.Error(err))
+			if !sleepOrDone(ctx, backoff) {
+				return
+			}
+			continue
+		}
+
+		m.consumeWatch(ctx, w)
+
+		// ResultChan() closed (or ctx is done, in which case the loop
+		// condition below exits immediately) — reconnect with the same
+		// bounded backoff rather than busy-looping re-Watch() calls.
+		if !sleepOrDone(ctx, backoff) {
+			return
+		}
+	}
+}
+
+// consumeWatch ranges over w.ResultChan() until it closes or ctx is done,
+// flipping any newly-observed endpoint via the shared flipIfNeeded helper.
+func (m *Manager) consumeWatch(ctx context.Context, w watch.Interface) {
+	defer w.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev, ok := <-w.ResultChan():
+			if !ok {
+				return // channel dropped; caller reconnects with backoff
+			}
+			if ev.Type != watch.Added && ev.Type != watch.Modified {
+				continue
+			}
+			ep, ok := ev.Object.(*ciliumv2.CiliumEndpoint)
+			if !ok {
+				continue
+			}
+			m.flipIfNeeded(ctx, ep)
+		}
+	}
+}
+
+// sleepOrDone waits for either d to elapse (returning true) or ctx to be
+// done (returning false) first.
+func sleepOrDone(ctx context.Context, d time.Duration) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(d):
+		return true
+	}
 }
 
 // flipIfNeeded applies the read-then-flip-if-needed logic shared by Open's
