@@ -85,7 +85,7 @@ Full details: [milestones/v1.5-ROADMAP.md](milestones/v1.5-ROADMAP.md)
 
 ### 📋 v1.6 Audit-Mode Onboarding & cpg-Dedicated Agent Tooling (Phases 20-24)
 
-- [ ] **Phase 20: `--include-audit` Verdict Ingestion** - AUDIT-verdict flows widen the same pipeline as DROPPED across all filter sites, byte-identical default behavior, single zero-signal warning
+- [x] **Phase 20: `--include-audit` Verdict Ingestion** - AUDIT-verdict flows widen the same pipeline as DROPPED across all filter sites, byte-identical default behavior, single zero-signal warning (completed 2026-07-22)
 - [ ] **Phase 21: Cilium Compatibility Matrix + Runtime Detection** - Declared version floor + per-feature table (PR-verified numbers), warn-and-proceed runtime detection, live README proxy-visibility bug fixed
 - [ ] **Phase 22: Bootstrap Artifact Generation** - Namespaced default-deny CNP (`enableDefaultDeny` + empty rule stanzas) + onboarding runbook, CLI + readonly MCP tool
 - [ ] **Phase 23: Managed Audit Window + SEC-01 Evolution** - Lifecycle-bound per-endpoint audit flips with guaranteed revert; two-mode structural readonly proof
@@ -236,8 +236,8 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 
 **Wave 3** *(blocked on Wave 2; the two plans run in parallel — zero file overlap)*
 
-- [ ] 20-03-PLAN.md — End-to-end AUDIT behavioral tests (byte-identical off, ingested on, warning-exactly-once) + with_audit.jsonl fixture
-- [ ] 20-04-PLAN.md — CLI `--include-audit` + MCP `include_audit` surface threading + README docs
+- [x] 20-03-PLAN.md — End-to-end AUDIT behavioral tests (byte-identical off, ingested on, warning-exactly-once) + with_audit.jsonl fixture
+- [x] 20-04-PLAN.md — CLI `--include-audit` + MCP `include_audit` surface threading + README docs
 
 ### Phase 21: Cilium Compatibility Matrix + Runtime Detection
 
@@ -322,7 +322,7 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 | 17. Session Lifecycle | v1.5 | 9/9 | Complete    | 2026-07-21 |
 | 18. Query Tools | v1.5 | 5/5 | Complete    | 2026-07-21 |
 | 19. Security Hardening & End-to-End Validation | v1.5 | 4/4 | Complete    | 2026-07-21 |
-| 20. `--include-audit` Verdict Ingestion | v1.6 | 2/4 | In Progress|  |
+| 20. `--include-audit` Verdict Ingestion | v1.6 | 4/4 | Complete   | 2026-07-22 |
 | 21. Cilium Compatibility Matrix + Runtime Detection | v1.6 | 0/TBD | Not started | - |
 | 22. Bootstrap Artifact Generation | v1.6 | 0/TBD | Not started | - |
 | 23. Managed Audit Window + SEC-01 Evolution | v1.6 | 0/TBD | Not started | - |
