@@ -34,7 +34,7 @@ Do not restate the flag semantics beyond naming them — run `cpg explain
 
 If reviewing against a live-ish source (an active or recently-stopped MCP
 session) rather than files on disk, use the `get_evidence` tool instead —
-it returns evidence in the same shape `cpg explain --output json` does.
+it returns evidence in the same shape `cpg explain --json` does.
 
 ## Step 3: Checklist — walk each rule
 
