@@ -87,7 +87,7 @@ Full details: [milestones/v1.5-ROADMAP.md](milestones/v1.5-ROADMAP.md)
 
 - [x] **Phase 20: `--include-audit` Verdict Ingestion** - AUDIT-verdict flows widen the same pipeline as DROPPED across all filter sites, byte-identical default behavior, single zero-signal warning (completed 2026-07-22)
 - [x] **Phase 21: Cilium Compatibility Matrix + Runtime Detection** - Declared version floor + per-feature table (PR-verified numbers), warn-and-proceed runtime detection, live README proxy-visibility bug fixed (completed 2026-07-22)
-- [ ] **Phase 22: Bootstrap Artifact Generation** - Namespaced default-deny CNP (`enableDefaultDeny` + empty rule stanzas) + onboarding runbook, CLI + readonly MCP tool
+- [x] **Phase 22: Bootstrap Artifact Generation** - Namespaced default-deny CNP (`enableDefaultDeny` + one-element empty-rule stanzas, #35558-safe) + onboarding runbook, stdout-only CLI + readonly MCP tool, SEC-01 intact (completed 2026-07-22)
 - [ ] **Phase 23: Managed Audit Window + SEC-01 Evolution** - Lifecycle-bound per-endpoint audit flips with guaranteed revert; two-mode structural readonly proof
 - [ ] **Phase 24: cpg-Dedicated Skills & Agent Tooling** - Repo-local skills (+ optional subagent) driving real MCP/CLI workflows
 
@@ -280,11 +280,11 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 **Wave 1** *(parallel -- zero file overlap)*
 
 - [x] 22-01-PLAN.md -- `pkg/policy.BuildBootstrapPolicy` + named cilium#35558 Sanitize()/marshal acceptance test (AUD-02 criterion 1)
-- [ ] 22-03-PLAN.md -- `docs/bootstrap-runbook.md` (verdict-driven phase order, first-lines daemon-wide-audit warning, `--include-audit` capture) + README cross-reference + golden tests (AUD-02 criteria 3, 5)
+- [x] 22-03-PLAN.md -- `docs/bootstrap-runbook.md` (verdict-driven phase order, first-lines daemon-wide-audit warning, `--include-audit` capture) + README cross-reference + golden tests (AUD-02 criteria 3, 5)
 
 **Wave 2** *(blocked on 22-01)*
 
-- [ ] 22-02-PLAN.md -- `cpg bootstrap` CLI + readonly `get_bootstrap_policy` MCP tool + shared version gate (reuses Phase 21 detection); SEC-01 zero-new-allowlist confirmation (AUD-02 criteria 2, 4)
+- [x] 22-02-PLAN.md -- `cpg bootstrap` CLI + readonly `get_bootstrap_policy` MCP tool + shared version gate (reuses Phase 21 detection); SEC-01 zero-new-allowlist confirmation (AUD-02 criteria 2, 4)
 
 > **Decision gate before Phase 23:** AUD-03's surface — MCP flag-gated session property vs. CLI-only command (MCP stays pure-readonly) — and, if the MCP variant wins, the SEC-01 two-mode mechanism (build-tag split vs. path-scoped reachability assertion) must both be resolved via `/gsd-discuss-phase` before Phase 23 is planned at file-level detail. See REQUIREMENTS.md AUD-03/AUD-04 and research/SUMMARY.md Tension 4.
 
