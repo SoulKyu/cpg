@@ -167,6 +167,108 @@ func bfsFromRoot(cg *callgraph.Graph, root *ssa.Function) bfsResult {
 	return res
 }
 
+// bfsFromRootGenuine is bfsFromRoot's SEC-01-tripwire-safe sibling: it skips
+// any edge with a nil Site, which per callgraph.Edge's own doc comment
+// (callgraph.go:86-87 — "Site is nil for edges originating in synthetic or
+// intrinsic functions, e.g. reflect.Value.Call or the root of the call
+// graph") marks a synthetic edge rather than a real call site. Reachability
+// computed this way cannot be inflated by any cobra RunE value merely
+// existing somewhere in the program (23-RESEARCH.md "SEC-01 Tripwire
+// Design"): assigning a function as a RunE field value takes its address,
+// and RTA's reflect.Value.Call sweep (rta.go:181-207, visitAddrTakenFunc)
+// adds a synthetic edge from that intrinsic to every address-taken function
+// in the whole program the instant reflect.Value.Call is itself reachable —
+// bootstrap.go:153-157's own comment documents this concretely affecting
+// runBootstrap today. A tripwire built on raw bfsFromRoot visited-set
+// membership would false-positive on the same grounds the moment
+// runAuditWindow exists; this genuine-edge variant is immune to that.
+//
+// Empirically discovered second sweep (execution-time finding, not in
+// 23-RESEARCH.md): RTA applies the identical whole-program address-taken
+// sweep to ANY indirect call through a value of the bare, zero-parameter,
+// zero-result `func()` type — not merely reflect.Value.Call — and, critically,
+// attributes the resulting edges to the REAL call instruction (Site != nil),
+// unlike the reflect-specific case the Edge.Site doc comment describes. A
+// diagnostic dump of (*pkg/session.Manager).Shutdown's outgoing RTA edges
+// showed a single indirect call instruction ("t14()", the `context.CancelFunc`
+// value call) connected — with a genuine, non-nil Site — to several hundred
+// unrelated whole-program closures of matching signature (runtime internals,
+// gRPC internals, and, load-bearing here, every pkg/auditwindow.Manager
+// exit-path closure), producing a spurious
+// "runMCPServer -> (*session.Manager).Shutdown -> (*auditwindow.Manager).Close$1
+// -> ... -> k8s.ExecCiliumDbg" chain with no basis in real program semantics
+// (pkg/session imports nothing from pkg/auditwindow — grep confirms zero
+// references). Every legitimate seam field this codebase actually dispatches
+// through (readFn, setFn, listCEFn, watchCEFn, preconditionFn,
+// resolveCurrentIDFn, bootstrapDetectVersion, l7ClientFactory, ...) carries a
+// non-trivial signature (at least a context.Context parameter), so excluding
+// only the maximally-generic bare-func() indirect-call shape preserves every
+// genuine seam-mediated call path (verified: the positive-path proof below
+// still finds runAuditWindow -> ... -> k8s.ExecCiliumDbg via the readFn seam,
+// whose signature is func(context.Context, string, int64) (bool, error), not
+// bare func()) while eliminating this second RTA sweep.
+func bfsFromRootGenuine(cg *callgraph.Graph, root *ssa.Function) bfsResult {
+	res := bfsResult{
+		visited: map[*ssa.Function]bool{root: true},
+		parent:  map[*ssa.Function]*ssa.Function{},
+	}
+	rootNode := cg.Nodes[root]
+	if rootNode == nil {
+		return res
+	}
+	queue := []*callgraph.Node{rootNode}
+	for len(queue) > 0 {
+		n := queue[0]
+		queue = queue[1:]
+		for _, edge := range n.Out {
+			if edge.Site == nil {
+				continue // synthetic (reflect.Value.Call sweep or graph root) — not a real call
+			}
+			if isBareFuncValueDispatch(edge.Site.Common()) {
+				continue // RTA's second whole-program sweep (see doc comment above) — not a traceable real call
+			}
+			callee := edge.Callee
+			if callee == nil || callee.Func == nil || res.visited[callee.Func] {
+				continue
+			}
+			res.visited[callee.Func] = true
+			res.parent[callee.Func] = n.Func
+			queue = append(queue, callee)
+		}
+	}
+	return res
+}
+
+// isBareFuncValueDispatch reports whether common is an indirect call
+// (neither a static call nor an interface-method invoke) through a value of
+// the bare, zero-parameter, zero-result `func()` type — the specific shape
+// RTA resolves via a whole-program address-taken sweep rather than any
+// traceable dataflow fact (see bfsFromRootGenuine's doc comment).
+func isBareFuncValueDispatch(common *ssa.CallCommon) bool {
+	if common == nil || common.StaticCallee() != nil || common.IsInvoke() {
+		return false
+	}
+	sig := common.Signature()
+	return sig != nil && sig.Params().Len() == 0 && sig.Results().Len() == 0
+}
+
+// restrictToCpgOwned restricts a BFS-visited set to cpg's own package tree
+// (same prefix-match TestMCPAuditReadonlyReachability's inline loop already
+// performs at lines ~288-293) — used ONLY by TestAuditWindowNotReachableFromMCP
+// below. TestMCPAuditReadonlyReachability's own inline loop is deliberately
+// left untouched (not rewired to call this helper): that test's body must
+// stay byte-identical in what it proves, and a few duplicated lines are cheap
+// insurance for a zero-tolerance security test.
+func restrictToCpgOwned(visited map[*ssa.Function]bool) map[*ssa.Function]bool {
+	cpgOwned := make(map[*ssa.Function]bool)
+	for f := range visited {
+		if f != nil && f.Pkg != nil && f.Pkg.Pkg != nil && strings.HasPrefix(f.Pkg.Pkg.Path(), cpgModulePrefix) {
+			cpgOwned[f] = true
+		}
+	}
+	return cpgOwned
+}
+
 // callPathFrom reconstructs one concrete call path from root to target using
 // the parent pointers bfsFromRoot recorded, rendered as
 // "root -> f1 -> f2 -> target" using each function's SSA symbol
@@ -342,4 +444,135 @@ func TestMCPAuditReadonlyReachability(t *testing.T) {
 			}
 		}
 	}
+}
+
+// execConstructorSymbol is the exact StaticCallee().String() form of the
+// privileged exec-executor constructor Property 3 watches for
+// (AUD-04/T-23-08): remotecommand.NewSPDYExecutor, the SPDY dialer entry
+// point pkg/k8s/exec.go's ExecPolicyAuditMode/ReadPolicyAuditMode ultimately
+// call through to actually perform a `pods/exec` mutation.
+const execConstructorSymbol = "k8s.io/client-go/tools/remotecommand.NewSPDYExecutor"
+
+// TestAuditWindowNotReachableFromMCP is the SEC-01 structural evolution
+// (AUD-04, Property 3): it proves, over the same whole-program SSA/RTA setup
+// TestMCPAuditReadonlyReachability already uses, that no cpg-owned function
+// GENUINELY (non-reflect-swept) reachable from runMCPServer contains a
+// static call instruction to remotecommand.NewSPDYExecutor — the negative
+// half — AND that the same call IS genuinely reachable from runAuditWindow
+// — the non-vacuous positive half (require.True; a vacuous "not reachable
+// from MCP" proof that also isn't reachable from anywhere is worthless).
+//
+// "Genuinely reachable" uses bfsFromRootGenuine (Edge.Site != nil only,
+// filtering RTA's reflect.Value.Call sweep), specifically so a cobra RunE
+// value's mere existence in the compiled binary can never, by itself,
+// satisfy or violate this property — only a REAL call chain can
+// (23-RESEARCH.md "SEC-01 Tripwire Design"). This deliberately duplicates
+// TestMCPAuditReadonlyReachability's Stage 1-2 SSA/RTA setup rather than
+// sharing state across tests, so this test remains independently re-runnable
+// and its own failure diagnostics are self-contained.
+//
+// Wall-clock budget: ~45-76s under -race, same as TestMCPAuditReadonlyReachability
+// (19-RESEARCH.md Pitfall 5) — a whole-program SSA build + RTA cost, not a
+// hang. Do not add a -timeout below ~120s for this test.
+func TestAuditWindowNotReachableFromMCP(t *testing.T) {
+	// Stage 1: identical to TestMCPAuditReadonlyReachability's own Stage 1 —
+	// load cmd/cpg + its full dependency graph with type-annotated syntax,
+	// build SSA for the whole program, excluding this package's own _test.go
+	// files.
+	cfg := &packages.Config{Mode: packages.LoadAllSyntax, Tests: false, Dir: "."}
+	initial, err := packages.Load(cfg, ".")
+	require.NoError(t, err, "packages.Load(cmd/cpg)")
+	if packages.PrintErrors(initial) > 0 {
+		t.Fatal("packages.Load reported package errors for cmd/cpg (see stderr above) — cannot build a sound SSA program")
+	}
+
+	mode := ssa.InstantiateGenerics // required for soundness (matches x/tools/cmd/callgraph)
+	prog, pkgs := ssautil.AllPackages(initial, mode)
+	prog.Build()
+
+	var mainPkg *ssa.Package
+	for _, p := range pkgs {
+		if p != nil && p.Pkg != nil && p.Pkg.Name() == "main" {
+			mainPkg = p
+			break
+		}
+	}
+	require.NotNil(t, mainPkg, "expected an SSA package named \"main\" for cmd/cpg")
+
+	mainFn := mainPkg.Func("main")
+	initFn := mainPkg.Func("init")
+	require.NotNil(t, mainFn, "cmd/cpg must declare func main()")
+	require.NotNil(t, initFn, "cmd/cpg must have a synthesized package initializer")
+
+	mcpRoot := mainPkg.Func("runMCPServer")
+	require.NotNil(t, mcpRoot, "cmd/cpg must declare func runMCPServer")
+	auditRoot := mainPkg.Func("runAuditWindow")
+	require.NotNil(t, auditRoot, "cmd/cpg must declare func runAuditWindow")
+
+	// Stage 2: RTA rooted at main+init, per its documented contract — not
+	// rooted at either mcpRoot or auditRoot directly (same off-label concern
+	// TestMCPAuditReadonlyReachability's own Stage 2 comment documents).
+	rtaRes := rta.Analyze([]*ssa.Function{mainFn, initFn}, true)
+	require.NotNil(t, rtaRes, "rta.Analyze returned nil (no roots supplied?)")
+	require.NotNil(t, rtaRes.CallGraph, "rta.Analyze(roots, buildCallGraph=true) must populate CallGraph")
+	require.NotNil(t, rtaRes.CallGraph.Nodes[mcpRoot],
+		"runMCPServer must be a node in the RTA callgraph — otherwise the BFS scans nothing and this half of the audit passes vacuously")
+	require.NotNil(t, rtaRes.CallGraph.Nodes[auditRoot],
+		"runAuditWindow must be a node in the RTA callgraph — otherwise the positive-path proof below is vacuous")
+
+	// Assumption A1 (23-RESEARCH.md): log whether reflect.Value.Call was
+	// itself genuinely reached from runMCPServer, so the team knows which
+	// reflect-sweep-pollution case they're in — informational only, not an
+	// assertion (the Edge.Site filter below is correct and safe either way).
+	genuineFromMCPAll := bfsFromRootGenuine(rtaRes.CallGraph, mcpRoot)
+	reflectValueCallReached := false
+	for f := range genuineFromMCPAll.visited {
+		if f != nil && f.String() == "(reflect.Value).Call" {
+			reflectValueCallReached = true
+			break
+		}
+	}
+	t.Logf("Assumption A1: (reflect.Value).Call genuinely reached from runMCPServer = %v", reflectValueCallReached)
+
+	// Negative half (Property 3): no cpg-owned function genuinely reachable
+	// from runMCPServer may contain a static call instruction to
+	// remotecommand.NewSPDYExecutor.
+	genuineCpgOwnedFromMCP := restrictToCpgOwned(genuineFromMCPAll.visited)
+	for f := range genuineCpgOwnedFromMCP {
+		for _, b := range f.Blocks {
+			for _, instr := range b.Instrs {
+				call, ok := instr.(ssa.CallInstruction)
+				if !ok {
+					continue
+				}
+				if callee := call.Common().StaticCallee(); callee != nil && callee.String() == execConstructorSymbol {
+					t.Errorf("SEC-01/AUD-04: %s genuinely (non-reflect) reaches %s from runMCPServer\n  call path: %s",
+						f.String(), execConstructorSymbol, callPathFrom(genuineFromMCPAll, mcpRoot, f))
+				}
+			}
+		}
+	}
+
+	// Positive half (AUD-04's "reachable ONLY from audit-window" other side):
+	// the exec constructor must be genuinely reachable from runAuditWindow —
+	// non-vacuous proof that this audit is actually watching something real.
+	genuineFromAudit := bfsFromRootGenuine(rtaRes.CallGraph, auditRoot)
+	foundExecCaller := false
+	for f := range restrictToCpgOwned(genuineFromAudit.visited) {
+		for _, b := range f.Blocks {
+			for _, instr := range b.Instrs {
+				call, ok := instr.(ssa.CallInstruction)
+				if !ok {
+					continue
+				}
+				if callee := call.Common().StaticCallee(); callee != nil && callee.String() == execConstructorSymbol {
+					foundExecCaller = true
+					t.Logf("SEC-01/AUD-04: exec constructor genuinely reachable via %s",
+						callPathFrom(genuineFromAudit, auditRoot, f))
+				}
+			}
+		}
+	}
+	require.True(t, foundExecCaller,
+		"SEC-01/AUD-04: remotecommand.NewSPDYExecutor must be genuinely reachable from runAuditWindow — audit is vacuous otherwise")
 }
