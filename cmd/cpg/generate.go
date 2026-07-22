@@ -248,7 +248,8 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 		SessionSource: evidence.SourceInfo{Type: "live", Server: server},
 		CPGVersion:    version,
 
-		L7Enabled: f.l7,
+		L7Enabled:    f.l7,
+		IncludeAudit: f.includeAudit,
 
 		IgnoreProtocols:   ignoreProtocols,
 		IgnoreDropReasons: ignoreDropReasons,
