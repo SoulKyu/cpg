@@ -135,6 +135,9 @@ type StartArgs struct {
 	Namespaces    []string
 	AllNamespaces bool
 	L7            bool
+	// IncludeAudit ingests Verdict_AUDIT flows alongside Verdict_DROPPED
+	// (AUD-01). Default false preserves pre-v1.6 DROPPED-only behavior.
+	IncludeAudit bool
 	// IgnoreDropReasons is the uppercase, pre-validated set (D-06 — same
 	// normalization as the CLI's existing drop-reason validator).
 	IgnoreDropReasons []string

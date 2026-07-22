@@ -22,6 +22,7 @@ type startSessionArgs struct {
 	Namespace         []string `json:"namespace,omitempty" jsonschema:"namespace filter, repeatable"`
 	AllNamespaces     bool     `json:"all_namespaces,omitempty" jsonschema:"observe all namespaces"`
 	L7                bool     `json:"l7,omitempty" jsonschema:"enable L7 (HTTP/DNS) policy generation"`
+	IncludeAudit      bool     `json:"include_audit,omitempty" jsonschema:"ingest Verdict_AUDIT flows alongside DROPPED (opt-in; default preserves pre-v1.6 DROPPED-only behavior)"`
 	IgnoreDropReasons []string `json:"ignore_drop_reasons,omitempty" jsonschema:"exclude flows by drop reason name before classification"`
 	IgnoreProtocols   []string `json:"ignore_protocols,omitempty" jsonschema:"drop flows whose L4 protocol matches: tcp, udp, icmpv4, icmpv6, sctp"`
 	Server            string   `json:"server,omitempty" jsonschema:"explicit Hubble Relay address; bypasses auto port-forward when set"`
@@ -128,6 +129,7 @@ func registerSessionTools(server *mcp.Server, mgr *session.Manager) {
 			Namespaces:        args.Namespace,
 			AllNamespaces:     args.AllNamespaces,
 			L7:                args.L7,
+			IncludeAudit:      args.IncludeAudit,
 			IgnoreDropReasons: ignoreDropReasons,
 			IgnoreProtocols:   ignoreProtocols,
 			Server:            args.Server,
