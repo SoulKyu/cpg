@@ -80,6 +80,8 @@ AuditVerdictCount uint64 `json:"audit_verdict_count"`
 zap.Bool("include-audit", f.includeAudit),
 ```
 
+**Resolution:** RESOLVED in commit `ada7b30` (2026-07-22). `AuditVerdictCount` added to `SessionStats` (populated from `agg.AuditVerdictCount()` after `g.Wait()`, alongside the L7 counters), to `stats.Log()` as `audit_verdict_count`, and to the MCP `StopResult` as `audit_verdict_count` (wired in `buildSummary`). Tests extended: `TestSession_BuildSummary` (both subtests), `TestSessionStats_Log` (key + value), and `TestPipeline_AuditIngested_GeneratedLikeDropped` (end-to-end `audit_verdict_count=1` in the session summary). Two sub-items deliberately NOT changed, per the mirror-L7-exactly constraint: the generate/replay configuration log lines omit `include-audit` because they do not log `--l7` either (adding one without the other would create a new asymmetry), and the unconditional "streaming dropped flows" message at `pipeline.go:181` is likewise shared with the L7 path. `cmd/cpg/mcp_audit_test.go` untouched (SEC-01); full `go build`/`go vet`/`go test -count=1 -race` green.
+
 ## Info
 
 ### IN-01: pkg/flowsource documentation not updated for the widened contract
