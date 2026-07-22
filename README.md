@@ -605,6 +605,20 @@ Kubeconfigs authenticating via an `exec` plugin — `aws eks get-token`, `gke-gc
 
 One capture session at a time — `start_session` returns an error if a session is already running. A stopped session isn't discarded: `get_status` and `stop_session` keep returning its final state, and the query tools keep serving its artifacts, until the next `start_session` call or the server process exits.
 
+## Agent tooling
+
+Repo-local Claude Code skills and agent under `.claude/` route an LLM operator through cpg-specific workflows on top of `cpg mcp`'s tool surface. Skills name workflow steps and tool names only — argument schemas and result shapes are always discovered live via `tools/list`, never restated in skill prose.
+
+| Skill | Purpose |
+|-------|---------|
+| `cpg-triage` | Drive a live MCP session end-to-end: start capture, classify dropped flows, present each generated policy with its evidence, recommend what to apply. |
+| `cpg-audit-onboard` | Guide onboarding a new namespace: bootstrap and audit-window (human-run CLI), drive capture via MCP, end with the human applying policy. |
+| `cpg-policy-review` | Audit already-generated policies offline via `cpg explain` and evidence — over-broad rules, L7 anchoring, DNS-53 companions, dedup. |
+| `cpg-health-report` | Turn a session's `cluster-health.json` into a self-contained HTML report of infra drops by node/workload with remediation links. |
+| `cpg-mcp-smoke` | Post-release smoke test of a tagged binary's MCP server against the fake-relay e2e harness. |
+
+`cpg-operator` (`.claude/agents/cpg-operator.md`) is the single repo-local agent that drives live MCP session lifecycles on behalf of `cpg-triage` and `cpg-audit-onboard` — it is not invoked directly.
+
 ## Label selection
 
 Labels are chosen with a priority hierarchy:
