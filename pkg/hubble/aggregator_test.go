@@ -684,6 +684,62 @@ func TestAggregatorPolicyFlowPassthrough(t *testing.T) {
 	assert.Equal(t, uint64(0), agg.InfraDropTotal())
 }
 
+// TestAggregator_ClassifiesAuditWhenEnabled verifies that an AUDIT-verdict
+// flow with an Infra-class DropReasonDesc is suppressed from CNP generation
+// exactly like the DROPPED equivalent in TestAggregatorClassificationSuppression,
+// when includeAudit is enabled.
+func TestAggregator_ClassifiesAuditWhenEnabled(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+	agg.SetIncludeAudit(true)
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+
+	auditFlow := makeInfraFlow(flowpb.DropReason_CT_MAP_INSERTION_FAILED)
+	auditFlow.Verdict = flowpb.Verdict_AUDIT
+
+	in <- auditFlow
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out, nil))
+
+	events := drainEvents(out)
+	assert.Empty(t, events, "AUDIT infra flow must not produce PolicyEvent when includeAudit=true")
+	assert.Equal(t, uint64(1), agg.FlowsSeen(), "AUDIT infra flow must count toward flowsSeen")
+	assert.Equal(t, uint64(1), agg.InfraDropTotal(), "infraDrops must be 1 when includeAudit=true")
+	drops := agg.InfraDrops()
+	assert.Equal(t, uint64(1), drops[flowpb.DropReason_CT_MAP_INSERTION_FAILED])
+}
+
+// TestAggregator_AuditNotClassifiedWhenDisabled verifies that the same
+// AUDIT-verdict Infra-class flow is NOT suppressed when includeAudit is left
+// at its default (false) — it falls through to bucketing/policy generation,
+// byte-identical to pre-v1.6 behavior for a non-DROPPED verdict.
+func TestAggregator_AuditNotClassifiedWhenDisabled(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	tracker := NewUnhandledTracker(logger)
+	agg := NewAggregator(time.Hour, logger, tracker)
+	// SetIncludeAudit intentionally NOT called — default false.
+
+	in := make(chan *flowpb.Flow, 10)
+	out := make(chan policy.PolicyEvent, 10)
+
+	auditFlow := makeInfraFlow(flowpb.DropReason_CT_MAP_INSERTION_FAILED)
+	auditFlow.Verdict = flowpb.Verdict_AUDIT
+
+	in <- auditFlow
+	close(in)
+
+	require.NoError(t, agg.Run(context.Background(), in, out, nil))
+
+	events := drainEvents(out)
+	assert.Len(t, events, 1, "AUDIT flow must fall through to bucketing/policy generation when includeAudit=false")
+	assert.Equal(t, uint64(1), agg.FlowsSeen())
+	assert.Equal(t, uint64(0), agg.InfraDropTotal(), "AUDIT flow must NOT be classified as infra when includeAudit=false")
+}
+
 // TestAggregatorFlowsSeenInvariant verifies Pitfall 6: 5 policy + 3 infra flows
 // yields flowsSeen=8, infraDrops=3, and exactly 5 CNP buckets.
 func TestAggregatorFlowsSeenInvariant(t *testing.T) {
