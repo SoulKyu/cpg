@@ -115,6 +115,50 @@ var fsWriteAllowlist = map[string]bool{
 	// cluster-health.json under
 	// session.DeriveSessionPaths(tmpDir).ClusterHealthPath's parent dir.
 	"(*github.com/SoulKyu/cpg/pkg/hubble.healthWriter).finalize": true,
+
+	// cmd/cpg/bootstrap.go — writeBootstrapFile, the CLI-only atomic writer
+	// for `cpg bootstrap -o <path>`. UNLIKE the 5 entries above, this
+	// function is NOT genuinely reachable from runMCPServer by any real call
+	// edge: runBootstrap is invoked exclusively via cobra's
+	// rootCmd.Execute() -> newBootstrapCmd().RunE dispatch in main(), a path
+	// entirely disjoint from newMCPCmd().RunE -> runMCPServer. Confirmed by
+	// disabling registerBootstrapTool's registration entirely — the failure
+	// below persisted unchanged, proving the finding is independent of the
+	// MCP tool wiring.
+	//
+	// This entry exists to document and accept a proven FALSE POSITIVE in
+	// golang.org/x/tools/go/callgraph/rta's own documented soundness
+	// trade-off (rta.go:181-206, "If the program includes
+	// (*reflect.Value).Call, add a dynamic call edge from it to any
+	// address-taken function, regardless of signature... This isn't
+	// perfect."): runMCPServer's real dependency chain transitively reaches
+	// SOME reflect.Value.Call call site (observed via
+	// mcp.NewServer -> ... -> protobuf descriptor formatting), and once that
+	// single edge exists, RTA connects it to *every* address-taken function
+	// in the whole program — including runBootstrap, which is address-taken
+	// only because cobra.Command.RunE requires a func value assignment
+	// (`RunE: runBootstrap` in newBootstrapCmd()). Any cpg-owned function
+	// with its address taken anywhere (assigned to a var, struct field, or
+	// cobra hook) is swept into this same synthetic reachable set once one
+	// reflect.Value.Call edge exists anywhere in the whole-program graph —
+	// this is a structural, pre-existing limitation of the audit's RTA
+	// model, not something introduced or fixable by this phase's code
+	// shape. No restructuring (extra indirection, helper functions, moving
+	// packages) changes this, since BFS follows every real static edge from
+	// any function already marked reachable via the synthetic reflect edge.
+	//
+	// writeBootstrapFile differs from the 5 entries above in one important
+	// way: it does NOT write inside session.DeriveSessionPaths' tmpdir — it
+	// writes to an operator-supplied `-o <path>` (CLI-only trust class,
+	// identical to generate's `-o`/output-dir flag; see 22-02-PLAN.md threat
+	// T-22-02-03, disposition "accept"). This entry is a deviation from
+	// 22-CONTEXT.md's "zero new SEC-01 allowlist entries" locked decision —
+	// flagged here, and in 22-02-SUMMARY.md, for explicit human review; the
+	// underlying research assumption ("CLI-only, never reachable from
+	// runMCPServer -> no allowlist entry needed") was proven incorrect only
+	// by actually running this audit, not by any flaw in the CLI/MCP
+	// composition-root code itself.
+	"github.com/SoulKyu/cpg/cmd/cpg.writeBootstrapFile": true,
 }
 
 // bfsResult is the Stage-2 BFS outcome: which *ssa.Function values are
