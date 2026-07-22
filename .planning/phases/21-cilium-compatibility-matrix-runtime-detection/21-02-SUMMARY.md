@@ -119,3 +119,14 @@ None — no external service configuration required. Documentation + one pure-Go
 - COMPAT-01 and COMPAT-03 are fully shipped and regression-locked. No code behavior changed in this plan (documentation + test only), so 21-01 (runtime detection, COMPAT-02) can proceed independently — this plan's `pkg/k8s/` project-structure line update ("version detection") is purely descriptive and creates no code dependency.
 - The new golden test lives in `cmd/cpg` (`package main`), same package 21-01's `cmd/cpg/generate.go`/`replay.go` changes will touch — no conflict expected since `readme_compat_test.go` is a self-contained new file with no shared symbols.
 - No blockers for 21-03/21-04.
+
+## Self-Check: PASSED
+
+- FOUND: README.md
+- FOUND: cmd/cpg/readme_compat_test.go
+- FOUND: .planning/phases/21-cilium-compatibility-matrix-runtime-detection/21-02-SUMMARY.md
+- FOUND commit: 35d33f7 (Task 1)
+- FOUND commit: 1e90a54 (Task 2)
+- FOUND commit: 2f7eecb (Rule 2 deviation)
+- FOUND commit: 77983ea (this SUMMARY)
+- Re-ran `rtk proxy go test ./cmd/cpg/... -run TestReadmeCompatSection -count=1` — green.
