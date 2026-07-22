@@ -411,7 +411,7 @@ func maybeRunVersionPreflight(ctx context.Context, kubeConfig *rest.Config, logg
 | A3 | Placing the new "Supported Cilium versions" README section immediately after "Install" (before "Quick start") is the best location | Common Pitfalls (Pitfall 7) | LOW — purely a documentation-structure preference; any placement satisfies COMPAT-01's literal requirement |
 | A4 | Pod `.status.containerStatuses[].image`/`.imageID` losing the tag (digest-normalized) generalizes across container runtimes beyond the one live-verified this session | Common Pitfalls (Pitfall 2) | LOW-MEDIUM — this is standard, widely-documented containerd/CRI behavior, but was only directly observed on one cluster/runtime this session; if a target runtime behaves differently, the recommendation to prefer `.spec` over `.status` still holds regardless (spec always preserves the tag as requested) |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Which pods count toward "the cluster's version" for gating purposes — all cilium-agent pods cluster-wide, or only those on nodes hosting the target session's namespace(s)?**
    - What we know: both `GetNodes()` and a cluster-wide pod list return cluster-wide info by default; namespace-scoping to "only relevant nodes" would require an extra Pod→Node join (list target-namespace pods, extract `.spec.nodeName`, cross-reference against cilium-agent pods on those specific nodes).
