@@ -568,6 +568,7 @@ Disable capture with `--no-evidence`. Tune retention per rule with `--evidence-s
 | `get_policy` | Full CiliumNetworkPolicy YAML plus metadata for one namespace/workload pair (discover pairs via `list_policies`). |
 | `get_evidence` | Paginated per-rule flow evidence for one policy, byte-identical in shape to `cpg explain --json`. |
 | `get_cluster_health` | The session's finalized cluster-health report: per-drop-reason counts by node/workload, plus Cilium-docs remediation URLs. |
+| `get_bootstrap_policy` | A namespaced default-deny CiliumNetworkPolicy as YAML (same artifact as `cpg bootstrap`), returned as read-only tool content with the detected Cilium version and compat verdict — no filesystem writes. |
 
 ### Harness configuration
 

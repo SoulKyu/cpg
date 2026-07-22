@@ -22,16 +22,16 @@ Requirements for this milestone. Each maps to roadmap phases.
 - [x] **SKL-02**: `cpg-audit-onboard` skill guides/drives the full onboarding workflow: bootstrap → audit window → `include_audit` capture → enforce checklist
 - [x] **SKL-03**: `cpg-policy-review` skill audits generated CNPs offline (over-broad rules, L7 anchoring, missing DNS-53 companions, dedup sanity) via `cpg explain` + evidence
 - [x] **SKL-04**: `cpg-health-report` skill turns `cluster-health.json` into an HTML report of infra drops by node/workload with Cilium remediation links
-- [x] **SKL-05**: `cpg-mcp-smoke` skill runs a post-release smoke of the tagged binary against the e2e fake relay: 8-tool handshake + full session lifecycle
+- [x] **SKL-05**: `cpg-mcp-smoke` skill runs a post-release smoke of the tagged binary against the e2e fake relay: full 9-tool handshake (8 at requirement-writing time; `get_bootstrap_policy` added in Phase 22) + full session lifecycle
 - [x] **SKL-06**: `cpg-operator` subagent (single repo-local agent driving MCP sessions) is used by `cpg-triage`/`cpg-audit-onboard` instead of per-skill agents
 
 All SKL artifacts live in this repo (`.claude/skills/cpg-*/SKILL.md`, `.claude/agents/cpg-operator.md`), are written as workflow routers pointing at live `tools/list` discovery (never a third copy of tool semantics), and carry a consistency tripwire tying skill/README prose back to the Go `Description:` strings.
 
 ### Cilium Compatibility
 
-- [ ] **COMPAT-01**: README "Supported Cilium versions" section declares one documented floor + a per-feature table using the PR-verified numbers (`cilium-dbg` rename = 1.15, `enableDefaultDeny` = 1.16, `proxy-visibility` removed = 1.17), with the same merged-PR + release-tag verification completed for the remaining unpinned entries (`Verdict_AUDIT`/`PolicyVerdictNotify` vintage, observer gRPC API window)
-- [ ] **COMPAT-02**: cpg detects the cluster's Cilium version at connect (source-of-truth: Hubble `ServerStatus`/`GetNodes` vs DaemonSet image tag — decided during phase planning), warns-and-proceeds below floor naming the affected features (never aborts, stays privilege-neutral — no `pods/exec`), gates version-dependent behavior (bootstrap CNP form, `cilium-dbg` vs `cilium`), and surfaces version + compat verdict via MCP
-- [ ] **COMPAT-03**: README's proxy-visibility L7 section is corrected to state the ≤ 1.16 boundary explicitly (mechanism removed from the agent at 1.17) — fixes a live, shipped doc bug claiming support through 1.19
+- [x] **COMPAT-01**: README "Supported Cilium versions" section declares one documented floor + a per-feature table using the PR-verified numbers (`cilium-dbg` rename = 1.15, `enableDefaultDeny` = 1.16, `proxy-visibility` removed = 1.17), with the same merged-PR + release-tag verification completed for the remaining unpinned entries (`Verdict_AUDIT`/`PolicyVerdictNotify` vintage, observer gRPC API window)
+- [x] **COMPAT-02**: cpg detects the cluster's Cilium version at connect (source-of-truth: Hubble `ServerStatus`/`GetNodes` vs DaemonSet image tag — decided during phase planning), warns-and-proceeds below floor naming the affected features (never aborts, stays privilege-neutral — no `pods/exec`), gates version-dependent behavior (bootstrap CNP form, `cilium-dbg` vs `cilium`), and surfaces version + compat verdict via MCP
+- [x] **COMPAT-03**: README's proxy-visibility L7 section is corrected to state the ≤ 1.16 boundary explicitly (mechanism removed from the agent at 1.17) — fixes a live, shipped doc bug claiming support through 1.19
 
 ## Future Requirements
 
