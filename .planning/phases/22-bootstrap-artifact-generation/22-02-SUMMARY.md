@@ -129,6 +129,8 @@ Each task was committed atomically:
 ## Issues Encountered
 See Deviations above — the `fsWriteAllowlist` addition is the one item that should get explicit sign-off during the next review pass (`/gsd-verify-work` or manual code review) given it contradicts a locked CONTEXT.md decision.
 
+**ORCHESTRATOR RESOLUTION (post-merge):** Deviation 3 was resolved by removing the `-o` flag and `writeBootstrapFile` entirely — `cpg bootstrap` is now stdout-only (shell redirection covers the file case). The `fsWriteAllowlist` entry was deleted; the allowlist is back to its five genuinely-reachable entries and the "zero new SEC-01 allowlist entries" criterion holds structurally, not by documented exception. Full suite re-verified green including `TestMCPAuditReadonlyReachability`. See commit `fix(22-02): make cpg bootstrap stdout-only, restoring zero new SEC-01 allowlist entries`.
+
 ## Next Phase Readiness
 - `pkg/policy.BuildBootstrapPolicy` is now reachable from both required interfaces (AUD-02 criteria 1, 2, 4 satisfied).
 - AUD-02 criterion 3 (the runbook) was already delivered in 22-03 (already merged into master prior to this plan).

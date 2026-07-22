@@ -16,7 +16,7 @@ Operators can generate a namespaced default-deny bootstrap artifact (`cpg bootst
 
 ### CLI Command Surface
 - New top-level command `cpg bootstrap` via `newBootstrapCmd()` registered in `cmd/cpg/main.go` alongside generate/replay/explain/mcp (matches roadmap literal `cpg bootstrap -n <ns>`).
-- Output to stdout by default (pipe-friendly: `cpg bootstrap -n ns | kubectl apply -f -`); optional `-o/--output <file>` reusing the existing `pkg/output` atomic writer — same UX as generate.
+- Output to stdout ONLY (pipe-friendly: `cpg bootstrap -n ns | kubectl apply -f -`; file via shell redirection). **Post-execution revision:** the originally planned optional `-o/--output` was removed by the orchestrator — any fs-write function reachable from a cobra RunE target is swept into the SEC-01 RTA audit by the documented `reflect.Value.Call` over-approximation, which would force a false-positive `fsWriteAllowlist` entry and violate the "zero new allowlist entries" ROADMAP criterion. Stdout-only keeps the criterion structurally true; `-o` was speculative convenience with a full shell-redirection substitute.
 - `-n/--namespace` is required with no default; refuse to run without it. The artifact is namespaced by definition — no cluster-wide variant exists on any code path.
 - Single namespace per invocation. Multi-namespace loops are the operator's shell's job (YAGNI).
 

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -28,22 +27,24 @@ func newBootstrapCmd() *cobra.Command {
 		Use:   "bootstrap",
 		Short: "Generate a namespaced default-deny bootstrap CiliumNetworkPolicy",
 		Long: `Emit a namespaced default-deny CiliumNetworkPolicy (enableDefaultDeny +
-explicit ingress/egress presence, cilium/cilium#35558-safe) to stdout or a
-file. Detects the cluster's Cilium version and hard-refuses when a
-determined version is below the enableDefaultDeny floor (>= 1.16); proceeds
-with a warning when the version cannot be determined.
+explicit ingress/egress presence, cilium/cilium#35558-safe) to stdout.
+Detects the cluster's Cilium version and hard-refuses when a determined
+version is below the enableDefaultDeny floor (>= 1.16); proceeds with a
+warning when the version cannot be determined.
 
 Examples:
   # Print the bootstrap policy for namespace "production" to stdout
   cpg bootstrap -n production
 
-  # Write it to a file instead
-  cpg bootstrap -n production -o default-deny-production.yaml`,
+  # Save it to a file
+  cpg bootstrap -n production > default-deny-production.yaml
+
+  # Apply it directly
+  cpg bootstrap -n production | kubectl apply -f -`,
 		Args: cobra.NoArgs,
 		RunE: runBootstrap,
 	}
 	cmd.Flags().StringP("namespace", "n", "", "target namespace (required)")
-	cmd.Flags().StringP("output", "o", "", "write to file instead of stdout")
 	_ = cmd.MarkFlagRequired("namespace")
 	return cmd
 }
@@ -113,10 +114,6 @@ func runBootstrap(cmd *cobra.Command, _ []string) error {
 	if namespace == "" {
 		return fmt.Errorf("--namespace is required")
 	}
-	outputPath, err := cmd.Flags().GetString("output")
-	if err != nil {
-		return err
-	}
 
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -136,42 +133,11 @@ func runBootstrap(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("marshaling bootstrap policy: %w", err)
 	}
 
-	if outputPath == "" {
-		fmt.Println(string(data))
-		return nil
-	}
-	return writeBootstrapFile(outputPath, data)
-}
-
-// writeBootstrapFile atomically writes data to path via a
-// CreateTemp+Write+Chmod(0644)+Rename sequence, mirroring
-// pkg/output/writer.go's shape (a 4th bespoke atomic-write block matches
-// repo convention — 22-RESEARCH Alternatives Considered). CLI-only: never
-// reachable from runMCPServer, so this introduces no SEC-01 fsWriteAllowlist
-// entry.
-func writeBootstrapFile(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return fmt.Errorf("creating temp file: %w", err)
-	}
-	tmpPath := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("writing temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("closing temp file: %w", err)
-	}
-	if err := os.Chmod(tmpPath, 0644); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("setting temp file permissions: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("atomic rename: %w", err)
-	}
+	// ponytail: stdout-only — no -o flag, no file write path anywhere in this
+	// command. A file write here would force an fsWriteAllowlist entry in the
+	// SEC-01 audit (RTA's reflect.Value.Call edge sweeps every address-taken
+	// function, including cobra RunE targets); shell redirection covers the
+	// file use case with zero write call sites.
+	fmt.Fprintln(cmd.OutOrStdout(), string(data))
 	return nil
 }
