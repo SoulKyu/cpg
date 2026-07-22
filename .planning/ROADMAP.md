@@ -301,7 +301,12 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
   4. SEC-01's structural proof honestly covers both modes: the default (flag-off) build/state keeps the existing zero-write-verbs guarantee completely unchanged; the mutation mode's reachable calls are provably confined to the expected entry point
   5. README states "readonly by default; scoped, lifecycle-bound mutations behind an explicit launch flag" — no longer "readonly, period"
 
-**Plans**: TBD
+**Plans**: 4 plans across 3 waves (CLI-only surface, Variant B; zero MCP surface change)
+
+- [ ] 23-01-PLAN.md (wave 1) — pkg/k8s exec plumbing: SPDY pods/exec, node→agent-pod mapping, read-before-flip, canonical flip, daemon-wide precondition read (AUD-03)
+- [ ] 23-02-PLAN.md (wave 2) — pkg/auditwindow.Manager: Open/Close/Shutdown state machine, UID-keyed revert-only-ours, SESS-05 bounded fan-out, new-endpoint watcher (AUD-03)
+- [ ] 23-03-PLAN.md (wave 3) — cpg audit-window cobra command (foreground, signal-bound, always-bounded TTL) + SEC-01 tripwire TestAuditWindowNotReachableFromMCP via Edge.Site==nil filter (AUD-03, AUD-04)
+- [ ] 23-04-PLAN.md (wave 3) — README readonly-by-default + audit-window exclusive RBAC; runbook wires real command + honest race; golden pins (AUD-03, criterion 5)
 
 ### Phase 24: cpg-Dedicated Skills & Agent Tooling
 
