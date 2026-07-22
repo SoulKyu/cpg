@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Audit-Mode Onboarding & cpg-Dedicated Agent Tooling
 status: executing
-last_updated: "2026-07-22T12:11:59.071Z"
-last_activity: 2026-07-22 -- Phase 22 planned
+last_updated: "2026-07-22T14:34:40.873Z"
+last_activity: 2026-07-22
 progress:
   total_phases: 9
-  completed_phases: 6
-  total_plans: 8
-  completed_plans: 4
-  percent: 67
+  completed_phases: 2
+  total_plans: 11
+  completed_plans: 9
+  percent: 22
 ---
 
 # Project State
@@ -25,11 +25,11 @@ See: .planning/PROJECT.md (updated 2026-07-22)
 ## Current Position
 
 Phase: 22 (bootstrap-artifact-generation) — PLANNED
-Plan: 0 of 3
-Status: Phase 22 planned (3 plans, 2 waves) — ready to execute
-Last activity: 2026-07-22 -- Phase 21 complete (review+fix); Phase 22 planned
+Plan: 1 of 3
+Status: Ready to execute
+Last activity: 2026-07-22
 
-Progress: [██████░░░░] 67% (6/9 phases)
+Progress: [████████░░] 82%
 
 ## Performance Metrics
 
@@ -60,6 +60,7 @@ Progress: [██████░░░░] 67% (6/9 phases)
 | Phase 13-flags-and-exit-code P02 | 8 | 2 tasks | 5 files |
 | Phase 13-flags-and-exit-code P03 | 146 | 2 tasks | 4 files |
 | Phase 17 P08 | ~13min | 2 tasks | 3 files |
+| Phase 22 P01 | 15min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -90,6 +91,7 @@ Decisions logged in PROJECT.md Key Decisions table.
 - [v1.6 roadmap]: Phase 21 (COMPAT-01/02/03) sequenced before Phase 22 (AUD-02) on ARCHITECTURE.md's technical-dependency read — AUD-02 needs COMPAT-02's version capability gate for correct `enableDefaultDeny` emission; overrides FEATURES.md's priority-tier grouping, which had no code-level blocker forcing a later placement
 - [v1.6 roadmap]: Phase 23 (AUD-03/AUD-04) cannot be planned at file-level detail until `/gsd-discuss-phase` resolves (a) the surface decision — MCP flag-gated session property vs. CLI-only command — and (b), if MCP wins, the SEC-01 two-mode mechanism (build-tag split vs. path-scoped reachability assertion); both must land as recorded PROJECT.md Key Decisions before any audit-window mutation code is written
 - [v1.6 roadmap]: Research's 5-phase proposal adopted as-is (coarse granularity, 3-5 typical) — Phases 20/21 kept independent/parallelizable per both ARCHITECTURE.md and FEATURES.md; Phase 24 (SKL-01..06) sequenced last though most skills have no technical dependency forcing that position (scheduling flexibility noted, not a fixed constraint)
+- [Phase 22-bootstrap-artifact-generation]: Bootstrap CNP builder uses one-element-empty-rule form (from 22-RESEARCH.md verified Code Examples), not 22-PATTERNS.md's non-compiling sketch
 
 ### Pending Todos
 
@@ -121,7 +123,7 @@ Items acknowledged and deferred at milestone close on 2026-07-20 (v1.4); re-ackn
 
 ## Session Continuity
 
-Last session: 2026-07-22T09:30:00.000Z
+Last session: 2026-07-22T14:33:49.898Z
 Stopped at: ROADMAP.md and STATE.md written for v1.6 Audit-Mode Onboarding & cpg-Dedicated Agent Tooling — Phases 20-24 created, 13/13 requirements mapped, REQUIREMENTS.md traceability updated
 Resume: `/gsd-plan-phase 20` — plan `--include-audit` Verdict Ingestion (AUD-01)
 

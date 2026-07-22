@@ -65,7 +65,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | AUD-01 | Phase 20 | Complete |
-| AUD-02 | Phase 22 | Pending |
+| AUD-02 | Phase 22 | In Progress (c1 done via 22-01, c2-c5 pending 22-02/22-03) |
 | AUD-03 | Phase 23 | Pending |
 | AUD-04 | Phase 23 | Pending |
 | SKL-01 | Phase 24 | Pending |

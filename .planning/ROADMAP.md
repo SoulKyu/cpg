@@ -279,7 +279,7 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 
 **Wave 1** *(parallel -- zero file overlap)*
 
-- [ ] 22-01-PLAN.md -- `pkg/policy.BuildBootstrapPolicy` + named cilium#35558 Sanitize()/marshal acceptance test (AUD-02 criterion 1)
+- [x] 22-01-PLAN.md -- `pkg/policy.BuildBootstrapPolicy` + named cilium#35558 Sanitize()/marshal acceptance test (AUD-02 criterion 1)
 - [ ] 22-03-PLAN.md -- `docs/bootstrap-runbook.md` (verdict-driven phase order, first-lines daemon-wide-audit warning, `--include-audit` capture) + README cross-reference + golden tests (AUD-02 criteria 3, 5)
 
 **Wave 2** *(blocked on 22-01)*
@@ -343,7 +343,7 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 | 19. Security Hardening & End-to-End Validation | v1.5 | 4/4 | Complete    | 2026-07-21 |
 | 20. `--include-audit` Verdict Ingestion | v1.6 | 4/4 | Complete    | 2026-07-22 |
 | 21. Cilium Compatibility Matrix + Runtime Detection | v1.6 | 4/4 | Complete   | 2026-07-22 |
-| 22. Bootstrap Artifact Generation | v1.6 | 0/TBD | Not started | - |
+| 22. Bootstrap Artifact Generation | v1.6 | 1/3 | In Progress | - |
 | 23. Managed Audit Window + SEC-01 Evolution | v1.6 | 0/TBD | Not started | - |
 | 24. cpg-Dedicated Skills & Agent Tooling | v1.6 | 0/TBD | Not started | - |
 
