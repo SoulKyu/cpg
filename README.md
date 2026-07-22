@@ -61,6 +61,24 @@ When installed via krew, use `kubectl cilium-policy-gen` instead of `cpg`. Same 
 
 Requires Go 1.25+ for source builds.
 
+## Supported Cilium versions
+
+cpg targets **Cilium >= 1.14**. Clusters below that floor are detected at
+connect time and logged as a warning -- never blocked, so reduced-RBAC and
+CI service accounts still get a working (if unverified) run.
+
+Individual capabilities carry their own, higher floors:
+
+| Feature | Cilium version | Notes |
+|---------|-----------------|-------|
+| Baseline cpg operation | >= 1.14 | Declared floor -- the lowest version any shipped code path assumes |
+| `PolicyVerdictNotify` audit-action bit | >= 1.8 | PR [#11843](https://github.com/cilium/cilium/pull/11843) |
+| `Verdict_AUDIT` via the Hubble flow API (`--include-audit`) | >= 1.10 | PR [#14785](https://github.com/cilium/cilium/pull/14785) / [#14923](https://github.com/cilium/cilium/pull/14923) |
+| `cilium-dbg` binary naming (was `cilium`) | >= 1.15 | PR [#28085](https://github.com/cilium/cilium/pull/28085) |
+| `enableDefaultDeny` CNP field | >= 1.16 | PR [#30572](https://github.com/cilium/cilium/pull/30572) |
+| `policy.cilium.io/proxy-visibility` annotation | <= 1.16 | Removed from the agent runtime at 1.17 -- PR [#35019](https://github.com/cilium/cilium/pull/35019) |
+| Observer `GetNodes()` RPC / `version` field | >= 1.10 | PR [#13979](https://github.com/cilium/cilium/pull/13979) |
+
 ## Quick start
 
 ```bash
@@ -284,17 +302,18 @@ matters:
 ### Three ways to enable L7 visibility
 
 1. **Recommended for ad-hoc bootstrap — proxy-visibility annotation.**
-   The legacy but still widely supported (Cilium ≤ 1.19) workload-level
-   annotation that triggers Envoy / DNS proxy redirection without
-   enforcing rules:
+   The legacy workload-level annotation that triggers Envoy / DNS proxy
+   redirection without enforcing rules. Works only through **Cilium 1.16**
+   -- removed from the agent runtime at **1.17** (a no-op on 1.17+). See
+   the **Supported Cilium versions** table above for the full matrix:
 
    ```bash
    kubectl annotate pod -n <ns> -l app.kubernetes.io/name=<workload> \
      policy.cilium.io/proxy-visibility='<Egress/53/UDP/DNS>,<Ingress/8080/TCP/HTTP>'
    ```
 
-   Easy to apply, easy to remove. Marked deprecated upstream — track its
-   deprecation if you build long-term tooling on it.
+   Easy to apply, easy to remove -- on clusters where it still works
+   (<= 1.16). Marked deprecated upstream before removal.
 
 2. **Recommended for permanent enforcement — bootstrap L7 CNP.** Ship
    a starter CiliumNetworkPolicy with a permissive L7 rule. The mere
@@ -619,7 +638,7 @@ pkg/labels/        Label selection, denylist, endpoint/peer selector builders
 pkg/policy/        Flow-to-CiliumNetworkPolicy builder, merge, semantic dedup, attribution
 pkg/output/        Directory-organized YAML writer with merge-on-write
 pkg/hubble/        Live gRPC client, aggregator, pipeline orchestration
-pkg/k8s/           Kubeconfig loading, port-forward, cluster policy fetching
+pkg/k8s/           Kubeconfig loading, port-forward, cluster policy fetching, version detection
 pkg/flowsource/    Flow stream abstraction: live gRPC or jsonpb file source
 pkg/evidence/      Per-rule flow attribution (cpg explain)
 pkg/diff/          Unified YAML diff (cpg generate/replay --dry-run)
