@@ -1,232 +1,170 @@
 ---
 phase: 23-managed-audit-window-sec-01-evolution
-reviewed: 2026-07-22T17:12:26Z
+reviewed: 2026-07-22T19:40:00Z
 depth: standard
-files_reviewed: 13
+iteration: 2
+files_reviewed: 5
 files_reviewed_list:
-  - pkg/k8s/exec.go
-  - pkg/k8s/exec_test.go
   - pkg/auditwindow/manager.go
-  - pkg/auditwindow/manager_test.go
   - cmd/cpg/audit_window.go
   - cmd/cpg/audit_window_test.go
-  - cmd/cpg/main.go
   - cmd/cpg/mcp_audit_test.go
-  - cmd/cpg/audit_docs_test.go
-  - README.md
-  - docs/bootstrap-runbook.md
+  - pkg/auditwindow/manager_test.go
 findings:
-  critical: 2
-  warning: 3
-  info: 2
-  total: 7
+  critical: 0
+  warning: 1
+  info: 3
+  total: 4
 status: issues_found
 ---
 
-# Phase 23: Code Review Report
+# Phase 23: Code Review Report (Iteration 2)
 
-**Reviewed:** 2026-07-22T17:12:26Z
-**Depth:** standard
-**Files Reviewed:** 13
-**Status:** issues_found
+**Reviewed:** 2026-07-22T19:40:00Z
+**Depth:** standard (focused fix-verification re-review)
+**Files Reviewed:** 5
+**Status:** issues_found (all 5 prior findings closed; 1 new warning + 3 info)
 
 ## Summary
 
-Phase 23 introduces `cpg audit-window`, cpg's first and only mutating command:
-a foreground, TTL-bounded per-endpoint `PolicyAuditMode` window backed by a
-`pkg/auditwindow.Manager` state machine and a new `pkg/k8s` SPDY-exec surface.
-The SEC-01 structural tripwire is evolved with `TestAuditWindowNotReachableFromMCP`
-(Property 3, exec constructor reachability).
+Focused re-review of the Phase 23 fix commits `4d62126` (revert routing through
+bounded `Shutdown`) and `dc7f21c` (SEC-01 tripwire hardening) against diff base
+`4a9149a`. Build clean (`go build ./...`); full race suite green
+(`pkg/auditwindow` 1.2s, `cmd/cpg` 206.5s under `-race`, both whole-program
+SSA/RTA tripwire tests included).
 
-The phase invariants verified clean:
+**All five iteration-1 findings are verified closed:**
 
-- **Invariant 1 (byte-identical body):** `git diff` of `mcp_audit_test.go` shows
-  **zero deletions** — `TestMCPAuditReadonlyReachability` is untouched. PASS.
-- **Invariant 2 (zero MCP surface):** no diffs to `mcp.go` / `mcp_tools.go` /
-  `mcp_bootstrap.go` / `mcp_query*.go`; no new MCP tool. PASS.
-- **Invariant 6 (exec safety):** commands built as `[]string` argv into
-  `PodExecOptions.Command` (no shell, no injection surface); endpoint IDs via
-  `strconv.FormatInt`; container pinned to `ciliumAgentContainerName`; JSON array
-  parse of `endpoint get`; `CodeExitError` distinguished from transport error. PASS.
-- **Invariant 7 (TTL/ns):** `--ttl <= 0` clamped to default (never unbounded);
-  `validateBootstrapNamespace` (DNS-1123) reused. PASS.
-- **Invariant 8 (docs):** hyphenated `policy-audit-mode` confined to the runbook
-  warning block (lines 3, 10); README readonly claim pinned by
-  `TestReadmeAuditWindowSection`; RBAC step-up documented as exclusive to
-  audit-window. PASS.
-- **Invariant 9 (deps):** `go.mod` / `go.sum` unchanged. PASS.
-- Build clean (`go build ./...`).
+- **CR-01 (cancelled-context revert): CLOSED.** `runAuditWindow` no longer calls
+  `wm.Close(ctx)`. Both exit branches (signal + TTL) and the deferred cleanup route
+  through `wm.Shutdown()` (audit_window.go:143, 170), which runs the fan-out under
+  `context.Background()` (manager.go:446) — never the signal-bound ctx. Traced
+  `Shutdown → Close(context.Background()) → setFn(bg) → FindAgentPodForNode(bg)`: no
+  cancelled context reaches the revert. Pinned by
+  `TestManager_Shutdown_RevertsUnderNonCancelledContext` (asserts `ctx.Err()==nil`
+  at every revert after `rootCtx` cancel).
+- **CR-02 (unbounded wait): CLOSED.** The command path invokes only `Shutdown`,
+  which wraps `Close` in a goroutine + `select` on `time.After(deadline)`
+  (manager.go:444-462). No `wg.Wait()` is reachable from `runAuditWindow` without
+  the bound. `TestAuditWindow_TTLExpiryTriggersRevert` /
+  `TestAuditWindow_SignalPathRevertsViaBoundedShutdown` assert
+  `shutdownWasCalled && !closeWasCalled` on both branches;
+  `TestManager_Shutdown_WedgedExecDoesNotBlock` proves the bound holds under a
+  wedged `setFn`.
+- **WR-01 (watcher-flip snapshot leak): CLOSED.** `Shutdown` cancels the watcher
+  and bounded-drains `watchDone` (manager.go:419-434) *before* launching the
+  `Close` goroutine that snapshots `m.ours` (444-448). Cancel-before-snapshot
+  ordering holds; `TestManager_Shutdown_RevertsWatcherFlippedEndpoint` confirms a
+  watcher-recorded endpoint is swept. Residual leak is confined to the
+  wedged-watcher timeout branch (documented, bounded — same SESS-05 tradeoff).
+- **WR-02 (bare-`func()` prune hole): CLOSED for the flagged class.** `withAnonFuncs`
+  (mcp_audit_test.go:337-353) transitively re-includes lexically-nested closures
+  (`(*ssa.Function).AnonFuncs`) of every genuinely-reachable cpg-owned function, so
+  an exec constructor inside a `sync.Once.Do` / `defer` / `go` closure of an
+  MCP-reachable function is now scanned despite the pruned bare-`func()` edge. A
+  narrower residual remains (IN-03).
+- **WR-03 (no non-vacuity floor): CLOSED.** The negative half now floor-guards with
+  `require.Greater(len(genuineCpgOwnedFromMCP), 1)` and
+  `require.Contains(..., "…/pkg/session.NewManager")` (mcp_audit_test.go:597-600).
+  Verified `session.NewManager` is a direct static callee of `runMCPServer`
+  (cmd/cpg/mcp.go:94) — a genuine non-bare edge that survives `bfsFromRootGenuine`,
+  so an over-pruned BFS fails loudly instead of passing vacuously.
 
-However, the command-level revert path (Invariant 3) has two BLOCKER-class
-defects, both rooted in `runAuditWindow` calling `wm.Close(ctx)` directly with
-the signal-bound context instead of routing the revert through the bounded,
-background-context `Shutdown`. The SEC-01 tripwire evolution (Invariant 5) has a
-soundness hole in its new edge filter plus a missing non-vacuity floor on the
-negative half.
+**Invariant (byte-identical `TestMCPAuditReadonlyReachability`): CONFIRMED.**
+`git diff 4a9149a -- cmd/cpg/mcp_audit_test.go` shows three hunks, all pure
+insertions (`bfsFromRootGenuine`/`isBareFuncValueDispatch`, `withAnonFuncs`, and
+`TestAuditWindowNotReachableFromMCP`) landing between existing functions — zero
+deletions, nothing inside the protected function body changed.
 
-## Critical Issues
-
-### CR-01: Signal-path revert runs under a cancelled context and fails for every endpoint
-
-**File:** `cmd/cpg/audit_window.go:156-163`
-**Issue:** `runAuditWindow` reverts by calling `wm.Close(ctx)` where `ctx` is the
-`signal.NotifyContext` context. On the primary exit path — Ctrl+C / SIGTERM — the
-`select` fires precisely *because* `ctx` is already Done, and that same cancelled
-`ctx` is then passed straight into `Close`:
-
-```go
-select {
-case <-ctx.Done():
-    logger.Info("audit window: signal received, reverting")
-case <-ttlTimer.C:
-    ...
-}
-result, closeErr := wm.Close(ctx) // ctx is already cancelled on the signal branch
-```
-
-Inside `Manager.Close`, every revert calls `setFn(ctx, ...)` →
-`FindAgentPodForNode(ctx, ...)` → `clientset.Pods().List(ctx)`, which returns
-`context.Canceled` immediately for a cancelled context. So on SIGINT/SIGTERM the
-revert fails for **every** endpoint, leaving them all stuck in
-`PolicyAuditMode=Enabled` (not enforcing).
-
-The `Open`-spawned `<-rootCtx.Done() → Shutdown()` goroutine *does* use
-`context.Background()` (correct), but it races the direct `Close` through the
-shared `closeOnce`, and it is strictly slower to reach `Close` (it first cancels
-the watcher and bounded-waits for `watchDone`). The direct `Close(cancelledCtx)`
-therefore wins `closeOnce` in practice, so the background-context revert never
-runs. This breaks the headline "Ctrl+C reverts every flip" guarantee the README
-and runbook advertise. The unit tests miss it: `stubAuditWindowManager.Close`
-ignores its `ctx`, and `TestManager_*` only ever calls `Close(context.Background())`.
-
-**Fix:** Never revert under the signal context. Use a fresh, bounded context for
-the graceful revert (or route the revert through `Shutdown`, which already uses
-`context.Background()`):
-```go
-revertCtx, revertCancel := context.WithTimeout(context.Background(), auditWindowRevertBound)
-defer revertCancel()
-result, closeErr := wm.Close(revertCtx)
-```
-Add a command-level test that drives the signal path (cancel `cmd.Context()`) with
-a real Manager whose `setFn` asserts `ctx.Err() == nil` at revert time.
-
-### CR-02: Command-path revert via direct `Close` is unbounded — a wedged exec hangs the command forever
-
-**File:** `cmd/cpg/audit_window.go:163` (and `pkg/auditwindow/manager.go:355-400`)
-**Issue:** `Manager.Close` has no internal deadline: its fan-out ends in an
-unconditional `wg.Wait()` and it never `select`s on `ctx.Done()`. The only bounded
-protection lives in `Shutdown` (which wraps `Close` in a goroutine + `select`-on-
-`time.After(deadline)`). But `runAuditWindow` calls `wm.Close(ctx)` **directly**,
-bypassing that protection. On the TTL-expiry branch `ctx` is still live, so a
-wedged SPDY transport (`setFn` that never observes cancellation) makes
-`wm.Close(ctx)` block on `wg.Wait()` indefinitely — the deferred `wm.Shutdown()`
-never runs because control never returns from the direct `Close`. This is exactly
-the "wedged exec can never block process exit" failure mode the SESS-05 shape was
-built to prevent, reintroduced on the command's real code path.
-`TestManager_Shutdown_WedgedExecDoesNotBlock` only proves `Shutdown` is bounded —
-it never exercises the direct `Close` call `runAuditWindow` actually uses.
-
-**Fix:** Perform the command-level revert through the bounded `Shutdown` path
-(rather than a bare `Close`), or give `Close` its own internal bounded wait
-(`select { case <-doneFanOut: case <-time.After(bound): }`) so every caller — not
-just `Shutdown` — inherits the bound. Fixing CR-01 by routing through `Shutdown`
-resolves both CR-01 and CR-02 at once.
+One new honesty defect (WR-01 below) surfaced in the CR-02 fix's timeout branch,
+plus two carried-forward info findings and one new defense-in-depth note.
 
 ## Warnings
 
-### WR-01: TTL-path revert leak — endpoints flipped by the watcher after `Close` snapshots are never reverted
+### WR-01: `Shutdown` timeout branch returns an empty `RevertResult`, so the operator is never told which endpoints are stuck
 
-**File:** `cmd/cpg/audit_window.go:163`, `pkg/auditwindow/manager.go:356-363,410-418`
-**Issue:** On the TTL branch the watcher is still running when `wm.Close(ctx)` is
-called (only `Shutdown` cancels the watcher, and it runs later, via `defer`).
-`Close` snapshots `m.ours` under the mutex, then the deferred `Shutdown` cancels
-the watcher. Any endpoint the watcher flips in the window between the snapshot and
-the watcher-cancel is recorded in `m.ours` but is **never reverted**: `closeOnce`
-has already fired, so `Shutdown`'s second `Close` returns the cached summary
-without a second sweep. The leaked endpoint is left permanently in audit mode
-(not enforcing). The window is narrow, but the guarantee this package exists to
-encode is "every flip cpg made is reverted."
-**Fix:** Cancel/drain the watcher *before* snapshotting `m.ours` for the revert
-(i.e. stop the watcher, then Close). Routing the command revert through `Shutdown`
-(which cancels the watcher first) closes this race as a side effect.
-
-### WR-02: SEC-01 tripwire — the bare-`func()` edge filter can sever a genuine exec-carrying call chain (false-negative hole)
-
-**File:** `cmd/cpg/mcp_audit_test.go:210-253` (`bfsFromRootGenuine` /
-`isBareFuncValueDispatch`)
-**Issue:** `bfsFromRootGenuine` skips *any* BFS edge whose call site is an indirect
-dispatch through a zero-param/zero-result `func()` value. That shape is not unique
-to RTA's spurious `context.CancelFunc` sweep — it is also the exact signature of
-`sync.Once.Do(f func())`, `defer func(){...}()`, `go func(){...}()`, and any
-`context.CancelFunc`-typed field. Because the filter cuts the BFS at the **first**
-bare-`func()` edge, every function *downstream* of such an edge is dropped from the
-reachable set. The audit-window code itself routes its exec through exactly this
-shape: `Close` runs the `setFn`-bearing revert closure inside `closeOnce.Do(func(){...})`.
-Consequently, a future MCP path that reached `remotecommand.NewSPDYExecutor` only
-through a `sync.Once.Do`/`defer func(){}` cleanup closure would be silently excluded
-from the negative assertion — the precise class of leak this security-critical
-tripwire exists to catch. There is no live vulnerability today (MCP has no exec
-path at all), but the tripwire's soundness in its own guarded dimension is weakened.
-The positive half survives only because `readFn`'s non-bare signature
-(`func(context.Context, string, int64) (bool, error)`) happens to expose the exec
-chain — that is a fragile accident, not a guarantee.
-**Fix:** Do not blanket-skip bare-`func()` edges. Prefer filtering only the
-reflect-specific synthetic edges (nil `Site`, already handled) and, for the
-bare-`func()` case, additionally scan the callee closures' own bodies for the exec
-constructor (defense in depth) rather than pruning them from reachability. At
-minimum, document the accepted false-negative class explicitly and add a
-compensating direct-body scan of `sync.Once.Do` / `defer` closures reachable from
-`runMCPServer`.
-
-### WR-03: `TestAuditWindowNotReachableFromMCP` negative half has no non-vacuity floor
-
-**File:** `cmd/cpg/mcp_audit_test.go:540-554`
-**Issue:** The negative (security) half iterates `genuineCpgOwnedFromMCP` and asserts
-no member statically calls `NewSPDYExecutor` — but there is no assertion that this
-set is non-trivially populated. The positive half is floor-guarded
-(`require.True(foundExecCaller)`), and the sibling `TestMCPAuditReadonlyReachability`
-floor-checks its set (`require.Greater(len(cpgOwned), 1)` + `require.Contains(...Start)`).
-The new negative half — which uses the *filtered* `bfsFromRootGenuine` (see WR-02) —
-has neither. If the edge filter (or a future refactor) ever over-prunes MCP
-reachability to near-empty, this assertion passes vacuously and nobody notices,
-since Property 3 (exec constructor) is not covered by the unfiltered sibling test.
-**Fix:** Add a floor to the negative half, e.g.
-`require.Greater(t, len(genuineCpgOwnedFromMCP), 1)` plus a
-`require.Contains(symbolSet(...), <known-MCP-reachable cpg function>)` so an
-over-pruned/vacuous negative half fails loudly.
+**File:** `pkg/auditwindow/manager.go:456-461`, surfaced at `cmd/cpg/audit_window.go:170-178`
+**Issue:** On the bounded-deadline timeout branch, `Shutdown` returns
+`RevertResult{EndpointResults: map[types.UID]error{}}` — an empty map — to avoid
+racing `closeResult` while the wedged `Close` fan-out is still inside `wg.Wait()`.
+The CLI then ranges over that empty map (audit_window.go:171) and logs **nothing**
+per-endpoint. On a genuinely wedged transport `setFn` never returns, so it also
+never emits its own per-endpoint `Warn` (manager.go:386-388) — meaning on the exact
+failure this bound exists to survive, the operator gets **zero** machine-readable
+signal of which endpoints remain in `PolicyAuditMode=Enabled`. This contradicts the
+package's own stated contract (`RevertResult` doc / T-23-06: "a sweep that cannot
+name the endpoint it failed to revert is a non-starter") on the one path where
+naming the stuck endpoints matters most — the operator cannot know which endpoints
+to manually revert. The common (non-wedged) path is unaffected; this is a
+recoverability/repudiation gap on the timeout branch introduced by the CR-02 fix's
+empty-result choice.
+**Fix:** On the timeout branch, report the known-but-unconfirmed set instead of an
+empty map. `m.ours` is stable at that point (the watcher is already drained and
+`Close` only reads it into `recs`, never mutates it), so reading it under `m.mu` is
+race-free:
+```go
+case <-time.After(deadline):
+    m.logger.Warn("audit window: revert fan-out did not complete within the bounded deadline; some endpoints may still be in audit mode")
+    m.mu.Lock()
+    stuck := make(map[types.UID]error, len(m.ours))
+    for uid := range m.ours {
+        stuck[uid] = fmt.Errorf("revert outcome unknown: fan-out exceeded bounded deadline; verify PolicyAuditMode manually")
+    }
+    m.mu.Unlock()
+    return RevertResult{EndpointResults: stuck}
+```
+The CLI's existing per-endpoint loop then surfaces each UID an operator must check.
 
 ## Info
 
 ### IN-01: `Shutdown` revert deadline scales with endpoint count (`removeWait * N`)
 
-**File:** `pkg/auditwindow/manager.go:427-433`
+**File:** `pkg/auditwindow/manager.go:437-442` (carried forward from iteration 1, unchanged)
 **Issue:** `deadline := m.removeWait * time.Duration(n)` where `n = len(m.ours)`.
 The revert fan-out is fully concurrent (one goroutine per endpoint), so all reverts
-complete within ~one `removeWait` regardless of `n`. Multiplying by `n` makes the
+complete within ~one `removeWait` regardless of `n`. Multiplying by `n` lets the
 "bounded, can never block process exit" deadline grow linearly with namespace size:
-a namespace with hundreds/thousands of endpoints plus a single wedged transport
-blocks process exit for `removeWait * N` (minutes), contradicting the constant-bound
-intent the doc comment states.
+a namespace with hundreds of endpoints plus a single wedged transport can block
+process exit for `removeWait * N` (minutes), contradicting the constant-bound intent
+the doc comment states.
 **Fix:** Use a constant (or small fixed multiple of) `removeWait` for the fan-out
-deadline; the concurrency already makes per-endpoint cost non-additive.
+deadline; concurrency already makes per-endpoint cost non-additive.
 
 ### IN-02: `CheckDaemonAuditMode` doc comment contradicts the caller's actual handling
 
-**File:** `pkg/k8s/exec.go:190-207`, `pkg/auditwindow/manager.go:163-172`
+**File:** `pkg/k8s/exec.go` (unchanged this iteration), `pkg/auditwindow/manager.go:163-172` (carried forward)
 **Issue:** `CheckDaemonAuditMode`'s doc states non-forbidden errors are returned "so
-the caller can hard-refuse on a genuine read failure rather than silently proceeding."
-The sole caller, `Manager.Open`, does the opposite: on *any* `preconditionFn` error
-it warns and proceeds. This matches the phase's warn-and-proceed invariant (so the
-behavior is intended), but the stale comment could mislead a future maintainer into
-believing a genuine ConfigMap read failure blocks the window — it does not, so a
-transient read failure that masks an actually-active daemon-wide audit mode results
-in cpg opening a scoped window on top of it.
-**Fix:** Correct the comment to state that the sole caller treats all read errors
-as undetermined/warn-and-proceed, or make `Open` distinguish forbidden/undetermined
+the caller can hard-refuse on a genuine read failure rather than silently
+proceeding." The sole caller, `Manager.Open`, does the opposite: on *any*
+`preconditionFn` error it warns and proceeds (manager.go:166-168). This matches the
+phase's warn-and-proceed invariant, but the stale comment could mislead a future
+maintainer into believing a genuine ConfigMap read failure blocks the window — it
+does not, so a transient read failure that masks an actually-active daemon-wide
+audit mode results in cpg opening a scoped window on top of it.
+**Fix:** Correct the comment to state the sole caller treats all read errors as
+undetermined/warn-and-proceed, or make `Open` distinguish forbidden/undetermined
 (proceed) from a genuine read error (refuse) if hard-refusal is actually desired.
+
+### IN-03: WR-02 residual — a top-level (non-closure) bare-`func()` target still evades both the BFS and the `withAnonFuncs` scan
+
+**File:** `cmd/cpg/mcp_audit_test.go:210-240` (`bfsFromRootGenuine`), `337-353` (`withAnonFuncs`)
+**Issue:** `withAnonFuncs` compensates for the pruned bare-`func()` edge by scanning
+the *lexically-nested* closures of reachable functions — which closes the exact
+class WR-02 flagged (`once.Do`/`defer`/`go` closures). But it only walks
+`AnonFuncs` (lexical children). A **package-level** `func()` (zero-param/zero-result)
+that itself calls `remotecommand.NewSPDYExecutor` and is invoked *only* via a
+bare-`func()` value dispatch would be dropped by `bfsFromRootGenuine` (edge pruned)
+and is not an `AnonFunc` of any reachable function, so it is scanned by neither
+half. The shape is highly contrived (a top-level bare `func()` cannot capture the
+config/URL `NewSPDYExecutor` requires, so it would need package globals), and MCP
+has no exec path today — this is a defense-in-depth completeness note, not a live
+gap. The primary WR-02 hole (closures) is genuinely closed.
+**Fix:** Optional — document the accepted residual on `isBareFuncValueDispatch`, or
+additionally union in the RTA-resolved callees of pruned bare-`func()` sites that
+are themselves cpg-owned top-level functions.
 
 ---
 
-_Reviewed: 2026-07-22T17:12:26Z_
+_Reviewed: 2026-07-22T19:40:00Z_
 _Reviewer: Claude (gsd-code-reviewer)_
-_Depth: standard_
+_Depth: standard — iteration 2 (fix verification)_

@@ -81,11 +81,11 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 
 <!-- v1.6 scope. Detailed REQ-IDs in REQUIREMENTS.md. -->
 
-- [ ] Bootstrap default-deny CNP + audit-window runbook generation — AUD-02
-- [ ] Managed audit window with lifecycle-bound revert + TTL — AUD-03 (surface TBD in discuss-phase)
-- [ ] SEC-01 two-mode structural proof + README guarantee rewording — AUD-04
+- [x] Bootstrap default-deny CNP + audit-window runbook generation — AUD-02 (Phase 22)
+- [x] Managed audit window with lifecycle-bound revert + TTL — AUD-03 (Phase 23, CLI-only surface)
+- [x] SEC-01 evolution: proof byte-identical + tripwire, README readonly-by-default rewording — AUD-04 (Phase 23, Variant B — two-mode proof moot)
 - [ ] cpg-local skills/agents, repo-local only — SKL-01..05
-- [ ] Cilium compat: declared matrix + runtime detection — COMPAT-01..02
+- [x] Cilium compat: declared matrix + runtime detection — COMPAT-01..03 (Phase 21)
 
 ### Planned
 
@@ -143,7 +143,7 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| AUD-03 surface: CLI-only audit window (Variant B) — MCP stays pure-readonly | User decision at the Phase 23 gate (2026-07-22). Keeps SEC-01's zero-tolerance readonly proof literally unchanged (research Tension 4 evaporates: mutation code lives in a sibling cobra command never reachable from `runMCPServer`); the privileged `pods/exec` audit flip stays a human act, consistent with "applying policies stays a human act". SKL-02 guides the operator through the CLI instead of driving the window via MCP. The SEC-01 two-mode mechanism decision (build-tag vs path-scoped assertion) is therefore moot | Pending (Phase 23) |
+| AUD-03 surface: CLI-only audit window (Variant B) — MCP stays pure-readonly | User decision at the Phase 23 gate (2026-07-22). Keeps SEC-01's zero-tolerance readonly proof literally unchanged (research Tension 4 evaporates: mutation code lives in a sibling cobra command never reachable from `runMCPServer`); the privileged `pods/exec` audit flip stays a human act, consistent with "applying policies stays a human act". SKL-02 guides the operator through the CLI instead of driving the window via MCP. The SEC-01 two-mode mechanism decision (build-tag vs path-scoped assertion) is therefore moot | ✓ Good — Phase 23 shipped: SEC-01 proof byte-identical, tripwire added, revert guaranteed on every exit path |
 | gRPC only initially | Simplified v1 architecture — offline jsonpb ingestion added in v1.1 for iteration workflow | ✓ Good — v1.1 added `FlowSource` abstraction cleanly |
 | Auto port-forward to Hubble Relay | UX parity with hubble CLI, zero manual setup | ✓ Good — shipped v1.0 via SPDY |
 | One file per policy output | Easier to review, git-diff friendly, selective apply | ✓ Good |

@@ -24,7 +24,7 @@ See: .planning/PROJECT.md (updated 2026-07-22)
 
 ## Current Position
 
-Phase: 23 (managed-audit-window-sec-01-evolution) — PLANNED
+Phase: 24 (cpg-dedicated-skills-agent-tooling) — NEXT
 Plan: 2 of 3
 Status: Ready to execute
 Last activity: 2026-07-22

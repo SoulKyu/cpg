@@ -88,7 +88,7 @@ Full details: [milestones/v1.5-ROADMAP.md](milestones/v1.5-ROADMAP.md)
 - [x] **Phase 20: `--include-audit` Verdict Ingestion** - AUDIT-verdict flows widen the same pipeline as DROPPED across all filter sites, byte-identical default behavior, single zero-signal warning (completed 2026-07-22)
 - [x] **Phase 21: Cilium Compatibility Matrix + Runtime Detection** - Declared version floor + per-feature table (PR-verified numbers), warn-and-proceed runtime detection, live README proxy-visibility bug fixed (completed 2026-07-22)
 - [x] **Phase 22: Bootstrap Artifact Generation** - Namespaced default-deny CNP (`enableDefaultDeny` + one-element empty-rule stanzas, #35558-safe) + onboarding runbook, stdout-only CLI + readonly MCP tool, SEC-01 intact (completed 2026-07-22)
-- [ ] **Phase 23: Managed Audit Window + SEC-01 Evolution** - Lifecycle-bound per-endpoint audit flips with guaranteed revert; two-mode structural readonly proof
+- [x] **Phase 23: Managed Audit Window + SEC-01 Evolution** - CLI-only `cpg audit-window` (user gate decision): lifecycle-bound per-endpoint audit flips with bounded guaranteed revert on every exit path; MCP stays pure-readonly, SEC-01 proof byte-identical + tripwire (completed 2026-07-22)
 - [ ] **Phase 24: cpg-Dedicated Skills & Agent Tooling** - Repo-local skills (+ optional subagent) driving real MCP/CLI workflows
 
 > **Decision gate before Phase 23:** AUD-03's surface — MCP flag-gated session property vs. CLI-only command (MCP stays pure-readonly) — and, if the MCP variant wins, the SEC-01 two-mode mechanism (build-tag split vs. path-scoped reachability assertion) must both be resolved via `/gsd-discuss-phase` before Phase 23 is planned at file-level detail. See Phase 23 detail below, REQUIREMENTS.md AUD-03/AUD-04, and research/SUMMARY.md Tension 4.
@@ -305,8 +305,8 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 
 - [x] 23-01-PLAN.md (wave 1) — pkg/k8s exec plumbing: SPDY pods/exec, node→agent-pod mapping, read-before-flip, canonical flip, daemon-wide precondition read (AUD-03)
 - [x] 23-02-PLAN.md (wave 2) — pkg/auditwindow.Manager: Open/Close/Shutdown state machine, UID-keyed revert-only-ours, SESS-05 bounded fan-out, new-endpoint watcher (AUD-03)
-- [ ] 23-03-PLAN.md (wave 3) — cpg audit-window cobra command (foreground, signal-bound, always-bounded TTL) + SEC-01 tripwire TestAuditWindowNotReachableFromMCP via Edge.Site==nil filter (AUD-03, AUD-04)
-- [ ] 23-04-PLAN.md (wave 3) — README readonly-by-default + audit-window exclusive RBAC; runbook wires real command + honest race; golden pins (AUD-03, criterion 5)
+- [x] 23-03-PLAN.md (wave 3) — cpg audit-window cobra command (foreground, signal-bound, always-bounded TTL) + SEC-01 tripwire TestAuditWindowNotReachableFromMCP via Edge.Site==nil filter (AUD-03, AUD-04)
+- [x] 23-04-PLAN.md (wave 3) — README readonly-by-default + audit-window exclusive RBAC; runbook wires real command + honest race; golden pins (AUD-03, criterion 5)
 
 ### Phase 24: cpg-Dedicated Skills & Agent Tooling
 
