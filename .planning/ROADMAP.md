@@ -232,7 +232,7 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 
 **Wave 2** *(blocked on Wave 1 — pipeline wiring calls the aggregator's SetIncludeAudit/AuditVerdictCount)*
 
-- [ ] 20-02-PLAN.md — FlowSource interface widening + verdict-filter sites 1-4 + PipelineConfig.IncludeAudit threading + AUD-01 warning + 19-location compile ripple + buildFilters regression tests
+- [x] 20-02-PLAN.md — FlowSource interface widening + verdict-filter sites 1-4 + PipelineConfig.IncludeAudit threading + AUD-01 warning + 19-location compile ripple + buildFilters regression tests
 
 **Wave 3** *(blocked on Wave 2; the two plans run in parallel — zero file overlap)*
 
@@ -322,7 +322,7 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 | 17. Session Lifecycle | v1.5 | 9/9 | Complete    | 2026-07-21 |
 | 18. Query Tools | v1.5 | 5/5 | Complete    | 2026-07-21 |
 | 19. Security Hardening & End-to-End Validation | v1.5 | 4/4 | Complete    | 2026-07-21 |
-| 20. `--include-audit` Verdict Ingestion | v1.6 | 1/4 | In Progress|  |
+| 20. `--include-audit` Verdict Ingestion | v1.6 | 2/4 | In Progress|  |
 | 21. Cilium Compatibility Matrix + Runtime Detection | v1.6 | 0/TBD | Not started | - |
 | 22. Bootstrap Artifact Generation | v1.6 | 0/TBD | Not started | - |
 | 23. Managed Audit Window + SEC-01 Evolution | v1.6 | 0/TBD | Not started | - |
