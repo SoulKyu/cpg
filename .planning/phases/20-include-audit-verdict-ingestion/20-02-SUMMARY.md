@@ -136,3 +136,20 @@ None - no external service configuration required. Pure in-process Go interface/
 ---
 *Phase: 20-include-audit-verdict-ingestion*
 *Completed: 2026-07-22*
+
+## Self-Check: PASSED
+
+- FOUND: pkg/flowsource/source.go
+- FOUND: pkg/hubble/client.go
+- FOUND: pkg/flowsource/file.go
+- FOUND: pkg/hubble/pipeline.go
+- FOUND: pkg/hubble/pipeline_test.go
+- FOUND: pkg/session/manager_test.go
+- FOUND: pkg/flowsource/source_test.go
+- FOUND: pkg/flowsource/file_test.go
+- FOUND: pkg/hubble/client_test.go
+- FOUND: .planning/phases/20-include-audit-verdict-ingestion/20-02-SUMMARY.md
+- FOUND: dceb3ad (feat — Task 1)
+- FOUND: 4586f97 (test — Task 2)
+- FOUND: 98d1fd3 (test — Task 3)
+- FOUND: dfd2dab (docs — plan metadata)
