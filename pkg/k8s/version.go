@@ -257,7 +257,15 @@ func DetectCiliumVersionViaGetNodes(ctx context.Context, server string, tlsEnabl
 	}
 
 	client := observerpb.NewObserverClient(conn)
-	resp, err := client.GetNodes(ctx, &observerpb.GetNodesRequest{})
+	// WR-02: bound the unary RPC with the same budget as the dial. Without
+	// this, a relay whose channel reaches Ready but never answers (half-open
+	// middlebox, wedged relay) would block until the caller ctx expires —
+	// which under resolveSetup is setupCtx, up to the 24h maxSessionDuration
+	// ceiling. versionDetectTimeout must bound the whole probe, not just the
+	// connection.
+	rpcCtx, rpcCancel := context.WithTimeout(ctx, effective)
+	defer rpcCancel()
+	resp, err := client.GetNodes(rpcCtx, &observerpb.GetNodesRequest{})
 	if err != nil {
 		logger.Warn(warnGetNodesFailed, zap.Error(err))
 		return finalizeCompat(CompatInfo{Source: "undetermined"}, logger)
