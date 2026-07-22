@@ -108,3 +108,12 @@ None - no external service configuration required.
 ---
 *Phase: 20-include-audit-verdict-ingestion*
 *Completed: 2026-07-22*
+
+## Self-Check: PASSED
+
+- FOUND: testdata/flows/with_audit.jsonl
+- FOUND: pkg/hubble/pipeline_audit_test.go
+- FOUND: .planning/phases/20-include-audit-verdict-ingestion/20-03-SUMMARY.md
+- FOUND commit: 42abd7a
+- FOUND commit: c262257
+- FOUND commit: 68defa7
