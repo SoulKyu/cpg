@@ -84,7 +84,7 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 - [x] Bootstrap default-deny CNP + audit-window runbook generation — AUD-02 (Phase 22)
 - [x] Managed audit window with lifecycle-bound revert + TTL — AUD-03 (Phase 23, CLI-only surface)
 - [x] SEC-01 evolution: proof byte-identical + tripwire, README readonly-by-default rewording — AUD-04 (Phase 23, Variant B — two-mode proof moot)
-- [ ] cpg-local skills/agents, repo-local only — SKL-01..05
+- [x] cpg-local skills/agents, repo-local only — SKL-01..06 (Phase 24)
 - [x] Cilium compat: declared matrix + runtime detection — COMPAT-01..03 (Phase 21)
 
 ### Planned

@@ -89,7 +89,7 @@ Full details: [milestones/v1.5-ROADMAP.md](milestones/v1.5-ROADMAP.md)
 - [x] **Phase 21: Cilium Compatibility Matrix + Runtime Detection** - Declared version floor + per-feature table (PR-verified numbers), warn-and-proceed runtime detection, live README proxy-visibility bug fixed (completed 2026-07-22)
 - [x] **Phase 22: Bootstrap Artifact Generation** - Namespaced default-deny CNP (`enableDefaultDeny` + one-element empty-rule stanzas, #35558-safe) + onboarding runbook, stdout-only CLI + readonly MCP tool, SEC-01 intact (completed 2026-07-22)
 - [x] **Phase 23: Managed Audit Window + SEC-01 Evolution** - CLI-only `cpg audit-window` (user gate decision): lifecycle-bound per-endpoint audit flips with bounded guaranteed revert on every exit path; MCP stays pure-readonly, SEC-01 proof byte-identical + tripwire (completed 2026-07-22)
-- [ ] **Phase 24: cpg-Dedicated Skills & Agent Tooling** - Repo-local skills (+ optional subagent) driving real MCP/CLI workflows
+- [x] **Phase 24: cpg-Dedicated Skills & Agent Tooling** - 5 repo-local cpg-* skills + cpg-operator agent (workflow routers over live tools/list) + consistency tripwire pinning the 9-tool registry (completed 2026-07-22)
 
 > **Decision gate before Phase 23:** AUD-03's surface — MCP flag-gated session property vs. CLI-only command (MCP stays pure-readonly) — and, if the MCP variant wins, the SEC-01 two-mode mechanism (build-tag split vs. path-scoped reachability assertion) must both be resolved via `/gsd-discuss-phase` before Phase 23 is planned at file-level detail. See Phase 23 detail below, REQUIREMENTS.md AUD-03/AUD-04, and research/SUMMARY.md Tension 4.
 
@@ -325,11 +325,11 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 
 **Wave 1**
 
-- [ ] 24-01-PLAN.md — six repo-local markdown artifacts: cpg-operator agent + 5 cpg-* skills (triage/audit-onboard/policy-review/health-report/mcp-smoke) + README ## Agent tooling section
+- [x] 24-01-PLAN.md — six repo-local markdown artifacts: cpg-operator agent + 5 cpg-* skills (triage/audit-onboard/policy-review/health-report/mcp-smoke) + README ## Agent tooling section
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 24-02-PLAN.md — cmd/cpg/skills_test.go TestSkillsConsistencyTripwire (phantom-check + coverage floor + count-pin 9 + README pins) + full race-suite gate incl. TestMCPE2EGracefulLifecycle without -short
+- [x] 24-02-PLAN.md — cmd/cpg/skills_test.go TestSkillsConsistencyTripwire (phantom-check + coverage floor + count-pin 9 + README pins) + full race-suite gate incl. TestMCPE2EGracefulLifecycle without -short
 
 ## Progress
 

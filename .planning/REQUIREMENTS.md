@@ -18,12 +18,12 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### cpg-Dedicated Agent Tooling (repo-local only)
 
-- [ ] **SKL-01**: `cpg-triage` skill drives a live MCP session end-to-end: start → classify drops (policy vs infra) → present each CNP with its evidence → recommend what to apply
-- [ ] **SKL-02**: `cpg-audit-onboard` skill guides/drives the full onboarding workflow: bootstrap → audit window → `include_audit` capture → enforce checklist
-- [ ] **SKL-03**: `cpg-policy-review` skill audits generated CNPs offline (over-broad rules, L7 anchoring, missing DNS-53 companions, dedup sanity) via `cpg explain` + evidence
-- [ ] **SKL-04**: `cpg-health-report` skill turns `cluster-health.json` into an HTML report of infra drops by node/workload with Cilium remediation links
-- [ ] **SKL-05**: `cpg-mcp-smoke` skill runs a post-release smoke of the tagged binary against the e2e fake relay: 8-tool handshake + full session lifecycle
-- [ ] **SKL-06**: `cpg-operator` subagent (single repo-local agent driving MCP sessions) is used by `cpg-triage`/`cpg-audit-onboard` instead of per-skill agents
+- [x] **SKL-01**: `cpg-triage` skill drives a live MCP session end-to-end: start → classify drops (policy vs infra) → present each CNP with its evidence → recommend what to apply
+- [x] **SKL-02**: `cpg-audit-onboard` skill guides/drives the full onboarding workflow: bootstrap → audit window → `include_audit` capture → enforce checklist
+- [x] **SKL-03**: `cpg-policy-review` skill audits generated CNPs offline (over-broad rules, L7 anchoring, missing DNS-53 companions, dedup sanity) via `cpg explain` + evidence
+- [x] **SKL-04**: `cpg-health-report` skill turns `cluster-health.json` into an HTML report of infra drops by node/workload with Cilium remediation links
+- [x] **SKL-05**: `cpg-mcp-smoke` skill runs a post-release smoke of the tagged binary against the e2e fake relay: 8-tool handshake + full session lifecycle
+- [x] **SKL-06**: `cpg-operator` subagent (single repo-local agent driving MCP sessions) is used by `cpg-triage`/`cpg-audit-onboard` instead of per-skill agents
 
 All SKL artifacts live in this repo (`.claude/skills/cpg-*/SKILL.md`, `.claude/agents/cpg-operator.md`), are written as workflow routers pointing at live `tools/list` discovery (never a third copy of tool semantics), and carry a consistency tripwire tying skill/README prose back to the Go `Description:` strings.
 
@@ -68,12 +68,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AUD-02 | Phase 22 | Complete |
 | AUD-03 | Phase 23 | Complete |
 | AUD-04 | Phase 23 | Complete |
-| SKL-01 | Phase 24 | Pending |
-| SKL-02 | Phase 24 | Pending |
-| SKL-03 | Phase 24 | Pending |
-| SKL-04 | Phase 24 | Pending |
-| SKL-05 | Phase 24 | Pending |
-| SKL-06 | Phase 24 | Pending |
+| SKL-01 | Phase 24 | Complete |
+| SKL-02 | Phase 24 | Complete |
+| SKL-03 | Phase 24 | Complete |
+| SKL-04 | Phase 24 | Complete |
+| SKL-05 | Phase 24 | Complete |
+| SKL-06 | Phase 24 | Complete |
 | COMPAT-01 | Phase 21 | Complete |
 | COMPAT-02 | Phase 21 | Complete |
 | COMPAT-03 | Phase 21 | Complete |
