@@ -40,14 +40,15 @@ func TestSession_BuildSummary(t *testing.T) {
 			State:     StateStopped,
 		}
 		s.final.Store(&hubble.SessionStats{
-			FlowsSeen:       7,
-			PoliciesWritten: 3,
-			PoliciesSkipped: 1,
-			PoliciesFailed:  0,
-			LostEvents:      2,
-			L7HTTPCount:     4,
-			L7DNSCount:      1,
-			InfraDropTotal:  5,
+			FlowsSeen:         7,
+			PoliciesWritten:   3,
+			PoliciesSkipped:   1,
+			PoliciesFailed:    0,
+			LostEvents:        2,
+			L7HTTPCount:       4,
+			L7DNSCount:        1,
+			AuditVerdictCount: 6,
+			InfraDropTotal:    5,
 			InfraDropsByReason: map[flowpb.DropReason]uint64{
 				flowpb.DropReason_POLICY_DENIED: 5,
 			},
@@ -66,6 +67,7 @@ func TestSession_BuildSummary(t *testing.T) {
 		assert.Equal(t, uint64(2), result.LostEvents)
 		assert.Equal(t, uint64(4), result.L7HTTPCount)
 		assert.Equal(t, uint64(1), result.L7DNSCount)
+		assert.Equal(t, uint64(6), result.AuditVerdictCount)
 		assert.Equal(t, uint64(5), result.InfraDropTotal)
 		require.Contains(t, result.InfraDropsByReason, "POLICY_DENIED")
 		assert.Equal(t, uint64(5), result.InfraDropsByReason["POLICY_DENIED"])
@@ -99,6 +101,7 @@ func TestSession_BuildSummary(t *testing.T) {
 		assert.Equal(t, uint64(0), result.LostEvents)
 		assert.Equal(t, uint64(0), result.L7HTTPCount)
 		assert.Equal(t, uint64(0), result.L7DNSCount)
+		assert.Equal(t, uint64(0), result.AuditVerdictCount)
 		assert.Equal(t, uint64(0), result.InfraDropTotal)
 		assert.Empty(t, result.InfraDropsByReason)
 		assert.Equal(t, "/abs/cluster-health.json", result.ClusterHealthPath)

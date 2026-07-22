@@ -118,7 +118,7 @@ func TestPipeline_AuditEnabled_NoFlows_NoWarning(t *testing.T) {
 // IncludeAudit=true, an AUDIT-verdict flow generates a CNP rule exactly like
 // a DROPPED flow.
 func TestPipeline_AuditIngested_GeneratedLikeDropped(t *testing.T) {
-	outDir, _ := runReplayPipelineAudit(t, withAuditFixture, true)
+	outDir, logs := runReplayPipelineAudit(t, withAuditFixture, true)
 
 	yamlPath := filepath.Join(outDir, "production", "api-server.yaml")
 	data, err := os.ReadFile(yamlPath)
@@ -126,4 +126,17 @@ func TestPipeline_AuditIngested_GeneratedLikeDropped(t *testing.T) {
 	yaml := string(data)
 	assert.Contains(t, yaml, "8080", "DROPPED flow's port")
 	assert.Contains(t, yaml, "9090", "AUDIT flow's port must ALSO generate a rule when flag is set")
+
+	// WR-01: the ingested AUDIT flow must be surfaced positively — the session
+	// summary must report audit_verdict_count=1 (the fixture carries exactly
+	// one AUDIT-verdict flow). Mirrors TestRunPipeline_PopulatesLostEvents.
+	entries := logs.FilterMessage("session summary").All()
+	require.Len(t, entries, 1, "session summary must be logged exactly once")
+	var auditCount int64 = -1
+	for _, f := range entries[0].Context {
+		if f.Key == "audit_verdict_count" {
+			auditCount = f.Integer
+		}
+	}
+	assert.Equal(t, int64(1), auditCount, "audit_verdict_count must reflect the ingested AUDIT flow, not 0")
 }

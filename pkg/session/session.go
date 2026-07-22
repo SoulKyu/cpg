@@ -193,14 +193,15 @@ type StopResult struct {
 	AlreadyStopped bool   `json:"already_stopped"`
 	Duration       string `json:"duration"`
 
-	FlowsSeen       uint64 `json:"flows_seen"`
-	PoliciesWritten uint64 `json:"policies_written"`
-	PoliciesSkipped uint64 `json:"policies_skipped"`
-	PoliciesFailed  uint64 `json:"policies_failed"`
-	LostEvents      uint64 `json:"lost_events"`
-	L7HTTPCount     uint64 `json:"l7_http_count"`
-	L7DNSCount      uint64 `json:"l7_dns_count"`
-	InfraDropTotal  uint64 `json:"infra_drop_total"`
+	FlowsSeen         uint64 `json:"flows_seen"`
+	PoliciesWritten   uint64 `json:"policies_written"`
+	PoliciesSkipped   uint64 `json:"policies_skipped"`
+	PoliciesFailed    uint64 `json:"policies_failed"`
+	LostEvents        uint64 `json:"lost_events"`
+	L7HTTPCount       uint64 `json:"l7_http_count"`
+	L7DNSCount        uint64 `json:"l7_dns_count"`
+	AuditVerdictCount uint64 `json:"audit_verdict_count"`
+	InfraDropTotal    uint64 `json:"infra_drop_total"`
 	// InfraDropsByReason is string-keyed (flowpb.DropReason_name), not the
 	// protobuf-enum-keyed map hubble.SessionStats carries — JSON/LLM
 	// friendly.
@@ -249,6 +250,7 @@ func (s *Session) buildSummary(alreadyStopped bool, clusterHealthPath string) St
 	result.LostEvents = stats.LostEvents
 	result.L7HTTPCount = stats.L7HTTPCount
 	result.L7DNSCount = stats.L7DNSCount
+	result.AuditVerdictCount = stats.AuditVerdictCount
 	result.InfraDropTotal = stats.InfraDropTotal
 	for reason, count := range stats.InfraDropsByReason {
 		name, ok := flowpb.DropReason_name[int32(reason)]

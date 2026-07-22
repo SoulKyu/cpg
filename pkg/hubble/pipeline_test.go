@@ -227,11 +227,12 @@ func TestSessionStats_Log(t *testing.T) {
 	logger := zap.New(core)
 
 	stats := &SessionStats{
-		StartTime:       time.Now().Add(-5 * time.Minute),
-		FlowsSeen:       100,
-		PoliciesWritten: 10,
-		LostEvents:      5,
-		OutputDir:       "/tmp/policies",
+		StartTime:         time.Now().Add(-5 * time.Minute),
+		FlowsSeen:         100,
+		PoliciesWritten:   10,
+		LostEvents:        5,
+		AuditVerdictCount: 9,
+		OutputDir:         "/tmp/policies",
 	}
 
 	stats.Log(logger)
@@ -247,6 +248,9 @@ func TestSessionStats_Log(t *testing.T) {
 	}
 	assert.Contains(t, fieldMap, "flows_seen")
 	assert.Contains(t, fieldMap, "policies_written")
+	assert.Contains(t, fieldMap, "audit_verdict_count")
+	assert.Equal(t, int64(9), fieldMap["audit_verdict_count"],
+		"audit_verdict_count must surface the SessionStats counter (WR-01)")
 }
 
 // TestRunPipeline_PopulatesLostEvents is a regression guard for the BUG-01

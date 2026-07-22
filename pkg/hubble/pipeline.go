@@ -126,6 +126,10 @@ type SessionStats struct {
 	// L7DNSCount mirrors L7HTTPCount for DNS records. Phase 8 leaves this at
 	// 0; Phase 9 wires the increment.
 	L7DNSCount uint64
+	// AuditVerdictCount: number of Verdict_AUDIT flows observed during the
+	// session (incremented regardless of IncludeAudit, like the L7 counters;
+	// with the flag unset, upstream verdict filters keep this at 0).
+	AuditVerdictCount uint64
 	// IgnoredByProtocol is the per-protocol drop counter populated by the
 	// aggregator when --ignore-protocol is set (PA5). Logged via zap.Any in
 	// the session summary; map iteration order is not pinned.
@@ -153,6 +157,7 @@ func (s *SessionStats) Log(logger *zap.Logger) {
 		zap.Uint64("lost_events", s.LostEvents),
 		zap.Uint64("l7_http_count", s.L7HTTPCount),
 		zap.Uint64("l7_dns_count", s.L7DNSCount),
+		zap.Uint64("audit_verdict_count", s.AuditVerdictCount),
 		zap.Any("ignored_by_protocol", s.IgnoredByProtocol),
 		zap.Uint64("infra_drop_total", s.InfraDropTotal),
 		zap.Any("infra_drops_by_reason", s.InfraDropsByReason),
@@ -331,6 +336,7 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 	stats.LostEvents = lostTotal.Load()
 	stats.L7HTTPCount = agg.L7HTTPCount()
 	stats.L7DNSCount = agg.L7DNSCount()
+	stats.AuditVerdictCount = agg.AuditVerdictCount()
 	stats.IgnoredByProtocol = agg.IgnoredByProtocol()
 	stats.InfraDropTotal = agg.InfraDropTotal()
 	stats.InfraDropsByReason = agg.InfraDrops()
