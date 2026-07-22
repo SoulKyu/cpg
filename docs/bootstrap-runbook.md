@@ -1,0 +1,174 @@
+# cpg Bootstrap & Audit-Mode Onboarding Runbook
+
+> **Do not enable daemon-wide `policy-audit-mode`.** Setting `policy-audit-mode: "true"` in the
+> cluster-wide `cilium-config` ConfigMap and restarting the `cilium` DaemonSet disables policy
+> enforcement for **every endpoint on every node** for as long as it stays set -- not just the
+> workload you are onboarding. On a cluster already running default-deny, that is a fleet-wide
+> hole: anything already inside the mesh gets unrestricted network access to everything the
+> daemon manages until someone remembers to flip it back. Never do this on a production cluster,
+> and avoid it even in staging unless the entire cluster is isolated for the duration. This
+> runbook mentions `policy-audit-mode` here, in this warning, and nowhere else -- every
+> actionable step below uses the **per-endpoint** form instead, which scopes the audit window to
+> a single `CiliumEndpoint` and leaves every other endpoint's enforcement untouched.
+
+This runbook mirrors the phase order of Cilium's own
+["Creating Policies from Verdicts"](https://docs.cilium.io/en/stable/security/policy-creation/)
+guide, adapted to `cpg`'s bootstrap + generate workflow: bootstrap a namespace to default-deny
+first, then use per-endpoint audit mode plus `cpg generate --include-audit` to grow the policy
+from observed traffic instead of hand-writing it.
+
+## Prerequisites
+
+- `cpg` installed and on `PATH` (see the main [README](../README.md#install)).
+- A working `kubeconfig` pointed at the target cluster, with the same RBAC `cpg generate` already
+  needs (`pods` list/get, `ciliumnetworkpolicies` read, and -- for this runbook -- `create`/
+  `apply` once you're ready to land the generated policy).
+- Cilium **>= 1.16** on the target cluster. `cpg bootstrap` detects the cluster's Cilium version
+  and refuses to emit an artifact below that floor, because the `enableDefaultDeny` field it
+  relies on is silently pruned by the CRD schema on older clusters (see the
+  [Supported Cilium versions](../README.md#supported-cilium-versions) table). If version
+  detection fails (no reachable cluster), `cpg bootstrap` warns and proceeds -- useful for
+  offline/CI artifact generation, but confirm the target cluster's version yourself before
+  applying anything it produces.
+
+## Bootstrap the Namespace
+
+Generate the namespaced default-deny `CiliumNetworkPolicy` and apply it directly:
+
+```bash
+cpg bootstrap -n <namespace> | kubectl apply -f -
+```
+
+This emits a single CNP (`default-deny-<namespace>`) carrying `spec.enableDefaultDeny` **and**
+explicit empty-rule `ingress`/`egress` stanzas -- both are required for the policy to actually
+enforce default-deny (an `enableDefaultDeny` field with no rule stanzas at all is a known no-op
+footgun, cilium/cilium#35558). Once applied, every pod in `<namespace>` starts from zero implicit
+access: exactly the state the rest of this runbook safely fills in.
+
+Prefer to review before applying? Use `-o`/`--output` to write the artifact to a file instead of
+piping it, inspect it, then `kubectl apply -f` it yourself. The
+[MCP](../README.md#mcp-server-cpg-mcp) `get_bootstrap_policy` tool returns the same YAML as
+read-only tool-result content, for harnesses that want to inspect it programmatically before an
+operator applies it.
+
+## Deploy / Scale Considerations
+
+Bootstrapping default-deny on a namespace with live traffic immediately blocks anything not yet
+covered by a policy. Before applying:
+
+- If the namespace runs a workload you can safely scale down first (a canary replica, a
+  low-traffic background job), do that -- it shrinks the blast radius of the initial
+  default-deny window while you build up policies from observed drops.
+- For anything user-facing, expect drops immediately after `kubectl apply`; the per-endpoint
+  audit window below is how you observe and fix them without blocking real traffic in the
+  meantime.
+- One namespace per `cpg bootstrap` invocation -- loop your shell over namespaces if you're
+  onboarding several. There is no cluster-wide bootstrap mode on any code path.
+
+## Enable Per-Endpoint Audit Mode
+
+For the specific endpoint(s) you're onboarding, enable `PolicyAuditMode` on that endpoint only --
+this reports policy-verdict violations without dropping traffic, so you can observe what a
+freshly-bootstrapped default-deny namespace needs before it starts actually blocking:
+
+```bash
+ENDPOINT=$(kubectl get cep -n <namespace> <pod-name> -o jsonpath='{.status.id}')
+CILIUM_POD=$(kubectl -n kube-system get pod -l k8s-app=cilium \
+  --field-selector spec.nodeName=<node-name> -o jsonpath='{.items[0].metadata.name}')
+kubectl -n kube-system exec "$CILIUM_POD" -c cilium-agent -- \
+  cilium-dbg endpoint config "$ENDPOINT" PolicyAuditMode=Enabled
+```
+
+This is deliberately temporary and scoped to one endpoint -- restarting the Cilium pod resets it
+to the daemon's configured default. A managed, time-bounded audit window (start it, forget it, it
+turns itself back off automatically) is planned as a dedicated `cpg` feature (AUD-03, a later
+phase) and not yet available; until then, remember to disable it manually (see below) once you've
+captured enough traffic.
+
+## Observe Policy Verdicts
+
+With per-endpoint audit mode on, watch policy verdicts for the endpoint via Hubble:
+
+```bash
+kubectl -n kube-system exec "$CILIUM_POD" -c cilium-agent -- \
+  hubble observe flows -t policy-verdict --pod <namespace>/<pod-name> --last 20
+```
+
+Verdicts show as `AUDIT` while the endpoint is in audit mode -- this is traffic that the
+bootstrapped default-deny policy *would* have dropped in enforcing mode. Confirm every audited
+flow is expected traffic before moving on; anything unexpected is worth investigating rather than
+blindly allow-listing.
+
+## Capture with cpg generate --include-audit
+
+Point `cpg` at the same cluster and capture with `--include-audit` so it ingests these `AUDIT`
+verdicts alongside any hard `DROPPED` flows from endpoints not yet in audit mode:
+
+```bash
+cpg generate -n <namespace> --include-audit
+```
+
+In short: `cpg generate --include-audit` (add `-n <namespace>` / `--all-namespaces` as usual).
+`--include-audit` is opt-in -- the default stays `DROPPED`-only, matching pre-audit-onboarding
+behavior -- so set it explicitly whenever you're growing policy from an audit-mode window. `cpg
+replay <file> --include-audit` works the same way against a saved capture. Either form produces
+the same per-workload `CiliumNetworkPolicy` YAML `cpg generate` always writes.
+
+## Create and Apply Generated Policies
+
+Review the generated YAML in `./policies/<namespace>/` (or wherever `-o/--output-dir` pointed),
+then apply it alongside the bootstrap CNP from step one:
+
+```bash
+kubectl apply -f ./policies/<namespace>/
+```
+
+The generated per-workload policies and the `default-deny-<namespace>` bootstrap policy coexist
+-- Cilium computes the union of all matching CNPs for a given endpoint, so the generated allow
+rules now widen exactly the paths that were observed, while the bootstrap policy keeps everything
+else denied by default.
+
+## Disable Per-Endpoint Audit Mode
+
+Once the generated policy covers the traffic you observed, turn audit mode back off for the
+endpoint so it starts enforcing:
+
+```bash
+kubectl -n kube-system exec "$CILIUM_POD" -c cilium-agent -- \
+  cilium-dbg endpoint config "$ENDPOINT" PolicyAuditMode=Disabled
+```
+
+These steps are nearly identical to enabling it -- re-derive `$ENDPOINT`/`$CILIUM_POD` if the
+shell session that set them has since ended.
+
+## Verify Enforcement
+
+Confirm the endpoint is out of audit mode and traffic covered by the generated policy is being
+allowed (not just audited):
+
+```bash
+kubectl -n kube-system exec "$CILIUM_POD" -c cilium-agent -- \
+  cilium-dbg endpoint get "$ENDPOINT" -o jsonpath='{[*].spec.options.PolicyAuditMode}'
+# expect: Disabled
+
+kubectl -n kube-system exec "$CILIUM_POD" -c cilium-agent -- \
+  hubble observe flows -t policy-verdict --pod <namespace>/<pod-name> --last 5
+# expect: ALLOW/DROP verdicts, no more AUDIT
+```
+
+Traffic your generated policy covers should show `ALLOWED`; anything genuinely unexpected should
+now show `DROPPED` -- exactly the enforcing behavior the bootstrap CNP promised in step one.
+
+## Clean-up
+
+If this was a one-off exercise (a demo namespace, a throwaway cluster), remove what you applied:
+
+```bash
+kubectl delete -f ./policies/<namespace>/
+kubectl delete cnp -n <namespace> default-deny-<namespace>
+```
+
+For a real onboarding, leave both the bootstrap CNP and the generated policies in place -- they
+are now your namespace's default-deny baseline and its GitOps-tracked allow rules, respectively.
+Commit the generated YAML to your policy repo the same way you would after any other `cpg
+generate` run.
