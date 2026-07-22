@@ -321,7 +321,15 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
   4. `cpg-mcp-smoke` runs a post-release smoke test asserting the real 8-tool handshake plus full session lifecycle against the e2e fake relay
   5. Every skill (and the optional `cpg-operator` subagent, if built) lives repo-local under `.claude/skills/cpg-*`/`.claude/agents/cpg-operator.md` only, is written as a workflow router pointing at live `tools/list` discovery, and is tied to the Go `Description:` strings by an automated consistency tripwire — never a third, drifting copy of tool semantics
 
-**Plans**: TBD
+**Plans**: 2 plans in 2 waves
+
+**Wave 1**
+
+- [ ] 24-01-PLAN.md — six repo-local markdown artifacts: cpg-operator agent + 5 cpg-* skills (triage/audit-onboard/policy-review/health-report/mcp-smoke) + README ## Agent tooling section
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 24-02-PLAN.md — cmd/cpg/skills_test.go TestSkillsConsistencyTripwire (phantom-check + coverage floor + count-pin 9 + README pins) + full race-suite gate incl. TestMCPE2EGracefulLifecycle without -short
 
 ## Progress
 
