@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Audit-Mode Onboarding & cpg-Dedicated Agent Tooling
-status: planning
-last_updated: "2026-07-22T09:30:00.000Z"
-last_activity: 2026-07-22
+status: executing
+last_updated: "2026-07-22T09:50:20.111Z"
+last_activity: 2026-07-22 -- Phase 20 planning complete
 progress:
-  total_phases: 5
+  total_phases: 9
   completed_phases: 0
-  total_plans: 0
+  total_plans: 4
   completed_plans: 0
   percent: 0
 ---
@@ -26,8 +26,8 @@ See: .planning/PROJECT.md (updated 2026-07-22)
 
 Phase: 20 of 24 (`--include-audit` Verdict Ingestion)
 Plan: — (not yet planned)
-Status: Ready to plan
-Last activity: 2026-07-22 — ROADMAP.md created for v1.6 (Phases 20-24), 13/13 requirements mapped
+Status: Ready to execute
+Last activity: 2026-07-22 -- Phase 20 planning complete
 
 Progress: [░░░░░░░░░░] 0%
 

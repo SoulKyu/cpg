@@ -390,14 +390,16 @@ No claims in this research required an `[ASSUMED]` (training-data, unverified-in
 
 **This table is empty:** all claims in this research were verified or cited — no user confirmation needed before planning.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Does `DropReasonDesc` populate with the same fidelity on `Verdict_AUDIT` flows as on `Verdict_DROPPED` flows, across the Cilium versions cpg targets?**
+   - RESOLVED: operationalized as a mandated code comment near the widened gate in 20-01-PLAN.md Task 2's `<action>`, and tracked as a Manual-Only Verification in 20-VALIDATION.md (live-cluster spot-check, non-blocking).
    - What we know: The vendored proto explicitly documents this fidelity for `DROPPED` only (`flow.pb.go:427`); the `AUDIT` comment describes semantics ("would have been dropped if audit mode was off") but not an explicit metadata guarantee. `[CITED: github.com/cilium/cilium/issues/42044]` confirms a related (not identical) metadata-population gap for policy-log fields affecting both DROPPED and AUDIT flows in Cilium v1.18.2-v1.19.0.
    - What's unclear: Whether `drop_reason_desc` specifically (not `policy_log`) has ever had a similar gap for AUDIT flows on any version in cpg's supported range.
    - Recommendation: Not blocking — see Pitfall 4. The fallback behavior (gate condition false → flow still bucketed and generates a policy) is safe. Worth a one-line code comment near the widened gate; no design change needed. If a real `hubble observe --output jsonpb` capture against a cluster in audit mode is available during phase execution, a quick manual spot-check of `drop_reason_desc` population would upgrade this from "open" to "confirmed," but is not required to ship AUD-01.
 
 2. **Should `Aggregator.AuditVerdictCount()` be fully surfaced through `SessionStats`/`StopResult` (MCP-visible), mirroring `L7HTTPCount`/`L7DNSCount` exactly?**
+   - RESOLVED: deliberately deferred at planning — discretionary, not required by any AC. Documented in 20-PATTERNS.md Group 1; a follow-up plan can mirror the L7 plumbing exactly if MCP-visible symmetry is wanted later.
    - What we know: `L7HTTPCount`/`L7DNSCount` are plumbed all the way to `SessionStats` (`pipeline.go:118-123`), `SessionStats.Log()` (`pipeline.go:149-150`), and `session.StopResult` (`session.go:198-199`) — full symmetry with the counter this phase adds would suggest doing the same for `AuditVerdictCount`.
    - What's unclear: None of the 4 numbered Success Criteria explicitly require MCP/CLI visibility into the count itself (only that the warning fires correctly) — this is a "nice symmetry" choice, not a requirement.
    - Recommendation: Left to planner/implementer discretion. Full plumbing costs ~4 small, low-risk edits (mirroring an established pattern exactly) and improves observability for an LLM operator inspecting `stop_session` results; omitting it does not violate any stated AC. Given the pattern is trivial to mirror and the codebase's own convention strongly favors symmetry (every other diagnostic counter added alongside a VIS-01-style warning has been fully surfaced), recommend doing it — but flag as discretionary, not mandatory.

@@ -224,7 +224,20 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
   3. When the flag is set but zero AUDIT flows arrive during a session, the operator sees exactly one clear warning — never silence, never a repeated WARN storm
   4. All 5 verdict-filter sites (3 gRPC server-side filters, the replay verdict gate, the aggregator classifier gate) are provably widened to `{DROPPED, AUDIT}` — including any additional site an exhaustive re-grep for `Verdict ==`/`Verdict_DROPPED` turns up beyond the 5 pre-enumerated in research
 
-**Plans**: TBD
+**Plans**: 4 plans in 3 waves (linear layer dependency — aggregator → interface/filters/pipeline → surface+tests)
+
+**Wave 1**
+
+- [ ] 20-01-PLAN.md — Aggregator AUDIT counter + classification-gate widening (verdict-filter site 5)
+
+**Wave 2** *(blocked on Wave 1 — pipeline wiring calls the aggregator's SetIncludeAudit/AuditVerdictCount)*
+
+- [ ] 20-02-PLAN.md — FlowSource interface widening + verdict-filter sites 1-4 + PipelineConfig.IncludeAudit threading + AUD-01 warning + 19-location compile ripple + buildFilters regression tests
+
+**Wave 3** *(blocked on Wave 2; the two plans run in parallel — zero file overlap)*
+
+- [ ] 20-03-PLAN.md — End-to-end AUDIT behavioral tests (byte-identical off, ingested on, warning-exactly-once) + with_audit.jsonl fixture
+- [ ] 20-04-PLAN.md — CLI `--include-audit` + MCP `include_audit` surface threading + README docs
 
 ### Phase 21: Cilium Compatibility Matrix + Runtime Detection
 
@@ -309,7 +322,7 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 | 17. Session Lifecycle | v1.5 | 9/9 | Complete    | 2026-07-21 |
 | 18. Query Tools | v1.5 | 5/5 | Complete    | 2026-07-21 |
 | 19. Security Hardening & End-to-End Validation | v1.5 | 4/4 | Complete    | 2026-07-21 |
-| 20. `--include-audit` Verdict Ingestion | v1.6 | 0/TBD | Not started | - |
+| 20. `--include-audit` Verdict Ingestion | v1.6 | 0/4 | Planned | - |
 | 21. Cilium Compatibility Matrix + Runtime Detection | v1.6 | 0/TBD | Not started | - |
 | 22. Bootstrap Artifact Generation | v1.6 | 0/TBD | Not started | - |
 | 23. Managed Audit Window + SEC-01 Evolution | v1.6 | 0/TBD | Not started | - |
