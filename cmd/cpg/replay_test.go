@@ -587,6 +587,26 @@ func TestReplay_IgnoreProtocol_ICMP(t *testing.T) {
 	assert.Equal(t, 1, matches, "session summary must fire exactly once")
 }
 
+// TestReplay_NoVersionDetection is a structural regression guard for
+// Pitfall 6 / the generate.go doc-comment contract: "cpg replay is offline
+// by definition and must never call [version detection]." Rather than
+// asserting on a runtime side effect (replay.go has no kubeconfig/K8s-client
+// code path at all today), this scans replay.go's own source for the two
+// symbol names that would indicate live version detection leaked into the
+// offline command. The assertion targets the CALL/symbol names specifically
+// (not e.g. a doc-comment mention) so a mere prose reference elsewhere could
+// never false-trip it — replay.go legitimately contains neither today.
+func TestReplay_NoVersionDetection(t *testing.T) {
+	src, err := os.ReadFile("replay.go")
+	require.NoError(t, err)
+
+	source := string(src)
+	assert.NotContains(t, source, "maybeRunVersionPreflight",
+		"replay.go must never call maybeRunVersionPreflight — cpg replay is offline by definition")
+	assert.NotContains(t, source, "DetectCiliumVersion",
+		"replay.go must never call k8s.DetectCiliumVersion — cpg replay is offline by definition")
+}
+
 func TestReplayDryRunWritesNothing(t *testing.T) {
 	outDir := t.TempDir()
 	evDir := t.TempDir()

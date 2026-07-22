@@ -55,6 +55,33 @@ func maybeRunL7Preflight(ctx context.Context, kubeConfig *rest.Config, l7Enabled
 	k8s.RunL7Preflight(ctx, client, logger)
 }
 
+// maybeRunVersionPreflight runs pkg/k8s.DetectCiliumVersion once before the
+// pipeline starts. Unlike maybeRunL7Preflight, version detection has no
+// opt-in gate: it is always-on, because feature-floor awareness benefits
+// every invocation, not only L7 users. Detection is advisory: any failure to
+// load a kubeconfig or construct a client is logged as a warning and the
+// pipeline proceeds. DetectCiliumVersion itself emits the below-floor / RBAC
+// warnings internally, so this call site never re-warns on its result.
+//
+// Caller contract: invoke from cpg generate ONLY. cpg replay is offline by
+// definition and must never call this function.
+func maybeRunVersionPreflight(ctx context.Context, kubeConfig *rest.Config, logger *zap.Logger) {
+	if kubeConfig == nil {
+		var err error
+		kubeConfig, err = k8s.LoadKubeConfig()
+		if err != nil {
+			logger.Warn("version preflight skipped: kubeconfig not available", zap.Error(err))
+			return
+		}
+	}
+	client, err := l7ClientFactory(kubeConfig)
+	if err != nil {
+		logger.Warn("version preflight skipped: failed to construct kubernetes client", zap.Error(err))
+		return
+	}
+	k8s.DetectCiliumVersion(ctx, client, logger)
+}
+
 func newGenerateCmd() *cobra.Command {
 	bin := "cpg"
 	if isKubectlPlugin() {
@@ -221,6 +248,12 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 	// kubeconfig is reachable. Pre-flight is advisory: warnings only, never
 	// blocking.
 	maybeRunL7Preflight(ctx, kubeConfig, f.l7, f.noL7Preflight, logger)
+
+	// COMPAT-02: run Cilium version preflight ONCE before the pipeline
+	// starts. Always-on (no opt-in flag, unlike L7 pre-flight above) and
+	// advisory: warnings only, never blocking. DetectCiliumVersion itself
+	// warns when the connected cluster is below one or more feature floors.
+	maybeRunVersionPreflight(ctx, kubeConfig, logger)
 
 	return hubble.RunPipeline(ctx, hubble.PipelineConfig{
 		Server:          server,
