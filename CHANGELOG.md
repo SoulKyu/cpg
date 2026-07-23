@@ -1,5 +1,48 @@
 # Changelog
 
+## [1.11.0](https://github.com/SoulKyu/cpg/compare/v1.10.0...v1.11.0) (2026-07-23)
+
+
+### Features
+
+* **20-01:** add includeAudit gate field and AUDIT diagnostic counter ([43adde7](https://github.com/SoulKyu/cpg/commit/43adde77adee612929c7965219d1c6b107a5879e))
+* **20-01:** widen classification gate to include AUDIT verdicts ([5b586ae](https://github.com/SoulKyu/cpg/commit/5b586aea32d938988653f698136a4e404e44096f))
+* **20-02:** widen FlowSource interface + filter sites 1-4, thread IncludeAudit through pipeline ([dceb3ad](https://github.com/SoulKyu/cpg/commit/dceb3adb3177e7c1771e39098a0a4d924b2c06a2))
+* **20-04:** register --include-audit CLI flag on generate/replay ([4e397d1](https://github.com/SoulKyu/cpg/commit/4e397d1c35be6bacd7e3c941685bbf909be9372e))
+* **20-04:** thread include_audit MCP arg through StartArgs to PipelineConfig ([e49e93d](https://github.com/SoulKyu/cpg/commit/e49e93d314a910f1e3e6612845de6d2902fb2dd0))
+* **21-01:** add pkg/k8s/version.go Cilium version detection ([cfa36ea](https://github.com/SoulKyu/cpg/commit/cfa36ead53194068bc16650773ea2b843e5c23e7))
+* **21-03:** add maybeRunVersionPreflight always-on preflight in generate.go ([6362e89](https://github.com/SoulKyu/cpg/commit/6362e89d5d70240d7ebb91d8c923c202316b1336))
+* **21-04:** add compat fields + detectVersionFn seam + resolveSetup wiring ([3ca6465](https://github.com/SoulKyu/cpg/commit/3ca6465dfae0f12611f5769967fd01665dd0f4d5))
+* **22-01:** add BuildBootstrapPolicy default-deny CNP constructor ([2a1b0fc](https://github.com/SoulKyu/cpg/commit/2a1b0fcb18759953a0e2d5f48a8e5121a18d9950))
+* **22-02:** add cpg bootstrap CLI command + version gate ([52861d7](https://github.com/SoulKyu/cpg/commit/52861d75bc216ecad3bd3c8857e3e6a110bd35ae))
+* **22-02:** add readonly get_bootstrap_policy MCP tool ([87630fd](https://github.com/SoulKyu/cpg/commit/87630fd7ba2f95d395abfb60de939311280be8c4))
+* **23-01:** add read-before-flip, canonical flip, binary gate, daemon precondition ([f0ab85f](https://github.com/SoulKyu/cpg/commit/f0ab85f72e522bd7d255fa3ab5424e57a7e3b8b6))
+* **23-01:** add SPDY exec primitive + node-to-agent-pod mapping ([c36e03e](https://github.com/SoulKyu/cpg/commit/c36e03e81eb39e1a8d389f087affbc1788d906cc))
+* **23-02:** add auditwindow.Manager scaffold + Open precondition/flip/UID bookkeeping ([f2de4da](https://github.com/SoulKyu/cpg/commit/f2de4dae86cb54d718e2305114fefe34ae7efd02))
+* **23-02:** add bounded revert fan-out for Close/Shutdown with per-endpoint reporting ([4c9c66e](https://github.com/SoulKyu/cpg/commit/4c9c66e23b22efff0df8f57721465bf461cb508f))
+* **23-02:** add new-endpoint watcher with bounded-backoff reconnect ([42b3b8f](https://github.com/SoulKyu/cpg/commit/42b3b8f8d6e818697b39947c69001e5a88163659))
+* **23:** add cpg audit-window command ([6b7157a](https://github.com/SoulKyu/cpg/commit/6b7157a24692a0bbab8bd42b7b76bbe5bf0e97ca))
+* **24:** add cpg-audit-onboard + cpg-policy-review skills ([de97afa](https://github.com/SoulKyu/cpg/commit/de97afa1168ac87812eb73e79f8d46e1a28befab))
+* **24:** add cpg-health-report + cpg-mcp-smoke skills + README agent tooling ([26d06a5](https://github.com/SoulKyu/cpg/commit/26d06a5032b6a5bdf78627d5ead4c695adff1962))
+* **24:** add cpg-operator agent + cpg-triage skill ([817db1f](https://github.com/SoulKyu/cpg/commit/817db1f5a9cbee18b9927b246903fa5343668884))
+* **quick:** use WebSocket exec with SPDY fallback in audit-window exec path ([2465740](https://github.com/SoulKyu/cpg/commit/24657403b6191dd3ec771e0b7d6365438e7884fe))
+
+
+### Bug Fixes
+
+* **20:** surface AuditVerdictCount through SessionStats and StopResult (WR-01) ([ada7b30](https://github.com/SoulKyu/cpg/commit/ada7b30f1fd17c2360756751037b180104b31e2b))
+* **21:** WR-01 bound CLI version preflight and suppress Ctrl+C warn ([c4db965](https://github.com/SoulKyu/cpg/commit/c4db965e763a23f425884e9d2937e10cc23eca41))
+* **21:** WR-02 bound GetNodes RPC with versionDetectTimeout budget ([0144ae0](https://github.com/SoulKyu/cpg/commit/0144ae06cfe9279dbc46fdb802baa9762b3bf2ac))
+* **22-02:** make cpg bootstrap stdout-only, restoring zero new SEC-01 allowlist entries ([61c58c0](https://github.com/SoulKyu/cpg/commit/61c58c0d4fa1ff635cd2c1cb0c9da0d67890002d))
+* **22-02:** update pinned MCP tool-count tests for get_bootstrap_policy ([a111188](https://github.com/SoulKyu/cpg/commit/a1111885fe04948a4ef9ad2961fc83de373cc2b0))
+* **22:** review fixes — runbook -o drift + DNS-1123 namespace validation on both surfaces ([4ebdfe4](https://github.com/SoulKyu/cpg/commit/4ebdfe4eabae96f80b2b50d25b3e47c9f9b17e9a))
+* **23:** CR-01/CR-02/WR-01 route audit-window revert through bounded Shutdown ([4d62126](https://github.com/SoulKyu/cpg/commit/4d621264a03324e7e21547f598508823996e458c))
+* **23:** report possibly-stuck endpoints when revert deadline expires ([acee4a9](https://github.com/SoulKyu/cpg/commit/acee4a9b4a5bfffa24b7fd34d958b12570a66e63))
+* **23:** WR-02/WR-03 harden SEC-01 exec tripwire negative half ([dc7f21c](https://github.com/SoulKyu/cpg/commit/dc7f21c442f7089e0ec3d4ad3c6bf080ebe99680))
+* **24:** correct nonexistent 'cpg explain --output json' flag to --json (skill + tool descriptions) ([d011d16](https://github.com/SoulKyu/cpg/commit/d011d166ee40c9f8d8b134c95f976abc0b2670fa))
+* **24:** correct remaining --output json reference in README MCP table ([755cf0c](https://github.com/SoulKyu/cpg/commit/755cf0c8b779dd92a02b0ba1bf4b5532b9535f2e))
+* resolve new lint findings (errcheck Fprintln, QF1008 embedded ObjectMeta, QF1001 De Morgan) ([86fecf0](https://github.com/SoulKyu/cpg/commit/86fecf0d0fa91136c2edf23a1397fd23a48edebf))
+
 ## [1.10.0](https://github.com/SoulKyu/cpg/compare/v1.9.1...v1.10.0) (2026-07-22)
 
 
