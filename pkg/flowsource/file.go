@@ -113,7 +113,7 @@ func (s *FileSource) StreamDroppedFlows(ctx context.Context, _ []string, _ bool,
 				s.stats.malformed.Add(1)
 				continue
 			}
-			if !(f.Verdict == flowpb.Verdict_DROPPED || (includeAudit && f.Verdict == flowpb.Verdict_AUDIT)) {
+			if f.Verdict != flowpb.Verdict_DROPPED && (!includeAudit || f.Verdict != flowpb.Verdict_AUDIT) {
 				s.stats.nonDroppedSkipped.Add(1)
 				continue
 			}

@@ -155,6 +155,6 @@ func runBootstrap(cmd *cobra.Command, _ []string) error {
 	// SEC-01 audit (RTA's reflect.Value.Call edge sweeps every address-taken
 	// function, including cobra RunE targets); shell redirection covers the
 	// file use case with zero write call sites.
-	fmt.Fprintln(cmd.OutOrStdout(), string(data))
-	return nil
+	_, err = fmt.Fprintln(cmd.OutOrStdout(), string(data))
+	return err
 }

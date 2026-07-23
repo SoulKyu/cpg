@@ -296,7 +296,7 @@ func sleepOrDone(ctx context.Context, d time.Duration) bool {
 // (never touch pre-existing audit state), and record newly-flipped
 // endpoints under mu keyed on UID.
 func (m *Manager) flipIfNeeded(ctx context.Context, ep *ciliumv2.CiliumEndpoint) {
-	uid := ep.ObjectMeta.UID
+	uid := ep.UID
 
 	m.mu.Lock()
 	_, already := m.ours[uid]
@@ -345,7 +345,7 @@ func (m *Manager) defaultResolveCurrentID(ctx context.Context, ns string, uid ty
 		return 0, fmt.Errorf("re-resolving endpoint %s: %w", uid, err)
 	}
 	for i := range endpoints {
-		if endpoints[i].ObjectMeta.UID == uid {
+		if endpoints[i].UID == uid {
 			return endpoints[i].Status.ID, nil
 		}
 	}
