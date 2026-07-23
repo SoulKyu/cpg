@@ -100,7 +100,8 @@ audit mode setting. See the [bootstrap runbook](docs/bootstrap-runbook.md) for t
 `cpg audit-window` requires an RBAC step-up that no readonly command needs: `pods/exec` (create,
 scoped to `kube-system`) to reach each node's cilium-agent pod, and `ciliumendpoints`
 (list/watch) to discover and track endpoints. Grant both verbs only to whatever principal
-actually runs `cpg audit-window`.
+actually runs `cpg audit-window`. The exec transport is WebSocket with SPDY fallback (same as
+kubectl since 1.30+).
 
 **RBAC scoping limitation:** Kubernetes RBAC `resourceNames` requires exact, static pod names,
 but Cilium agent pod names are DaemonSet-generated (`cilium-<random-suffix>`) and not stable
