@@ -190,7 +190,7 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 
 **Current milestone:** none — v1.6 shipped 2026-07-22 (phases 20-24: AUDIT-verdict ingestion, PR-verified Cilium compat matrix + runtime detection, #35558-safe bootstrap artifact (stdout-only CLI + readonly MCP tool) with onboarding runbook, CLI-only `cpg audit-window` with bounded guaranteed revert + SEC-01 tripwire, and 5 repo-local cpg-* skills + `cpg-operator` agent pinned to the live 9-tool registry by `TestSkillsConsistencyTripwire`). Milestone audit passed; archives in `milestones/v1.6-*`. Next: `/gsd-new-milestone`.
 
-**Next milestone goals (candidates, not committed):** lint-debt zero (LINT-01..03), release hardening (RELSEC-01..02), AUD-FUT-01 WebSocket exec fallback, AUD-FUT-02 flag-gated bootstrap CNP apply/delete, Variant A MCP-gated audit window if LLM-driven onboarding demand materializes — see § Planned.
+**Next milestone goals (candidates, not committed):** lint-debt zero (LINT-01..03), release hardening (RELSEC-01..02), AUD-FUT-02 flag-gated bootstrap CNP apply/delete, Variant A MCP-gated audit window if LLM-driven onboarding demand materializes — see § Planned.
 
 ## Evolution
 
