@@ -295,3 +295,28 @@ func TestFailOnInfraDropsFlagParses(t *testing.T) {
 		assert.True(t, f.failOnInfraDrops)
 	})
 }
+
+// TestIncludeAuditFlagParses confirms the --include-audit flag is registered
+// on both generate and replay subcommands, parses to true when set, and
+// defaults to false when absent (AUD-01 opt-in, pre-v1.6 behavior unchanged).
+func TestIncludeAuditFlagParses(t *testing.T) {
+	t.Run("generate", func(t *testing.T) {
+		cmd := newGenerateCmd()
+		require.NoError(t, cmd.Flags().Set("include-audit", "true"))
+		f := parseCommonFlags(cmd)
+		assert.True(t, f.includeAudit)
+	})
+
+	t.Run("replay", func(t *testing.T) {
+		cmd := newReplayCmd()
+		require.NoError(t, cmd.Flags().Set("include-audit", "true"))
+		f := parseCommonFlags(cmd)
+		assert.True(t, f.includeAudit)
+	})
+
+	t.Run("defaults false when absent", func(t *testing.T) {
+		cmd := newGenerateCmd()
+		f := parseCommonFlags(cmd)
+		assert.False(t, f.includeAudit)
+	})
+}

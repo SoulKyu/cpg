@@ -46,7 +46,7 @@ type getEvidenceArgs struct {
 // is the PAGE, not the full matched set — pagination metadata wraps around
 // the promoted renderer's output (Pattern 2), it is never baked into
 // pkg/explain itself. Per-record shape is byte-identical to
-// `cpg explain --output json`'s matched_rules entries (QRY-03).
+// `cpg explain --json`'s matched_rules entries (QRY-03).
 type getEvidenceResult struct {
 	Policy       evidence.PolicyRef      `json:"policy"`
 	Sessions     []evidence.SessionInfo  `json:"sessions"`
@@ -69,7 +69,7 @@ func registerGetEvidenceTool(server *mcp.Server, mgr *session.Manager) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "get_evidence",
 		Description: "Returns paginated per-rule flow evidence for one generated policy — " +
-			"per-record shape identical to `cpg explain --output json` (discover available " +
+			"per-record shape identical to `cpg explain --json` (discover available " +
 			"namespace/workload pairs via list_policies first). Only policy-actionable drops " +
 			"ever produce evidence; infra/transient/noise drops the classifier suppressed " +
 			"never reach this tool (see get_cluster_health for those counts instead). " +

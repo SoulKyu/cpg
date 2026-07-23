@@ -406,10 +406,10 @@ func TestMCPE2EGracefulLifecycle(t *testing.T) {
 	assert.Equal(t, "cpg", initResult.ServerInfo.Name)
 	assert.NotEmpty(t, initResult.ServerInfo.Version)
 
-	// (2) tools/list: exactly 8 tools, schemas + annotations (D-10).
+	// (2) tools/list: exactly 9 tools, schemas + annotations (D-10).
 	toolsResult, err := cs.ListTools(ctx, nil)
 	require.NoError(t, err)
-	require.Len(t, toolsResult.Tools, 8, "3 session + 5 query tools")
+	require.Len(t, toolsResult.Tools, 9, "3 session + 5 query tools + get_bootstrap_policy")
 
 	byName := make(map[string]*mcp.Tool, len(toolsResult.Tools))
 	for _, tool := range toolsResult.Tools {
@@ -419,6 +419,7 @@ func TestMCPE2EGracefulLifecycle(t *testing.T) {
 	allToolNames := []string{
 		"start_session", "get_status", "stop_session",
 		"list_dropped_flows", "list_policies", "get_policy", "get_evidence", "get_cluster_health",
+		"get_bootstrap_policy",
 	}
 	for _, name := range allToolNames {
 		tool, ok := byName[name]
@@ -427,7 +428,7 @@ func TestMCPE2EGracefulLifecycle(t *testing.T) {
 		assert.NotNil(t, tool.InputSchema, "%s must have an inputSchema", name)
 	}
 
-	queryToolNames := []string{"list_dropped_flows", "list_policies", "get_policy", "get_evidence", "get_cluster_health"}
+	queryToolNames := []string{"list_dropped_flows", "list_policies", "get_policy", "get_evidence", "get_cluster_health", "get_bootstrap_policy"}
 	for _, name := range queryToolNames {
 		tool := byName[name]
 		assert.NotEmpty(t, tool.OutputSchema, "%s is data-returning and must expose a non-empty outputSchema", name)

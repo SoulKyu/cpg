@@ -29,7 +29,7 @@ type mockFlowSource struct {
 	lostEvents []*flowpb.LostEvent
 }
 
-func (m *mockFlowSource) StreamDroppedFlows(_ context.Context, _ []string, _ bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
+func (m *mockFlowSource) StreamDroppedFlows(_ context.Context, _ []string, _ bool, _ bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
 	flowCh := make(chan *flowpb.Flow, len(m.flows))
 	lostCh := make(chan *flowpb.LostEvent, len(m.lostEvents))
 
@@ -227,11 +227,12 @@ func TestSessionStats_Log(t *testing.T) {
 	logger := zap.New(core)
 
 	stats := &SessionStats{
-		StartTime:       time.Now().Add(-5 * time.Minute),
-		FlowsSeen:       100,
-		PoliciesWritten: 10,
-		LostEvents:      5,
-		OutputDir:       "/tmp/policies",
+		StartTime:         time.Now().Add(-5 * time.Minute),
+		FlowsSeen:         100,
+		PoliciesWritten:   10,
+		LostEvents:        5,
+		AuditVerdictCount: 9,
+		OutputDir:         "/tmp/policies",
 	}
 
 	stats.Log(logger)
@@ -247,6 +248,9 @@ func TestSessionStats_Log(t *testing.T) {
 	}
 	assert.Contains(t, fieldMap, "flows_seen")
 	assert.Contains(t, fieldMap, "policies_written")
+	assert.Contains(t, fieldMap, "audit_verdict_count")
+	assert.Equal(t, int64(9), fieldMap["audit_verdict_count"],
+		"audit_verdict_count must surface the SessionStats counter (WR-01)")
 }
 
 // TestRunPipeline_PopulatesLostEvents is a regression guard for the BUG-01
@@ -301,7 +305,7 @@ type errStreamSource struct {
 	err error
 }
 
-func (e *errStreamSource) StreamDroppedFlows(_ context.Context, _ []string, _ bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
+func (e *errStreamSource) StreamDroppedFlows(_ context.Context, _ []string, _ bool, _ bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
 	fc := make(chan *flowpb.Flow)
 	close(fc)
 	lc := make(chan *flowpb.LostEvent)
@@ -359,7 +363,7 @@ type errStreamSourceWithInfraDrop struct {
 	flow *flowpb.Flow
 }
 
-func (e *errStreamSourceWithInfraDrop) StreamDroppedFlows(_ context.Context, _ []string, _ bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
+func (e *errStreamSourceWithInfraDrop) StreamDroppedFlows(_ context.Context, _ []string, _ bool, _ bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
 	fc := make(chan *flowpb.Flow, 1)
 	fc <- e.flow
 	close(fc)
@@ -450,7 +454,7 @@ type channelFlowSource struct {
 	lost  chan *flowpb.LostEvent
 }
 
-func (c *channelFlowSource) StreamDroppedFlows(_ context.Context, _ []string, _ bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
+func (c *channelFlowSource) StreamDroppedFlows(_ context.Context, _ []string, _ bool, _ bool) (<-chan *flowpb.Flow, <-chan *flowpb.LostEvent, error) {
 	return c.flows, c.lost, nil
 }
 

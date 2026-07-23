@@ -8,11 +8,19 @@ A Go CLI tool that connects directly to Hubble Relay via gRPC, observes dropped/
 
 Automatically generate correct CiliumNetworkPolicies from observed Hubble denials so that SREs spend zero time manually writing network policies in default-deny environments.
 
-## Current Milestone: none — v1.5 shipped 2026-07-22
+## Current Milestone: v1.6 Audit-Mode Onboarding & cpg-Dedicated Agent Tooling
 
-v1.5 MCP Integration is complete and archived ([milestones/v1.5-ROADMAP.md](milestones/v1.5-ROADMAP.md)). `cpg mcp` ships a readonly MCP stdio server: single live Hubble capture session, 8 tools (3 session + 5 query), structural readonly proof, real-stdio e2e under `-race`, README harness docs. Delivered via PR #18.
+**Goal:** Onboard namespaces from "no policies" to enforced default-deny with zero real drops via Cilium policy audit mode, and ship the cpg-local agent tooling that exploits the v1.5 MCP server.
 
-**Next milestone (ideation ready):** v1.6 — Audit-Mode Onboarding & cpg-Dedicated Agent Tooling. Full PRD-shaped draft with verified code refs, open decisions, and candidate requirement IDs (AUD-01..04, SKL-01..05, COMPAT-01..02): [drafts/v1.6-audit-onboarding-and-cpg-agent-tooling.md](drafts/v1.6-audit-onboarding-and-cpg-agent-tooling.md). Start with `/gsd-new-milestone`.
+**Target features:**
+- `--include-audit`/`include_audit` AUDIT verdict ingestion (5 filter sites + zero-AUDIT single warning) — load-bearing piece, ships first
+- Bootstrap artifact generation: namespaced default-deny CNP (`enableDefaultDeny` form, Cilium ≥1.15) + audit-window runbook (CLI + readonly MCP tool)
+- Managed audit window: per-endpoint audit flips, new-pod watcher, lifecycle-bound revert via SESS-05 fan-out, TTL auto-revert — surface (MCP flag-gated vs CLI-only) is an open discuss-phase decision
+- SEC-01 evolves into a two-mode structural proof + README readonly-guarantee rewording
+- cpg-dedicated repo-local skills/agents (`cpg-triage`, `cpg-audit-onboard`, `cpg-policy-review`, `cpg-health-report`, `cpg-mcp-smoke`; optional single `cpg-operator` agent)
+- Cilium compatibility: declared support matrix (README, single documented floor) + runtime version detection with warn-and-proceed and feature gating
+
+**Ideation source:** [drafts/v1.6-audit-onboarding-and-cpg-agent-tooling.md](drafts/v1.6-audit-onboarding-and-cpg-agent-tooling.md) — verified code refs (§2), constraints carried forward (§4), researcher questions (§5), candidate REQ IDs (§6).
 
 ## Requirements
 
@@ -25,6 +33,7 @@ v1.5 MCP Integration is complete and archived ([milestones/v1.5-ROADMAP.md](mile
 - ✓ Observe dropped flows filtered by namespace or all-namespaces — v1.0
 - ✓ Generate CiliumNetworkPolicy for ingress/egress traffic — v1.0
 - ✓ Generate CIDR-based policies for external traffic — v1.0
+- ✓ AUDIT verdict ingestion via `--include-audit` (CLI) / `include_audit` (MCP session arg) — AUD-01, validated in Phase 20: `--include-audit` Verdict Ingestion
 - ✓ Exact ports (port number + protocol) in generated policies — v1.0
 - ✓ Smart label selection (app.kubernetes.io/*, workload name) — v1.0
 - ✓ One YAML file per policy in organized directory structure — v1.0
@@ -70,15 +79,18 @@ v1.5 MCP Integration is complete and archived ([milestones/v1.5-ROADMAP.md](mile
 
 ### Active
 
-<!-- No active milestone. v1.6 requirements to be defined via /gsd-new-milestone from the ideation draft. -->
+<!-- v1.6 scope. Detailed REQ-IDs in REQUIREMENTS.md. -->
 
-- _(none — v1.6 candidates in [drafts/v1.6-audit-onboarding-and-cpg-agent-tooling.md](drafts/v1.6-audit-onboarding-and-cpg-agent-tooling.md))_
+- [x] Bootstrap default-deny CNP + audit-window runbook generation — AUD-02 (Phase 22)
+- [x] Managed audit window with lifecycle-bound revert + TTL — AUD-03 (Phase 23, CLI-only surface)
+- [x] SEC-01 evolution: proof byte-identical + tripwire, README readonly-by-default rewording — AUD-04 (Phase 23, Variant B — two-mode proof moot)
+- [x] cpg-local skills/agents, repo-local only — SKL-01..06 (Phase 24)
+- [x] Cilium compat: declared matrix + runtime detection — COMPAT-01..03 (Phase 21)
 
 ### Planned
 
-<!-- v1.5 candidates: lint/release debt from the v1.4 audit + feature candidates carried over from earlier deferrals. -->
+<!-- Candidates for future milestones: lint/release debt from the v1.4 audit + feature candidates carried over from earlier deferrals. -->
 
-- [ ] Audit-mode onboarding (default-deny sans casse) + cpg-dedicated skills/agents — v1.6 candidate — **full ideation doc: `.planning/drafts/v1.6-audit-onboarding-and-cpg-agent-tooling.md`** (verified code refs, design, open decision, research questions, candidate REQ IDs AUD-01..04 / SKL-01..05): (a) `--include-audit`/`include_audit` — étendre le filtre de verdict à `Verdict_AUDIT` (client.go:198/209/213, file.go:116, aggregator.go:417 — flows AUDIT portent le drop reason, vérifié parser threefour); (b) bootstrap: génération default-deny CNP (`enableDefaultDeny`, Cilium ≥1.15) + activation PolicyAuditMode per-endpoint namespace-scoped; (c) DÉCISION OUVERTE: mutation pilotée par cpg (flag serveur `cpg mcp --enable-audit-bootstrap`, audit = propriété de session, revert lifecycle-bound via fan-out SESS-05, watcher nouveaux pods, revert-only-ours + TTL, SEC-01 évolue en preuve 2-modes, RBAC pods/exec à documenter) vs CLI-only `cpg audit` (MCP reste readonly pur). Discuté 2026-07-22.
 - [ ] Lint debt zero: 16 errcheck + 10 staticcheck SA1019 + drop CI `only-new-issues` flag — v1.5 candidate (LINT-01..03, archived in milestones/v1.4-REQUIREMENTS.md)
 - [ ] Release hardening: `release.yml` minimal permissions review, govulncheck job pinning follow-through — v1.5 candidate (RELSEC-01..02)
 - [ ] `cpg replay` exit-code parity on truncated input (currently logs Error but exits 0; live stream exits non-zero) — v1.5 candidate (conscious call from PR #16 review)
@@ -131,6 +143,7 @@ v1.5 MCP Integration is complete and archived ([milestones/v1.5-ROADMAP.md](mile
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
+| AUD-03 surface: CLI-only audit window (Variant B) — MCP stays pure-readonly | User decision at the Phase 23 gate (2026-07-22). Keeps SEC-01's zero-tolerance readonly proof literally unchanged (research Tension 4 evaporates: mutation code lives in a sibling cobra command never reachable from `runMCPServer`); the privileged `pods/exec` audit flip stays a human act, consistent with "applying policies stays a human act". SKL-02 guides the operator through the CLI instead of driving the window via MCP. The SEC-01 two-mode mechanism decision (build-tag vs path-scoped assertion) is therefore moot | ✓ Good — Phase 23 shipped: SEC-01 proof byte-identical, tripwire added, revert guaranteed on every exit path |
 | gRPC only initially | Simplified v1 architecture — offline jsonpb ingestion added in v1.1 for iteration workflow | ✓ Good — v1.1 added `FlowSource` abstraction cleanly |
 | Auto port-forward to Hubble Relay | UX parity with hubble CLI, zero manual setup | ✓ Good — shipped v1.0 via SPDY |
 | One file per policy output | Easier to review, git-diff friendly, selective apply | ✓ Good |
@@ -171,11 +184,13 @@ v1.5 MCP Integration is complete and archived ([milestones/v1.5-ROADMAP.md](mile
 
 ## Current State
 
-**Shipped:** v1.0 (2026-03-08), v1.1 (2026-04-24), v1.2 (2026-04-25), v1.3 (2026-04-26), v1.4 (2026-07-20), and v1.5 (2026-07-22).
+**Shipped:** v1.0 (2026-03-08), v1.1 (2026-04-24), v1.2 (2026-04-25), v1.3 (2026-04-26), v1.4 (2026-07-20), v1.5 (2026-07-22), and v1.6 (2026-07-22).
 
 **Codebase:** 12 packages (`pkg/{labels,policy,output,hubble,k8s,dedup,flowsource,evidence,diff,dropclass,session,explain}` + `cmd/`). **607 tests passing with `-race`** across 12 packages (up from 539 at Phase 17 close). CI green and operational (build + race tests + lint + govulncheck). Deps: cilium v1.19.4, go-sdk v1.6.1, jsonschema-go v0.4.3 (direct since Phase 18), toolchain go1.25.12. Known debt: 26 lint issues (16 errcheck + 10 SA1019) gated by `only-new-issues`, scoped to v1.5; pre-existing `pkg/session` shared-`/tmp` test flake documented in `phases/18-query-tools/deferred-items.md`. Release-please continues to handle product SemVer tagging.
 
-**Current milestone:** none — v1.5 MCP Integration shipped 2026-07-22 (PR #18, merge `81ebf2c`; incl. same-day GO-2026-5970 fix: x/text v0.39.0). Tests: 610 across 12 packages, all `-race`. Next: v1.6 (Audit-Mode Onboarding & cpg-Dedicated Agent Tooling) — ideation draft ready in `drafts/`, start with `/gsd-new-milestone`.
+**Current milestone:** none — v1.6 shipped 2026-07-22 (phases 20-24: AUDIT-verdict ingestion, PR-verified Cilium compat matrix + runtime detection, #35558-safe bootstrap artifact (stdout-only CLI + readonly MCP tool) with onboarding runbook, CLI-only `cpg audit-window` with bounded guaranteed revert + SEC-01 tripwire, and 5 repo-local cpg-* skills + `cpg-operator` agent pinned to the live 9-tool registry by `TestSkillsConsistencyTripwire`). Milestone audit passed; archives in `milestones/v1.6-*`. Next: `/gsd-new-milestone`.
+
+**Next milestone goals (candidates, not committed):** lint-debt zero (LINT-01..03), release hardening (RELSEC-01..02), AUD-FUT-02 flag-gated bootstrap CNP apply/delete, Variant A MCP-gated audit window if LLM-driven onboarding demand materializes — see § Planned.
 
 ## Evolution
 
@@ -195,4 +210,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-22 after v1.5 milestone (MCP Integration shipped and archived).*
+*Last updated: 2026-07-22 after Phase 20 (`--include-audit` Verdict Ingestion) completion.*

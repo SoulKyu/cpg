@@ -61,6 +61,86 @@ When installed via krew, use `kubectl cilium-policy-gen` instead of `cpg`. Same 
 
 Requires Go 1.25+ for source builds.
 
+## Supported Cilium versions
+
+cpg targets **Cilium >= 1.14**. Clusters below that floor are detected at
+connect time and logged as a warning -- never blocked, so reduced-RBAC and
+CI service accounts still get a working (if unverified) run.
+
+Individual capabilities carry their own, higher floors:
+
+| Feature | Cilium version | Notes |
+|---------|-----------------|-------|
+| Baseline cpg operation | >= 1.14 | Declared floor -- the lowest version any shipped code path assumes |
+| `PolicyVerdictNotify` audit-action bit | >= 1.8 | PR [#11843](https://github.com/cilium/cilium/pull/11843) |
+| `Verdict_AUDIT` via the Hubble flow API (`--include-audit`) | >= 1.10 | PR [#14785](https://github.com/cilium/cilium/pull/14785) / [#14923](https://github.com/cilium/cilium/pull/14923) |
+| `cilium-dbg` binary naming (was `cilium`) | >= 1.15 | PR [#28085](https://github.com/cilium/cilium/pull/28085) |
+| `enableDefaultDeny` CNP field | >= 1.16 | PR [#30572](https://github.com/cilium/cilium/pull/30572) -- used by `cpg bootstrap` / `get_bootstrap_policy`; see the [bootstrap runbook](docs/bootstrap-runbook.md) |
+| `policy.cilium.io/proxy-visibility` annotation | <= 1.16 | Removed from the agent runtime at 1.17 -- PR [#35019](https://github.com/cilium/cilium/pull/35019) |
+| Observer `GetNodes()` RPC / `version` field | >= 1.10 | PR [#13979](https://github.com/cilium/cilium/pull/13979) |
+
+`cpg bootstrap -n <namespace>` generates a namespaced default-deny `CiliumNetworkPolicy` --
+see the [bootstrap runbook](docs/bootstrap-runbook.md) for the full audit-mode onboarding
+workflow (per-endpoint audit mode, `cpg generate --include-audit`, and cleanup).
+
+## Readonly by default
+
+cpg is readonly by default. Every command -- `cpg generate`, `cpg replay`, `cpg bootstrap`,
+`cpg explain`, and `cpg mcp` (see [MCP Server](#mcp-server-cpg-mcp) below) -- only lists,
+watches, and reads Kubernetes and Hubble data. None of them writes to the cluster.
+
+The one exception is `cpg audit-window`, the single scoped, lifecycle-bound mutating command:
+it flips per-endpoint `PolicyAuditMode` on for the endpoints in a target namespace, watches for
+newly-created endpoints and flips those too, then reverts every flip it made -- on Ctrl+C, on
+`--ttl` expiry, on any exit path -- the moment the foreground command stops. It never touches an
+endpoint that was already in audit mode before it started, and it never touches the daemon-wide
+audit mode setting. See the [bootstrap runbook](docs/bootstrap-runbook.md) for the full
+`cpg audit-window` workflow, including its new-endpoint race window.
+
+`cpg audit-window` requires an RBAC step-up that no readonly command needs: `pods/exec` (create,
+scoped to `kube-system`) to reach each node's cilium-agent pod, and `ciliumendpoints`
+(list/watch) to discover and track endpoints. Grant both verbs only to whatever principal
+actually runs `cpg audit-window`. The exec transport is WebSocket with SPDY fallback (same as
+kubectl since 1.30+).
+
+**RBAC scoping limitation:** Kubernetes RBAC `resourceNames` requires exact, static pod names,
+but Cilium agent pod names are DaemonSet-generated (`cilium-<random-suffix>`) and not stable
+across restarts -- there is no way to scope `pods/exec` to "only cilium-agent pods" by name.
+The grant is effectively "exec into any pod in `kube-system`" for whatever role carries it. If
+your cluster runs an admission controller (Kyverno, OPA Gatekeeper), consider policy-based
+scoping there as defense-in-depth -- this is not something cpg itself enforces or guarantees.
+
+## Audit-mode onboarding (default-deny with zero real drops)
+
+The full runbook lives in [docs/bootstrap-runbook.md](docs/bootstrap-runbook.md) -- this is the
+short version for a namespace **with live traffic**. The trick: flipping an endpoint's
+`PolicyAuditMode` is a no-op until a policy matches, so open the audit window *first* and the
+default-deny apply never drops anything -- every would-be drop surfaces as an `AUDIT` verdict
+instead.
+
+```bash
+# 1. Open the audit window FIRST (dedicated terminal — foreground, auto-reverts on exit/TTL)
+cpg audit-window -n production --ttl 30m
+
+# 2. Apply the default-deny bootstrap policy — flows become AUDIT verdicts, not drops
+cpg bootstrap -n production | kubectl apply -f -
+
+# 3. Capture the audited traffic and generate the allow policies
+cpg generate -n production --include-audit
+
+# 4. Review, then apply (always a human act)
+cpg explain production/api-server --json
+kubectl apply -f ./policies/production/
+
+# 5. Close the window (Ctrl+C or let --ttl expire) — audit flips revert automatically,
+#    default-deny now enforces against fully-covered traffic
+```
+
+On a **fresh namespace** (no live traffic) you can invert steps 1 and 2 -- bootstrap first
+means the namespace is protected from the very first pod, and there is nothing running to
+drop. Both orders, the new-endpoint race window, and the RBAC details are covered in the
+[runbook](docs/bootstrap-runbook.md).
+
 ## Quick start
 
 ```bash
@@ -122,6 +202,8 @@ Filtering:
                              repeatable / comma-separated / case-insensitive.
                              Passing a reason already classified as infra or transient emits
                              a warning (it is already suppressed by default).
+      --include-audit        Also ingest Verdict_AUDIT flows alongside DROPPED (opt-in).
+                             Default: DROPPED-only (pre-v1.6 behavior unchanged).
 
 CI integration:
       --fail-on-infra-drops  Exit with code 1 when ≥1 infra drop is observed (default:
@@ -241,7 +323,7 @@ cpg replay drops.jsonl.gz -n production    # gzip transparent
 cat drops.jsonl | cpg replay -              # stdin
 ```
 
-Flags shared with `generate` (`--output-dir`, `--cluster-dedup`, `--flush-interval`, `--ignore-protocol`, `--ignore-drop-reason`, `--fail-on-infra-drops`) work identically. Non-DROPPED verdicts and malformed lines are skipped with counters surfaced in the session summary.
+Flags shared with `generate` (`--output-dir`, `--cluster-dedup`, `--flush-interval`, `--ignore-protocol`, `--ignore-drop-reason`, `--fail-on-infra-drops`, `--include-audit`) work identically. Non-DROPPED verdicts (unless `--include-audit` also admits AUDIT) and malformed lines are skipped with counters surfaced in the session summary.
 
 ## L7 Prerequisites <a id="l7-prerequisites"></a>
 
@@ -282,17 +364,18 @@ matters:
 ### Three ways to enable L7 visibility
 
 1. **Recommended for ad-hoc bootstrap — proxy-visibility annotation.**
-   The legacy but still widely supported (Cilium ≤ 1.19) workload-level
-   annotation that triggers Envoy / DNS proxy redirection without
-   enforcing rules:
+   The legacy workload-level annotation that triggers Envoy / DNS proxy
+   redirection without enforcing rules. Works only through **Cilium 1.16**
+   -- removed from the agent runtime at **1.17** (a no-op on 1.17+). See
+   the **Supported Cilium versions** table above for the full matrix:
 
    ```bash
    kubectl annotate pod -n <ns> -l app.kubernetes.io/name=<workload> \
      policy.cilium.io/proxy-visibility='<Egress/53/UDP/DNS>,<Ingress/8080/TCP/HTTP>'
    ```
 
-   Easy to apply, easy to remove. Marked deprecated upstream — track its
-   deprecation if you build long-term tooling on it.
+   Easy to apply, easy to remove -- on clusters where it still works
+   (<= 1.16). Marked deprecated upstream before removal.
 
 2. **Recommended for permanent enforcement — bootstrap L7 CNP.** Ship
    a starter CiliumNetworkPolicy with a permissive L7 rule. The mere
@@ -509,14 +592,15 @@ Disable capture with `--no-evidence`. Tune retention per rule with `--evidence-s
 
 | Tool | Description |
 |------|-------------|
-| `start_session` | Start a live Hubble capture session in the background; returns an opaque `session_id` immediately. Only one session at a time — stop the current one before starting another. |
+| `start_session` | Start a live Hubble capture session in the background; returns an opaque `session_id` immediately. Only one session at a time — stop the current one before starting another. Accepts `include_audit` to also ingest `Verdict_AUDIT` flows alongside DROPPED (opt-in; default preserves pre-v1.6 DROPPED-only behavior). |
 | `get_status` | Coarse session state (capturing/stopped), elapsed time, and on-disk artifact counts. Works for a stopped-but-retained session too. |
 | `stop_session` | Cancel the capture, finalize `cluster-health.json` and session stats, and return the final summary. Idempotent — a second call returns the same summary, never an error. |
 | `list_dropped_flows` | Paginated, two-section view of dropped flows: policy-actionable samples plus infra/transient/noise aggregate counts. Sampled/aggregated, not a raw flow log. |
 | `list_policies` | Paginated metadata for every generated CiliumNetworkPolicy in the session — namespace, workload, rule counts, YAML path. |
 | `get_policy` | Full CiliumNetworkPolicy YAML plus metadata for one namespace/workload pair (discover pairs via `list_policies`). |
-| `get_evidence` | Paginated per-rule flow evidence for one policy, byte-identical in shape to `cpg explain --output json`. |
+| `get_evidence` | Paginated per-rule flow evidence for one policy, byte-identical in shape to `cpg explain --json`. |
 | `get_cluster_health` | The session's finalized cluster-health report: per-drop-reason counts by node/workload, plus Cilium-docs remediation URLs. |
+| `get_bootstrap_policy` | A namespaced default-deny CiliumNetworkPolicy as YAML (same artifact as `cpg bootstrap`), returned as read-only tool content with the detected Cilium version and compat verdict — no filesystem writes. |
 
 ### Harness configuration
 
@@ -553,6 +637,20 @@ Kubeconfigs authenticating via an `exec` plugin — `aws eks get-token`, `gke-gc
 ### Session model
 
 One capture session at a time — `start_session` returns an error if a session is already running. A stopped session isn't discarded: `get_status` and `stop_session` keep returning its final state, and the query tools keep serving its artifacts, until the next `start_session` call or the server process exits.
+
+## Agent tooling
+
+Repo-local Claude Code skills and agent under `.claude/` route an LLM operator through cpg-specific workflows on top of `cpg mcp`'s tool surface. Skills name workflow steps and tool names only — argument schemas and result shapes are always discovered live via `tools/list`, never restated in skill prose.
+
+| Skill | Purpose |
+|-------|---------|
+| `cpg-triage` | Drive a live MCP session end-to-end: start capture, classify dropped flows, present each generated policy with its evidence, recommend what to apply. |
+| `cpg-audit-onboard` | Guide onboarding a new namespace: bootstrap and audit-window (human-run CLI), drive capture via MCP, end with the human applying policy. |
+| `cpg-policy-review` | Audit already-generated policies offline via `cpg explain` and evidence — over-broad rules, L7 anchoring, DNS-53 companions, dedup. |
+| `cpg-health-report` | Turn a session's `cluster-health.json` into a self-contained HTML report of infra drops by node/workload with remediation links. |
+| `cpg-mcp-smoke` | Post-release smoke test of a tagged binary's MCP server against the fake-relay e2e harness. |
+
+`cpg-operator` (`.claude/agents/cpg-operator.md`) is the single repo-local agent that drives live MCP session lifecycles on behalf of `cpg-triage` and `cpg-audit-onboard` — it is not invoked directly.
 
 ## Label selection
 
@@ -617,7 +715,7 @@ pkg/labels/        Label selection, denylist, endpoint/peer selector builders
 pkg/policy/        Flow-to-CiliumNetworkPolicy builder, merge, semantic dedup, attribution
 pkg/output/        Directory-organized YAML writer with merge-on-write
 pkg/hubble/        Live gRPC client, aggregator, pipeline orchestration
-pkg/k8s/           Kubeconfig loading, port-forward, cluster policy fetching
+pkg/k8s/           Kubeconfig loading, port-forward, cluster policy fetching, version detection
 pkg/flowsource/    Flow stream abstraction: live gRPC or jsonpb file source
 pkg/evidence/      Per-rule flow attribution (cpg explain)
 pkg/diff/          Unified YAML diff (cpg generate/replay --dry-run)

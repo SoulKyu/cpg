@@ -26,6 +26,7 @@ import (
 	flowpb "github.com/cilium/cilium/api/v1/flow"
 
 	"github.com/SoulKyu/cpg/pkg/hubble"
+	"github.com/SoulKyu/cpg/pkg/k8s"
 )
 
 // State is the coarse session lifecycle state (D-01: capturing -> stopped).
@@ -79,6 +80,15 @@ type Session struct {
 	StoppedAt time.Time
 	// State is the coarse capturing/stopped state (D-01).
 	State State
+
+	// compat is the once-detected Cilium version/verdict (COMPAT-02),
+	// computed by resolveSetup's detectVersionFn call and cached here in
+	// the same finalize critical section that sets TmpDir (under m.mu),
+	// then re-surfaced on every subsequent get_status. Written exactly
+	// once before the background pipeline goroutine is launched and read
+	// only under m.mu thereafter — same lifecycle class as TmpDir, so it
+	// needs no atomic treatment.
+	compat k8s.CompatInfo
 
 	// cancel cancels the session's background context (a child of the
 	// Manager's server-rooted ctx, never the tool-call's request ctx — see
@@ -135,6 +145,9 @@ type StartArgs struct {
 	Namespaces    []string
 	AllNamespaces bool
 	L7            bool
+	// IncludeAudit ingests Verdict_AUDIT flows alongside Verdict_DROPPED
+	// (AUD-01). Default false preserves pre-v1.6 DROPPED-only behavior.
+	IncludeAudit bool
 	// IgnoreDropReasons is the uppercase, pre-validated set (D-06 — same
 	// normalization as the CLI's existing drop-reason validator).
 	IgnoreDropReasons []string
@@ -157,6 +170,17 @@ type StartResult struct {
 	// Server is the resolved Hubble Relay address (the explicit arg, or
 	// the auto-port-forward's local address).
 	Server string `json:"server"`
+	// CiliumVersion is the detected cluster Cilium version (COMPAT-02).
+	// Empty when undetermined (RBAC-denied pods/list, unreachable relay,
+	// or no matching pods/nodes) — never an error condition in itself.
+	CiliumVersion string `json:"cilium_version,omitempty"`
+	// CiliumVersionsSeen maps each distinct Cilium version string to the
+	// number of agent nodes/pods reporting it.
+	CiliumVersionsSeen map[string]int `json:"cilium_versions_seen,omitempty" jsonschema:"distinct Cilium versions across connected agent nodes keyed by version, valued by node/pod count — a mixed result usually means a rolling upgrade"`
+	// BelowFloorFeatures names each declared feature floor the detected
+	// CiliumVersion does not meet. Empty when CiliumVersion is undetermined
+	// or every floor is met.
+	BelowFloorFeatures []string `json:"below_floor_features,omitempty"`
 }
 
 // StatusResult is the get_status MCP tool's structuredContent shape.
@@ -167,6 +191,17 @@ type StatusResult struct {
 	PolicyFileCount   int    `json:"policy_file_count"`
 	EvidenceFileCount int    `json:"evidence_file_count"`
 	TmpDir            string `json:"tmp_dir"`
+	// CiliumVersion is the cached cluster Cilium version detected once
+	// during setup (COMPAT-02), re-surfaced on every get_status call.
+	// Empty when undetermined.
+	CiliumVersion string `json:"cilium_version,omitempty"`
+	// CiliumVersionsSeen maps each distinct Cilium version string to the
+	// number of agent nodes/pods reporting it.
+	CiliumVersionsSeen map[string]int `json:"cilium_versions_seen,omitempty" jsonschema:"distinct Cilium versions across connected agent nodes keyed by version, valued by node/pod count — a mixed result usually means a rolling upgrade"`
+	// BelowFloorFeatures names each declared feature floor the detected
+	// CiliumVersion does not meet. Empty when CiliumVersion is undetermined
+	// or every floor is met.
+	BelowFloorFeatures []string `json:"below_floor_features,omitempty"`
 	// Error is the pipeline's terminal error if the capture ended on its
 	// own (relay reset, auth expiry, unreachable server); absent for a
 	// healthy capturing session or a cleanly stopped one.
@@ -190,14 +225,15 @@ type StopResult struct {
 	AlreadyStopped bool   `json:"already_stopped"`
 	Duration       string `json:"duration"`
 
-	FlowsSeen       uint64 `json:"flows_seen"`
-	PoliciesWritten uint64 `json:"policies_written"`
-	PoliciesSkipped uint64 `json:"policies_skipped"`
-	PoliciesFailed  uint64 `json:"policies_failed"`
-	LostEvents      uint64 `json:"lost_events"`
-	L7HTTPCount     uint64 `json:"l7_http_count"`
-	L7DNSCount      uint64 `json:"l7_dns_count"`
-	InfraDropTotal  uint64 `json:"infra_drop_total"`
+	FlowsSeen         uint64 `json:"flows_seen"`
+	PoliciesWritten   uint64 `json:"policies_written"`
+	PoliciesSkipped   uint64 `json:"policies_skipped"`
+	PoliciesFailed    uint64 `json:"policies_failed"`
+	LostEvents        uint64 `json:"lost_events"`
+	L7HTTPCount       uint64 `json:"l7_http_count"`
+	L7DNSCount        uint64 `json:"l7_dns_count"`
+	AuditVerdictCount uint64 `json:"audit_verdict_count"`
+	InfraDropTotal    uint64 `json:"infra_drop_total"`
 	// InfraDropsByReason is string-keyed (flowpb.DropReason_name), not the
 	// protobuf-enum-keyed map hubble.SessionStats carries — JSON/LLM
 	// friendly.
@@ -246,6 +282,7 @@ func (s *Session) buildSummary(alreadyStopped bool, clusterHealthPath string) St
 	result.LostEvents = stats.LostEvents
 	result.L7HTTPCount = stats.L7HTTPCount
 	result.L7DNSCount = stats.L7DNSCount
+	result.AuditVerdictCount = stats.AuditVerdictCount
 	result.InfraDropTotal = stats.InfraDropTotal
 	for reason, count := range stats.InfraDropsByReason {
 		name, ok := flowpb.DropReason_name[int32(reason)]

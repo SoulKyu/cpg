@@ -50,6 +50,7 @@ func TestBuildPipelineConfig(t *testing.T) {
 		FlushInterval:   0,
 		Server:          "relay:4245",
 		L7:              true,
+		IncludeAudit:    true,
 		IgnoreProtocols: []string{"tcp"},
 	}
 
@@ -83,10 +84,28 @@ func TestBuildPipelineConfig(t *testing.T) {
 
 	assert.Equal(t, "vTest", cfg.CPGVersion)
 	assert.True(t, cfg.L7Enabled)
+	assert.True(t, cfg.IncludeAudit, "IncludeAudit must pass through from StartArgs.IncludeAudit")
 	assert.Equal(t, []string{"tcp"}, cfg.IgnoreProtocols)
 	assert.Equal(t, "relay:4245", cfg.Server)
 	assert.Equal(t, logger, cfg.Logger)
 	assert.Nil(t, cfg.ClusterPolicies)
 
 	assert.Regexp(t, sessionIDPattern, cfg.SessionID)
+}
+
+// TestBuildPipelineConfig_IncludeAuditDefaultsFalse confirms that a
+// StartArgs with IncludeAudit unset (Go zero value) produces a
+// PipelineConfig.IncludeAudit == false, matching AUD-01's opt-in contract
+// (pre-v1.6 DROPPED-only behavior unchanged unless explicitly requested).
+func TestBuildPipelineConfig_IncludeAuditDefaultsFalse(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := zap.NewNop()
+	var stdout bytes.Buffer
+	onFinal := func(hubble.SessionStats) {}
+
+	args := StartArgs{Server: "relay:4245"}
+
+	cfg := buildPipelineConfig(args, tmpDir, args.Server, logger, "vTest", &stdout, nil, onFinal)
+
+	assert.False(t, cfg.IncludeAudit, "IncludeAudit must default to false when StartArgs.IncludeAudit is unset")
 }

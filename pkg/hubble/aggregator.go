@@ -87,6 +87,17 @@ type Aggregator struct {
 	// increments it.
 	l7DNSCount uint64
 
+	// includeAudit gates whether the classification gate treats Verdict_AUDIT
+	// the same as Verdict_DROPPED; forwarded from PipelineConfig.IncludeAudit
+	// via SetIncludeAudit before Run().
+	includeAudit bool
+
+	// auditVerdictCount counts Verdict_AUDIT flows observed during the
+	// session, incremented unconditionally in Run() — powers the AUD-01
+	// empty-records warning in pipeline.go regardless of whether includeAudit
+	// is set.
+	auditVerdictCount uint64
+
 	// flowsSeen counts every flow that survived keyFromFlow() (i.e. landed in
 	// a bucket). Surfaced via FlowsSeen() so SessionStats reports a real
 	// number rather than the always-zero placeholder shipped through v1.1
@@ -320,6 +331,18 @@ func (a *Aggregator) L7DNSCount() uint64 {
 	return a.l7DNSCount
 }
 
+// SetIncludeAudit toggles whether the classification gate treats
+// Verdict_AUDIT the same as Verdict_DROPPED. Safe to call before Run().
+func (a *Aggregator) SetIncludeAudit(enabled bool) {
+	a.includeAudit = enabled
+}
+
+// AuditVerdictCount returns the number of Verdict_AUDIT flows observed
+// across the session. Populated regardless of includeAudit; used by AUD-01.
+func (a *Aggregator) AuditVerdictCount() uint64 {
+	return a.auditVerdictCount
+}
+
 // FlowsSeen returns the count of flows that survived keyFromFlow (i.e.
 // landed in an aggregation bucket). Used by SessionStats for the VIS-01
 // gate (`flows > 0`).
@@ -384,6 +407,13 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan *flowpb.Flow, out chan<-
 			if f.GetL7().GetDns() != nil {
 				a.l7DNSCount++
 			}
+			// Count AUDIT-verdict flows unconditionally, regardless of
+			// includeAudit — mirrors the L7 counters' "regardless of flag"
+			// rationale. Powers the AUD-01 empty-records warning in
+			// pipeline.go.
+			if f.Verdict == flowpb.Verdict_AUDIT {
+				a.auditVerdictCount++
+			}
 			// FILTER-01: drop flows matching --ignore-drop-reason BEFORE the
 			// protocol filter and classification gate. User-explicit exclusion
 			// takes precedence. These flows do NOT increment flowsSeen,
@@ -409,12 +439,17 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan *flowpb.Flow, out chan<-
 					}
 				}
 			}
-			// HEALTH-01/05: Classification gate — applies only to flows with an
-			// explicit DROPPED verdict and a non-zero drop reason. Zero-value
-			// DropReasonDesc on non-DROPPED flows (e.g. forwarded/unknown) must
-			// pass through unmodified (PITFALLS Integration Gotchas: always check
-			// Verdict == DROPPED before classifying).
-			if f.Verdict == flowpb.Verdict_DROPPED && f.GetDropReasonDesc() != flowpb.DropReason_DROP_REASON_UNKNOWN {
+			// HEALTH-01/05 + AUD-01: applies to flows with an explicit DROPPED
+			// (or, when includeAudit, AUDIT) verdict and a non-zero drop
+			// reason. Zero-value DropReasonDesc on non-DROPPED/non-AUDIT flows
+			// must pass through unmodified. Note (Pitfall 4, non-blocking): if
+			// an AUDIT flow's DropReasonDesc is UNKNOWN on some Cilium
+			// version/deployment, this condition is simply false for that flow
+			// and it falls through to keyFromFlow() → still bucketed → still
+			// generates a policy (same safe fallback as any DROPPED flow with
+			// an unknown reason today; no flow is silently lost).
+			if (f.Verdict == flowpb.Verdict_DROPPED || (a.includeAudit && f.Verdict == flowpb.Verdict_AUDIT)) &&
+				f.GetDropReasonDesc() != flowpb.DropReason_DROP_REASON_UNKNOWN {
 				class := dropclass.Classify(f.GetDropReasonDesc())
 				switch class {
 				case dropclass.DropClassInfra, dropclass.DropClassTransient:

@@ -241,6 +241,63 @@ func TestMaybeRunL7Preflight_Gating(t *testing.T) {
 	}
 }
 
+// ciliumAgentPodForTest builds a Running cilium-agent pod in kube-system
+// (k8s-app=cilium) with a single container named cilium-agent whose image is
+// set to the given reference. Named distinctly from pkg/k8s's own
+// ciliumAgentPod test helper (unexported, different package) but mirrors its
+// shape exactly (pkg/k8s/version_test.go).
+func ciliumAgentPodForTest(name, image string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "kube-system",
+			Labels:    map[string]string{"k8s-app": "cilium"},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "cilium-agent", Image: image},
+			},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+		},
+	}
+}
+
+// TestMaybeRunVersionPreflight_BelowFloorWarns covers COMPAT-02's CLI surface:
+// maybeRunVersionPreflight is always-on (no --l7-style gate) and delegates to
+// k8s.DetectCiliumVersion, which warns internally when the detected cluster
+// version is below one or more declared feature floors.
+func TestMaybeRunVersionPreflight_BelowFloorWarns(t *testing.T) {
+	t.Run("below floor (v1.14.2) warns naming affected features", func(t *testing.T) {
+		client := fake.NewSimpleClientset(ciliumAgentPodForTest("cilium-agent-1", "quay.io/cilium/cilium:v1.14.2"))
+		withFakeL7ClientFactory(t, client)
+
+		lg, logs := observedLoggerForTest()
+		// Pass a non-nil *rest.Config so the LoadKubeConfig fallback branch is
+		// skipped and the substituted l7ClientFactory is used instead.
+		maybeRunVersionPreflight(context.Background(), &rest.Config{}, lg)
+
+		require.Greater(t, logs.Len(), 0, "expected at least one below-floor warning")
+		joined := ""
+		for _, e := range logs.All() {
+			joined += e.Message + "\n"
+		}
+		assert.Contains(t, joined, "cilium-dbg", "warning must name the cilium-dbg feature floor")
+		assert.Contains(t, joined, "enableDefaultDeny", "warning must name the enableDefaultDeny feature floor")
+	})
+
+	t.Run("at floor (v1.16.0) emits zero below-floor warnings", func(t *testing.T) {
+		client := fake.NewSimpleClientset(ciliumAgentPodForTest("cilium-agent-2", "quay.io/cilium/cilium:v1.16.0"))
+		withFakeL7ClientFactory(t, client)
+
+		lg, logs := observedLoggerForTest()
+		maybeRunVersionPreflight(context.Background(), &rest.Config{}, lg)
+
+		assert.Equal(t, 0, logs.Len(), "no below-floor warnings expected at v1.16.0")
+	})
+}
+
 // TestParseCommonFlags_IgnoreProtocol_CaseInsensitiveAndCommaSep asserts the
 // flag is repeatable + comma-separated and parseCommonFlags surfaces the raw
 // input verbatim (normalization happens in validateIgnoreProtocols).

@@ -1,199 +1,180 @@
 # Feature Research
 
-**Domain:** MCP (Model Context Protocol) tool surface for a readonly Kubernetes/Cilium network-policy observability CLI (`cpg mcp`)
-**Researched:** 2026-07-20
-**Confidence:** HIGH (core MCP spec claims verified via Context7 + official modelcontextprotocol.io spec pages incl. the 2025-11-25 revision and the accepted SEP-2567; ecosystem-adoption claims and Claude Code specifics MEDIUM — WebSearch-sourced, cross-checked against at least one primary/official source each)
+**Domain:** Kubernetes/Cilium network-policy onboarding tooling + LLM-agent-facing ops tooling (repo-local Claude Code skills/agents on top of a readonly MCP server)
+**Researched:** 2026-07-22
+**Confidence:** MEDIUM-HIGH (audit-mode mechanics and Calico/Istio/JIT comparables are HIGH confidence, official-doc-backed; two specific version-floor facts are flagged LOW and need phase-level verification before being frozen into a compat table)
 
-**Scope note:** This file researches ONLY the new v1.5 MCP feature surface (`cpg mcp` subcommand, session tools, query tools). It does not re-research already-shipped `cpg generate`/`replay`/`explain` functionality — those are treated as existing capabilities the MCP layer wraps.
+Scope note: this file covers ONLY the five v1.6 feature areas (`--include-audit` ingestion, bootstrap artifact generation, managed audit window, cpg-dedicated skills/agents, Cilium version compat). Existing v1.0–v1.5 features are not re-researched.
+
+---
 
 ## Feature Landscape
 
 ### Table Stakes (Users Expect These)
 
-These are the baseline conventions every credible infra/observability MCP server (AWS CloudWatch, GitHub, Grafana) already follows. Missing them makes cpg's MCP server feel broken or unsafe to an LLM harness, even if the underlying data is correct.
+Features an SRE evaluating this milestone will consider non-negotiable — mostly because the upstream ecosystem (Cilium itself, Calico, Istio) already sets the expectation.
 
-| Feature | Why Expected | Complexity | Notes |
-|---------|--------------|------------|-------|
-| snake_case verb_noun tool names, no `cpg_` prefix | Ecosystem convention (GitHub MCP: `get_file_contents`, `list_branches`; AWS design guidelines mandate snake_case). Hosts already namespace by server — Claude Code's Agent SDK exposes tools as `mcp__cpg__start_session`, and the Messages API uses `cpg:start_session`. A redundant `cpg_` prefix in the tool's own `name` field is dead weight the model has to parse twice. | LOW | `start_session`, `get_status`, `stop_session`, `list_dropped_flows`, `list_policies`, `get_policy`, `get_evidence`, `get_cluster_health` |
-| Onboarding-level tool descriptions | Anthropic's tool-writing guidance: small description refinements measurably reduce agent error rates (cited SWE-bench improvement). Write descriptions as if explaining to a new teammate — spell out units, defaults, and what "dropped" vs "infra/transient" means. | LOW–MEDIUM | Highest-leverage differentiator is actually embedding cpg's drop-reason taxonomy semantics *in the description text* (see Differentiators) |
-| Tool annotations: `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint` | Spec-defined (`ToolAnnotations`, MCP 2025-11-25 schema). Every tool in this milestone is genuinely read-only — declaring it lets clients skip destructive-op confirmation friction and lets security-conscious hosts allowlist the server automatically. Spec explicitly warns these are hints from possibly-untrusted servers, so they must be *actually true*, not aspirational. | LOW | All 7 tools: `readOnlyHint: true`, `destructiveHint: false`. `start_session` gets `openWorldHint: true` (opens a live Hubble/K8s connection) and `idempotentHint: false` (second call while a session is active should error, not silently succeed). Query tools (`get_status`, `list_*`, `get_*`) get `openWorldHint: false` + `idempotentHint: true` — they only read the session tmpdir. |
-| Structured output: `content` (text) + `structuredContent` (JSON) + `outputSchema` | Formalized in the 2025-11-25 spec; the spec **requires** the text block for backward compat even when `structuredContent` is present. AWS design guidelines and Anthropic's tooling guide both push structured, schema-validated responses over prose parsing. | LOW–MEDIUM | cpg's internal types (dropclass results, evidence records, `cluster-health.json`) are already Go structs with JSON tags from v1.1–v1.3 — deriving `outputSchema` is largely mechanical, not new design work. |
-| `limit` + `cursor` pagination on any tool that can return many records | MCP's protocol-level cursor pagination (`nextCursor`) **only applies to `tools/list`, `resources/list`, `prompts/list`** — never to `tools/call` results. Any tool returning an unbounded set (flows, evidence samples) must implement its own filtering in the `inputSchema`, following the pattern AWS CloudWatch (`execute_cwl_insights_batch` auto-chunks at 10k records, `| limit N`) and the wider MCP pagination-pattern writeups converge on: explicit `limit`/`cursor` args, response always carries `total_count` (or estimate) and `has_more`. | MEDIUM | Applies to `list_dropped_flows` and `get_evidence` (evidence already has FIFO caps server-side from v1.1 — the tool just needs to expose windowing on top). `list_policies`/`get_cluster_health` are naturally small and don't need it. |
-| `isError: true` tool-execution errors with actionable text | Spec draws a hard line: **protocol errors** (unknown tool, malformed args) are standard JSON-RPC errors the model is unlikely to self-correct from; **tool execution errors** (`isError: true` in the result) carry text the model *can* act on ("session `sess_xyz` not found or already stopped — call `start_session` first"). Get this wrong and the LLM either silently ignores failures or retries blindly. | LOW | Concretely: "no active session," "Hubble Relay unreachable," "policy `name` not found in this session," "capture produced zero dropped flows yet" (informational, not necessarily `isError`). |
-| Explicit session handle (`session_id`) threaded through every session-scoped tool call | Directly backed by **SEP-2567 "Sessionless MCP via Explicit State Handles"** (Final, accepted 2026). The SEP explicitly calls out stdio servers relying on process-lifetime state as the *most common* anti-pattern today, and says such servers "SHOULD NOT rely on process-lifetime state and SHOULD migrate to explicit handles" — even though a stdio process isn't subject to the load-balancer/sticky-routing problem the SEP is mainly solving. Reasons that still apply to a single-process stdio server: opaque handles produce clear "expired/unknown session" errors instead of ambiguous "no session" states, they survive context compaction (they're plain strings in the transcript), and the design is forward-compatible if cpg ever ships an HTTP transport or multi-session support. | LOW–MEDIUM | `start_session(...)` returns `{"session_id": "sess_a1b2c3", "tmpdir": "...", "started_at": "..."}` in `structuredContent`. `get_status`, `stop_session`, `list_dropped_flows`, `list_policies`, `get_policy`, `get_evidence`, `get_cluster_health` all take `session_id` as a required argument. Per SEP-2567 guidance: keep the handle opaque (no encoded structure), document its lifetime in `start_session`'s description ("session and its tmpdir are destroyed on `stop_session` or server shutdown"), and return a specific "expired" error rather than a generic one. |
-| Readonly reality matches readonly annotations | Not a new decision (already an architectural constraint from PROJECT.md), but worth stating as a table-stakes *test surface*: no tool in the MCP server may call any K8s/Cilium mutating API or write outside the session tmpdir. This is what makes the `readOnlyHint` claims trustworthy rather than aspirational. | LOW (verification, not new code) | Enforced by construction: MCP tools are readers over `pkg/output`/`pkg/evidence`/`pkg/dropclass` artifacts already written by the existing `generate` pipeline running headless into the session tmpdir — there is no code path for the MCP layer to reach a K8s write API. |
+| Feature | Area | Why Expected | Complexity | Notes |
+|---------|------|--------------|------------|-------|
+| Ingest `Verdict_AUDIT` flows through the same pipeline as `DROPPED` | AUD-01 | Cilium's own "[Creating Policies from Verdicts](https://docs.cilium.io/en/stable/security/policy-creation/)" guide *is* the documented onboarding path — a policy generator that can't see audit verdicts can't participate in the sanctioned upstream workflow at all | LOW-MEDIUM | Draft already pinpoints the 5 filter sites; drop-reason decoding is verified unchanged on AUDIT flows (`decodeDropReason`/`decodeVerdict` in vendored parser) |
+| Single warning when a diagnostic mode yields zero expected signal | AUD-01 | Direct precedent already shipped in cpg: VIS-01 (v1.2) warns once when `--l7` is set but zero L7 records arrive. Operators expect the same courtesy for `--include-audit` — "you turned this on, nothing showed up, you probably forgot the enable step" | LOW | Reuse the exact VIS-01 single-warning pattern; do not invent a new UX for this |
+| Generated default-deny CNP actually enforces default-deny | AUD-02 | Table stakes at the level of "the artifact does what it says." **Load-bearing correctness gotcha found in research:** as of the versions checked, `enableDefaultDeny: {ingress: true, egress: true}` alone does **not** enforce default-deny — Cilium requires at least one (even empty) rule stanza present (`ingress: []` / `egress: []`) or the policy silently no-ops. This is tracked as an open upstream CFP (["Clarify the intent for policies with default deny specified with no rules", cilium/cilium#35558](https://github.com/cilium/cilium/issues/35558)), not yet fixed in shipping releases | LOW-MEDIUM | cpg's generator MUST emit the empty-rule-stanza form until/unless the CFP ships and the declared floor is raised past it. This is a correctness requirement, not a style choice — silent non-enforcement in a "safety" bootstrap artifact is the worst possible failure mode |
+| A written, ordered runbook accompanies the bootstrp policy | AUD-02 | Upstream's own guide is exactly this shape: enable audit → apply default-deny → observe verdicts (`hubble observe -t policy-verdict`) → write allow rules → disable audit/enforce. Operators already expect a checklist; upstream provides shell-command templates but explicitly **no automation tooling** — that gap is what cpg fills | LOW | Model the runbook's phase order 1:1 on the upstream guide so operators already familiar with Cilium docs recognize it immediately |
+| Warn-and-proceed on missing/incompatible cluster capability, never hard-abort | COMPAT-02 | Direct internal precedent: v1.2 pre-flight checks (`enable-l7-proxy`, `cilium-envoy` DaemonSet) already warn-and-proceed rather than abort, specifically because CI service accounts and reduced-permission operators must not be locked out. External precedent: `cilium status --verbose` and `cilium version` themselves report mismatches without refusing to run | LOW | Reuse the v1.2 pre-flight pattern verbatim for version-floor checks — same phrasing conventions, same "read-only verb, never abort" posture |
+| A declared, single-document compatibility floor | COMPAT-01 | Cilium itself ships a [Kubernetes Compatibility table](https://docs.cilium.io/en/stable/network/kubernetes/compatibility/) as "the authoritative reference," refreshed every release, precisely because — per the ecosystem's own framing — "ignoring this table before an installation or upgrade is one of the most common causes of Cilium deployment failures." A tool that itself has version-dependent features (bootstrap CNP form, `cilium-dbg` binary name) and doesn't declare its own floor repeats that failure mode one layer up | LOW | Documentation-only artifact; the cost is the verification legwork (see Gaps), not the writing |
+| Repo-local, versioned skill files discoverable by Claude Code without manual invocation | SKL-01..05 | Matches [official Claude Code skill-authoring guidance](https://docs.claude.com/en/docs/agents-and-tools/agent-skills/best-practices): skills committed to `.claude/skills/` in the repo are picked up by every clone, with live change detection — this is the documented, expected mechanism for "team conventions enforced in every session," not a novel pattern cpg invents | LOW | Constraint is entirely about following the platform's own conventions (concise SKILL.md, <500 lines, clear name+description for triggering), not new product code |
 
 ### Differentiators (Competitive Advantage)
 
-Not required to be "a working MCP server," but this is where cpg's MCP layer earns being noticeably better than a naive wrapper around the existing CLI output.
+Where cpg goes further than both the upstream manual workflow and adjacent generic tooling.
 
-| Feature | Value Proposition | Complexity | Notes |
-|---------|-------------------|------------|-------|
-| Dual preview + reference pattern on `list_dropped_flows` / `get_evidence` | Production MCP reporting pipelines that dump full result sets routinely burn 70–80% of context before analysis starts. The documented mitigation (seen in "ResourceLink for large datasets" writeups) is a **preview sample in `content` (a handful of representative flows/samples, human-readable) + full counts and a stable reference in `structuredContent`** so the model can reason immediately without ingesting everything, and fetch more only if it decides it needs to. | MEDIUM | E.g., `list_dropped_flows` text block: "42 dropped flows (18 policy-actionable, 24 infra/transient — see `get_cluster_health`). Showing first 5." Full 42 in `structuredContent.flows` bounded by `limit`, with `has_more`/`next_cursor` for the rest. |
-| `list_policies` (cheap metadata) + `get_policy` (full YAML) split | Mirrors AWS CloudWatch's `describe_log_groups` → `analyze_log_group` split and GitHub's list/get pattern. Avoids forcing the model to pull every generated policy's full YAML into context just to see how many exist or pick one to inspect. | LOW–MEDIUM | `list_policies` returns `{name, path, rule_count}[]` only; `get_policy(session_id, name)` returns the YAML as inline text (individual policy files are small — no pagination needed here, unlike flows/evidence). |
-| Reuse cpg's existing `explain` JSON renderer verbatim for `get_evidence` | `cpg explain --output json` (shipped v1.1/v1.2, with `--http-method`/`--http-path`/`--dns-pattern` filters shipped v1.2) is already a machine-consumable, battle-tested rendering of per-rule flow evidence. Piping that renderer straight into `structuredContent` means the MCP surface and the CLI surface can never drift apart, and it's close to zero new design work — the format decision was already made and tested. | LOW | This is the single highest reuse-to-value ratio item in the whole milestone. |
-| Plain absolute tmpdir paths instead of MCP resources for file-like artifacts | MCP `resources/read` support is inconsistent across hosts today — several writeups converge on "most MCP clients don't support Resources well, if at all," and adoption is a chicken-and-egg problem (servers don't build them because clients don't surface them, and vice versa). Concretely for cpg's stated target harness, Claude Code exposes resources only via manual `@mention` autocomplete (a human action), which doesn't fit a model-driven diagnostic loop. Because cpg's session tmpdir lives on the same filesystem as the harness process (stdio transport, harness spawns the server), returning the **absolute path as a plain string field** lets Claude Code's own `Read`/`Glob` tools open the file directly — zero MCP-resources plumbing, zero client-support risk. | LOW | Return `path` alongside YAML text in `get_policy`, and the evidence/health file paths in their respective tool outputs. This is a pragmatic call specific to a local-stdio, same-filesystem deployment — it would not hold for a remote/HTTP MCP server. |
-| Embed remediation URLs directly in `get_cluster_health` output | `cluster-health.json` (shipped v1.3) already carries a Cilium-docs remediation URL per drop reason. Surfacing that verbatim in the tool's `structuredContent` saves the LLM a follow-up web-search round trip mid-diagnosis — free value from an existing artifact. | LOW | Pure passthrough of an existing file. |
-| Tool descriptions that teach the dropclass taxonomy inline | cpg's core differentiator (per PROJECT.md) is the drop-reason classifier distinguishing policy-actionable drops from infra/transient noise. If `list_dropped_flows`'s description doesn't explain that distinction, the LLM is liable to propose policies for infra drops (exactly the failure mode the classifier exists to prevent) or ask the user redundant clarifying questions. | LOW | Cheap to write, disproportionately valuable — this is where "even small description refinements yield dramatic improvements" (Anthropic) applies most directly to cpg's actual domain risk. |
+| Feature | Area | Value Proposition | Complexity | Notes |
+|---------|------|--------------------|------------|-------|
+| Automated end-to-end onboarding (bootstrap → observe → generate → enforce) | AUD-01/02 | Upstream's own guide is explicit that it offers **"shell command templates but no automation tooling recommendations"** for going from verdicts to policies. cpg closing that gap — generation is already cpg's core value prop — is the single clearest differentiator in this milestone | MEDIUM | Builds directly on existing `generate`/`replay` pipeline; the new work is ingestion widening + bootstrap generation, not new policy logic |
+| cpg-managed, lifecycle-bound audit window (flip → watch → auto-revert on stop/crash/TTL) | AUD-03 | This is a stronger safety guarantee than **every** comparable pattern found: Cilium's own per-endpoint audit flip is manual and "restarting the Cilium pod resets it" (i.e., reset is accidental, not managed); Calico's staged policies require a manual `kind:` edit to promote (no auto-expiry at all); shell-script rollback approaches have exactly the failure modes the draft names (forgotten rollback, mis-ordering, terminal death stranding the window). A session-scoped mutation that structurally cannot outlive its owning process (v1.5's SESS-05 bounded fan-out, e2e-proven under both graceful stop and ungraceful disconnect) is closer to [Teleport-style JIT access](https://goteleport.com/learn/just-in-time-access-for-amazon-eks/) (time-boxed, auto-revoked, no standing privilege) than to anything in the network-policy space specifically | HIGH | Highest complexity and highest differentiation in the milestone — matches the draft's own framing as the item needing a discuss-phase decision. New-pod-watcher auto-flip in particular has **no upstream or comparable-tool equivalent found**: neither Cilium's manual guide nor Calico's staged-policy docs address "pod created mid-window" at all |
+| Typed, taxonomy-teaching MCP tools vs. generic command pass-through | SKL-01..05 / all MCP surface | Directly contrasted against [Azure's `mcp-kubernetes`](https://github.com/Azure/mcp-kubernetes), which exposes Cilium/Hubble as raw `call_cilium`/`call_hubble` command-execution tools ("straightforward command pass-through rather than domain-specific operations"). cpg's existing QRY-01..05 tools (paginated, schema'd, `dropclass`-aware) are already a structural step up; extending that discipline to bootstrap/compat tools (rather than adding a raw exec escape hatch) is the differentiator to protect | LOW (discipline, not code) | This is as much an anti-pattern-to-avoid as a feature — see Anti-Features below |
+| Structural, mutation-tested readonly proof extended to a "readonly by default, provably scoped mutation behind an explicit flag" two-mode proof | AUD-04 | No comparable tool found does this. Generic K8s/Cilium MCP wrappers (Azure `mcp-kubernetes`, `containers/kubernetes-mcp-server`) rely on RBAC and documentation for their safety story. cpg's SEC-01 (RTA callgraph reachability, mutation-tested) proving the claim in CI is a genuine differentiator worth carrying forward rather than diluting | MEDIUM | Conditional on the AUD-03 surface decision (see Dependencies) — if CLI-only is chosen, this shrinks to "re-confirm zero write verbs still holds with new readonly tools added," not a real two-mode proof |
+| Cilium version detection + feature gating exposed to the LLM (not just a README table) | COMPAT-02 | Comparable tools stop at documentation (Cilium's own compat table is static/manual). Surfacing "this cluster is Cilium X.Y, feature Z unavailable" inside `start_session`/`get_status` lets the LLM reason about it without guessing or hallucinating a feature that isn't there — directly relevant given the project's own prior decision to drop AI-assisted semantic analysis over hallucination risk | MEDIUM | Reuses `ClassifierVersion` semver precedent (`pkg/dropclass`) as an existing in-repo pattern for "surface a version pairing" |
+| Purpose-built, lightweight repo-local skills vs. a general cloud-native agent framework | SKL-01..05 | [kagent](https://github.com/kagent-dev/kagent) (CNCF sandbox) is the closest "AI agents for cloud-native ops" comparable, but it's a whole additional system: a Kubernetes controller + CRDs for agents/tools + a separate Python reasoning engine + OTel pipeline, aimed at being a general framework across Istio/Argo/Prometheus. cpg's approach — versioned markdown skills consumed directly by Claude Code, zero extra infrastructure — is deliberately a much lighter tier, appropriate for a single-purpose CLI+MCP tool rather than a platform | LOW | Confirms the repo-local-only constraint (§3.D of the draft) is the right call, not under-ambition — running a kagent-style controller to support 5 skills for one CLI tool would be a scope explosion |
 
 ### Anti-Features (Commonly Requested, Often Problematic)
 
-| Feature | Why Requested | Why Problematic | Alternative |
-|---------|---------------|------------------|-------------|
-| Mutating/`apply_policy` tool in v1.5 | Natural conversational next step after "review this generated policy" is "just apply it" | Breaks the milestone's explicit readonly guarantee (no cluster mutation); no `cpg apply` CLI command exists yet to wrap in the first place (still "Planned" in PROJECT.md); an LLM-triggered cluster write without a hard human confirmation gate is a real production-safety risk for a default-deny cluster | Defer until `cpg apply` (dry-run-by-default, `--force` to apply) ships as a CLI command; if/when an MCP `apply` tool is added later, gate it behind explicit non-readonly opt-in plus a confirmation step, not a bare tool call |
-| Elicitation (form-mode) for collecting session parameters (namespace, duration, filters) mid-call | Feels like better UX than requiring the LLM to have all args upfront | Elicitation is a newer capability (URL mode is brand-new in 2025-11-25) with materially weaker client support than tools themselves; spec requires servers to securely bind elicitation state to user identity, which is disproportionate machinery for a single-user local stdio process; the conversational harness already gathers these parameters from the human before calling `start_session` | Take all session parameters as ordinary `start_session` arguments (namespace, `--all-namespaces` equivalent, duration, `--l7`, `--ignore-drop-reason` equivalent); the LLM asks the user in natural language, same as it does for any other tool call today |
-| Sampling (server calls back into the client's LLM for semantic judgment, e.g. "is this drop plausible") | MCP's `sampling/createMessage` exists precisely for "let the server borrow the client's LLM" | This is the same AI-assisted semantic-plausibility idea PROJECT.md already explored and explicitly shelved on 2026-04-25 (hallucination risk on confident-sounding reasoning, signal quality tied to often-poor label hygiene, deterministic blast-radius analysis judged more useful) — MCP sampling would just be the transport for reintroducing it. It also inverts the milestone's own stated design principle: "cpg stays deterministic, LLM brings the intelligence." | Keep cpg's tools purely deterministic; the outer LLM harness (which already has full conversational context) does the semantic reasoning over the structured facts cpg provides |
-| MCP prompts (canned slash-command templates, e.g. `/cpg:diagnose`) | Looks like free UX — "give users a one-shot diagnostic macro" | Adoption is thin even among comparable infra MCP servers (CloudWatch, Grafana, GitHub don't lead with prompts); prompts are **user-controlled** by spec design (surfaced as something a human explicitly selects, e.g. a slash command), which fits a manual runbook better than an autonomous conversational diagnosis flow; premature templating risks freezing a workflow before real usage patterns are known | Rely on well-written tool descriptions plus README/CLAUDE.md-level guidance for the harness; revisit only if usage data shows a specific multi-tool sequence gets invoked identically often enough to be worth canning |
-| Progress notifications (`notifications/progress`) for the capture session | "Long-running Hubble capture" sounds like the canonical progress-notification use case | Progress notifications correlate to a *single blocking request* via a `progressToken` the client attaches to that request. cpg's chosen architecture (`start_session` returns immediately; a background capture writes to the tmpdir; `get_status` is polled separately) never has a call that blocks for the capture's duration — there's nothing for a progress notification to attach to. Adding the primitive anyway duplicates the status channel and adds protocol plumbing with no UX gain. | `get_status(session_id)` already returns live counters (flows seen, policies generated, elapsed time) on demand — that response *is* the progress signal, polled instead of pushed |
-| Unbounded/unfiltered flow or evidence dumps ("just return everything cpg captured") | Simplest possible implementation; "let the model see all the data" | Directly causes the token-budget blowout this research flags repeatedly — Claude Code's own default tool-response ceiling is ~25k tokens (per Anthropic's tool-writing guidance), and a live capture can trivially produce more dropped-flow records than that in a busy cluster | Mandatory `limit`+`cursor` with sane defaults (table stakes item above); this row exists to name the failure mode the pagination requirement is specifically preventing |
-| MCP resources as the *primary* (or only) access path for policy YAML / evidence | Resources are the protocol's "designed for this" primitive for file-like, application-driven data | Documented, real adoption gap: several MCP hosts implement `resources/list` but not `resources/read`, or read but not `subscribe`; Claude Code's own resource UX is manual `@mention`, not something the model reaches for autonomously mid-diagnosis | Tools + plain file paths (see Differentiators); resources can be added later as a *secondary* convenience once client support is less patchy, without it being load-bearing |
+| Feature | Why it looks appealing | Why problematic | Alternative |
+|---------|------------------------|------------------|-------------|
+| Daemon-wide `policy-audit-mode=true` convenience command/flag | "One flag, whole cluster in audit — simplest possible onboarding" | Confirmed independently by both the draft's verified code facts and [official Cilium docs](https://docs.cilium.io/en/stable/security/policy-creation/): it **"is not recommended for production deployment"** and suspends enforcement of ALL existing policies cluster-wide, not just the namespace being onboarded — a single onboarding action would blind the whole cluster's enforcement | Namespace scoping via the synthesized approach already chosen: namespaced default-deny CNP + per-endpoint audit flips scoped to that namespace's pods only |
+| Free-floating `enable_audit`/`disable_audit` MCP tools (no lifecycle binding) | Feels more flexible — LLM or operator can flip audit on/off at will, any time | This is exactly the shape [MCP security guidance](https://stytch.com/blog/mcp-security/) warns about — a state-mutating tool with no automatic cleanup path is a standing privilege, not a JIT one; an LLM hallucination, dropped connection, or forgotten follow-up call leaves a namespace silently unenforced indefinitely. Contrast with JIT/break-glass conventions ([Teleport](https://goteleport.com/learn/just-in-time-access-for-amazon-eks/), [k8s-breakglass](https://github.com/telekom/k8s-breakglass)) where time-boxing and auto-revoke are the entire point | Session-scoped property as already designed in the draft: `start_session{audit_bootstrap, audit_ttl}` → revert bound to the existing SESS-05 fan-out (stop/crash/SIGTERM/TTL), not a separate mutable toggle |
+| Generic "exec arbitrary `cilium-dbg`/`kubectl` command" pass-through tool | Simplest implementation — one tool covers audit flips, version checks, anything else that comes up later | This is literally what [Azure `mcp-kubernetes`](https://github.com/Azure/mcp-kubernetes)'s `call_cilium`/`call_hubble` tools do, and it defeats the entire SEC-01 structural-readonly value proposition: a reachability audit can prove "no typed write-verb call is reachable," but it cannot bound what an arbitrary shelled-out command string does. It also reintroduces exactly the "undetectable by any gateway tool" scope-enforcement gap MCP security writeups flag as the core problem with current MCP practice | Keep every mutation a named, typed, single-purpose tool (or CLI subcommand) with a fixed, auditable set of side effects — exactly the SEC-01 discipline already applied to the 8 existing tools |
+| Custom `cpg.io/audit-mode: enabled`-style CNP annotation to fake per-policy audit scoping | Would make audit scope feel declarative/GitOps-friendly, matching how the rest of the CNP is authored | **There is no native per-policy or per-namespace audit scope in Cilium** (verified fact, §2 of the draft) — Cilium would simply ignore such an annotation. Shipping it would be a silently-inert feature that misleads operators into thinking they've scoped something they haven't | Keep the namespace-scoping synthesis explicit and mechanical (namespaced CNP selection + per-endpoint flips), never implied via an annotation Cilium doesn't understand |
+| Full CI cluster test matrix across every supported Cilium version (kind + cilium install per version) | Highest-confidence way to *prove* the compat table is correct | Explicitly heavy — draft already calls this out as disproportionate, and it matches the ecosystem norm: even Cilium's own K8s compatibility table is a **published, manually-curated reference**, not a live per-PR matrix test across every historical version pair for downstream consumers | Static, dependency-derived matrix (COMPAT-01) + runtime warn-and-proceed detection (COMPAT-02) — verification happens against the live cluster at connect-time, not against a synthetic matrix in CI |
+| A single mega-skill/agent file that inlines all 5 workflows (triage + onboarding + review + health-report + smoke) | Fewer files, "one skill to rule them all," less to maintain | Directly contradicts [official skill-authoring guidance](https://docs.claude.com/en/docs/agents-and-tools/agent-skills/best-practices): "multiple small Skills are preferable to one large Skill (composition over monoliths)." A 5-in-1 skill also blows past the recommended <500-line SKILL.md size and makes Claude's triggering-on-description mechanism far less precise (five different intents behind one description) | Keep the 5 skills separate per the draft's table; a dedicated `cpg-operator` **subagent** (a different architectural layer — context isolation / tool-scoping, not a mega-skill) is a legitimate, distinct option and is not this anti-pattern — see Dependency Notes |
+| `apply_policy`/CNP-create-or-delete MCP tool for allow rules | "Why generate a YAML the human still has to apply by hand" | Explicitly out of scope, carried forward unchanged from v1.5 (§4 of the draft) — applying generated allow-rule policies stays a human act. Folding this into v1.6 would also collide with the SEC-01 two-mode proof's stated boundary ("v1 mutates ONLY endpoint audit config... CNP apply/delete = possible later extension, one mutation tier above") | Keep policy application entirely manual; if ever revisited, it's a distinct, later, more-privileged milestone — not bundled into audit-window scope |
 
-#### Not Applicable (transport-scoped, not a rejected feature)
-
-- **OAuth 2.1 / MCP Authorization spec** — The MCP authorization specification is explicitly scoped to HTTP transports. The spec states stdio implementations "SHOULD NOT" follow it and should instead retrieve credentials from the environment. `cpg mcp` is stdio-only (the harness spawns the process, per the milestone's own framing) and already gets cluster access the same way the existing CLI does (kubeconfig / env). This isn't a feature that was considered and rejected — the concern simply doesn't arise for this transport. No REQ-ID needed; worth a one-line note in the roadmap so a future reviewer doesn't flag its absence as a gap.
+---
 
 ## Feature Dependencies
 
 ```
-start_session(namespace?, all_namespaces?, duration?, l7?, ignore_drop_reason?)
-    └──requires──> pkg/hubble + pkg/flowsource (existing live gRPC connection, auto port-forward)
-    └──requires──> pkg/policy + pkg/output (existing generation/writing, redirected to session tmpdir via os.MkdirTemp)
-    └──requires──> pkg/evidence (existing schema v2 writer, FIFO caps — reused unchanged)
-    └──requires──> pkg/dropclass (existing classifier + cluster-health.json writer — reused unchanged)
-    └──produces──> session_id (opaque handle, SEP-2567 pattern)
+AUD-01 (--include-audit ingestion)
+    └──gates the whole onboarding loop being observable──> AUD-02 (bootstrap artifact generation)
+                                                                └──namespace target for──> AUD-03 (managed audit window)
+                                                                                                └──surface choice determines scope of──> AUD-04 (SEC-01 two-mode proof)
 
-get_status(session_id) / stop_session(session_id) / list_dropped_flows(session_id) /
-list_policies(session_id) / get_policy(session_id, name) / get_evidence(session_id, ...) /
-get_cluster_health(session_id)
-    └──requires──> start_session having minted session_id (session must exist / not be expired)
-    └──requires──> tmpdir artifacts already written by the session's background writers
-    └──requires("readers over tmpdir only")──> milestone constraint: query tools never touch the
-                    live cluster directly — this is why an "explain vs live cluster diff" tool is
-                    NOT proposed here: existing dedup (both local-file and live-cluster, shipped
-                    v1.0) already runs upstream during generation, so tmpdir policies are already
-                    "new, not duplicate" by construction
+COMPAT-01 (declared matrix) ──must exist before──> COMPAT-02 (runtime detection compares against it)
+COMPAT-02 ──feature-gates──> AUD-02 (bootstrap YAML form: enableDefaultDeny vs legacy, by version)
+COMPAT-02 ──feature-gates──> AUD-03 (cilium-dbg vs cilium binary selection, by version)
 
-get_evidence(session_id, target, http_method?, http_path?, dns_pattern?)
-    └──reuses──> existing `cpg explain` JSON renderer (v1.1/v1.2) — output format decision already
-                    made and tested; MCP layer does not reinvent it
+SKL-01 (cpg-triage)        ──requires only──> v1.5 MCP (no v1.6 dependency — shippable first, independently)
+SKL-03 (cpg-policy-review) ──requires only──> existing CLI (`cpg explain`) (no v1.6 dependency)
+SKL-04 (cpg-health-report) ──requires only──> existing cluster-health.json (no v1.6 dependency)
+SKL-05 (cpg-mcp-smoke)     ──requires only──> existing mcp_e2e_test.go infra (no v1.6 dependency)
+SKL-02 (cpg-audit-onboard) ──requires──> AUD-01 + AUD-02 (+ AUD-03 IF the MCP-driven surface is chosen)
 
-stop_session(session_id)
-    └──requires──> start_session
-    └──triggers──> tmpdir cleanup (also triggered at server process shutdown — readonly guarantee
-                    depends on both cleanup paths existing, not just the happy path)
-
-Tool annotations (readOnlyHint, etc.) ──enhances──> client trust / auto-approval UX (no protocol
-                    dependency — pure metadata)
-
-limit+cursor pagination ──enhances──> list_dropped_flows, get_evidence (prevents the token-budget
-                    failure mode named in Anti-Features)
-
-MCP resources / elicitation / sampling / prompts ──conflicts with──> the milestone's own design
-                    principle ("cpg stays deterministic, LLM brings the intelligence") and/or the
-                    readonly guarantee — this is why each is classified as anti-feature/deferred
-                    rather than merely "not yet built"
+cpg-operator agent (optional) ──enhances──> SKL-01, SKL-02 (tool-scoping/context-isolation layer, not a functional dependency)
 ```
 
 ### Dependency Notes
 
-- **All session-scoped tools require `start_session`'s handle:** per SEP-2567, `session_id` is an ordinary string threaded through every subsequent call — there is no protocol-level session concept to lean on instead, even though the transport is stdio (single process). This is a hard prerequisite for every other tool's design, not just an implementation detail.
-- **Query tools require the session's tmpdir artifacts, not the live cluster:** this is a milestone-level architectural constraint ("query tools: ... all implemented as readers over the session tmpdir artifacts"), and it is *enabled by* existing dedup already having run during generation — the dependency chain means query-tool correctness is inherited from v1.0's dedup logic, not re-derived.
-- **`get_evidence` reuses the existing `explain` renderer:** this is a deliberate low-complexity choice — the alternative (a new bespoke MCP-only evidence format) would fork cpg's output semantics in two places that need to stay in sync forever.
-- **Resources/elicitation/sampling/prompts conflict with the milestone's design principle:** all four MCP primitives are technically available but each one either reopens a product decision already made (sampling → shelved AI-plausibility feature) or works against the stated goal of a small, deterministic, readonly tool surface (resources → adoption gap and unneeded indirection; elicitation → statefulness/security overhead for a single-user process; prompts → premature templating). Listing this as a conflict, not just an omission, is meant to keep future milestones from re-litigating each one independently.
+- **AUD-01 gates AUD-02/03's *value*, not their buildability.** Bootstrap artifact generation (CNP + runbook text) is pure generation with no runtime AUDIT-flow dependency and could technically be built in isolation — but per the draft, "without this piece, any bootstrap tooling opens a window cpg cannot see," so shipping AUD-01 first is the correct sequencing regardless of technical independence. This is a value-sequencing dependency, not a code dependency.
+- **AUD-04 is conditional on the AUD-03 surface decision, not a fixed-scope item.** If the CLI-only surface is chosen (MCP stays pure-readonly, bootstrap tool returns the command for a human to run), AUD-04 shrinks to "reconfirm the existing SEC-01 zero-write-verb guarantee still holds with the new readonly tools added" — a much smaller task than a genuine two-mode structural proof. Requirements definition should size AUD-04 only after AUD-03's surface is picked, or scope it as two explicit sub-variants.
+- **SKL-02 is the one skill with a hard v1.6 dependency; the other four are independent and could ship in an earlier phase than the audit-mode features themselves.** This matters for phase ordering — SKL-01/03/04/05 have zero technical reason to wait for AUD-01..04 and could be sequenced as an early, low-risk phase that also serves as validation/dogfooding for the existing v1.5 MCP surface before the higher-complexity audit-window work begins.
+- **`cpg-operator` agent vs. per-skill invocation is an architecture choice, not a functional dependency** — per official guidance, subagents earn their keep specifically for context isolation and *tool-scoping* (a subagent's allowed toolset can be restricted independently of the main conversation's). A dedicated `cpg-operator` agent would matter most as a defense-in-depth measure for AUD-03/SKL-02 specifically: an agent whose tool allowlist is limited to the MCP surface reduces blast radius if a triage/onboarding session is ever steered off-task, more than it matters for the simpler, already-readonly skills (SKL-01/03/04/05). This is evidence for the discuss-phase decision, not a resolution of it.
+- **COMPAT-01 has no code dependency and should be sequenced early** — it is pure documentation derived from already-known/vendored dependencies, and COMPAT-02's runtime checks need the matrix to exist first to have something to compare against.
+
+---
 
 ## MVP Definition
 
-### Launch With (v1.5)
+Framed as v1.6 phase-scoping guidance (this is a subsequent milestone on a shipped product, not a 0-to-1 launch).
 
-- [ ] `start_session` / `get_status` / `stop_session` with explicit opaque `session_id` — the load-bearing pattern every other tool depends on
-- [ ] `list_dropped_flows` with `limit`/`cursor`/`since`/namespace/dropclass filtering — the tool most likely to blow a token budget if shipped without pagination
-- [ ] `list_policies` + `get_policy` (list/get split) — avoids bulk-dumping every generated YAML
-- [ ] `get_evidence` reusing the existing `explain` JSON renderer — near-zero-cost, high-consistency reuse
-- [ ] `get_cluster_health` as a thin passthrough of the existing `cluster-health.json`
-- [ ] Tool annotations (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`) on all 7 tools, truthfully set
-- [ ] `structuredContent` + `outputSchema` on every data-returning tool, text block always included for back-compat
-- [ ] `isError`-based tool execution errors with specific, actionable messages (not generic failures)
-- [ ] Descriptions written at onboarding depth, explicitly encoding the policy-actionable vs infra/transient distinction
+### Ship First (load-bearing, low-risk)
 
-### Add After Validation (v1.5.x)
+- [ ] **AUD-01** `--include-audit`/`include_audit` ingestion + zero-signal warning — everything else in the milestone is inert without it; draft explicitly says "ship first"
+- [ ] **AUD-02** Bootstrap artifact generation (CNP + runbook) — readonly, uncontroversial, but must get the `enableDefaultDeny` + empty-rule-stanza correctness right (see Table Stakes)
+- [ ] **COMPAT-01** Declared compatibility matrix — pure documentation, cheap, and needed as the reference point for COMPAT-02
+- [ ] **SKL-01, SKL-03, SKL-04, SKL-05** — zero v1.6 feature dependency, buildable and shippable independently of the audit-mode work; low complexity, good early validation of the v1.5 MCP surface
 
-- [ ] `resource_link` as a *secondary* access path for policy YAML, once real usage shows the plain-path approach is hitting a client-support wall — trigger: a target harness that can't read local files directly
-- [ ] `list_sessions` — only useful if/when multi-session-per-process is ever supported; the current single-session-at-a-time design (one background capture, one ephemeral tmpdir) makes it dead weight today
+### Add After the Audit-Window Decision (medium-to-high complexity, dependent on discuss-phase resolution)
 
-### Future Consideration (v2+)
+- [ ] **AUD-03** Managed audit window — highest complexity and the one item with an open surface decision (MCP flag-gated vs. CLI-only); do not start implementation until that decision is made
+- [ ] **AUD-04** SEC-01 two-mode evolution — size depends directly on AUD-03's outcome
+- [ ] **SKL-02** cpg-audit-onboard — depends on AUD-01 + AUD-02, and on AUD-03 if the MCP-driven surface is chosen
+- [ ] **COMPAT-02** Runtime detection + feature gating — depends on COMPAT-01; feeds AUD-02's version-gated YAML form and AUD-03's `cilium-dbg`/`cilium` binary selection
 
-- [ ] Mutating `apply_policy` tool — defer until the standalone `cpg apply` CLI command exists (still "Planned," not built) and until there's a considered human-confirmation gate design; this is the one place where elicitation might eventually earn its keep ("confirm apply to cluster?")
-- [ ] Progress notifications — only worth revisiting if a future tool introduces a genuinely long *blocking* call; the session/status-polling architecture chosen for v1.5 doesn't have one
+### Explicitly Not This Milestone (already correctly deferred)
+
+- [ ] CNP apply/delete via MCP (any tier) — stays out of scope per carried-forward v1.5 constraint
+- [ ] Full CI cluster test matrix across Cilium versions — static matrix + runtime detection substitutes for it
+- [ ] A generic/raw command-passthrough MCP tool — never add one, regardless of convenience pressure
+
+---
 
 ## Feature Prioritization Matrix
 
-| Feature | User Value | Implementation Cost | Priority |
-|---------|------------|----------------------|----------|
-| Explicit `session_id` handle (SEP-2567 pattern) | HIGH | LOW | P1 |
-| Tool annotations (readOnly/destructive/idempotent/openWorld) | HIGH | LOW | P1 |
-| `structuredContent` + `outputSchema` on query tools | HIGH | MEDIUM | P1 |
-| `limit`/`cursor` pagination on flows + evidence | HIGH | MEDIUM | P1 |
-| `isError` actionable error reporting | HIGH | LOW | P1 |
-| `list_policies`/`get_policy` split | MEDIUM | LOW | P1 |
-| Reuse `explain` JSON renderer for `get_evidence` | HIGH | LOW | P1 |
-| `get_cluster_health` passthrough | MEDIUM | LOW | P1 |
-| Plain file paths instead of MCP resources | MEDIUM | LOW | P1 |
-| Domain-teaching tool descriptions (dropclass semantics) | HIGH | LOW | P1 |
-| `resource_link` secondary path for policy YAML | LOW | LOW | P3 |
-| MCP prompts | LOW | LOW | P3 (defer) |
-| Progress notifications | LOW | MEDIUM | P3 (skip for v1.5) |
-| Elicitation | LOW | MEDIUM | P3 (skip for v1.5) |
-| Sampling | — (anti-feature) | — | Reject |
-| Mutating/`apply_policy` tool | — (anti-feature for v1.5) | — | Reject for v1.5 |
+| Feature (REQ ID) | User Value | Implementation Cost | Priority |
+|-------------------|------------|----------------------|----------|
+| AUD-01 `--include-audit` ingestion | HIGH | LOW-MEDIUM | P1 |
+| AUD-02 Bootstrap artifact generation | HIGH | LOW-MEDIUM | P1 |
+| COMPAT-01 Declared matrix | MEDIUM | LOW | P1 |
+| SKL-01 cpg-triage | MEDIUM-HIGH | LOW | P1 |
+| SKL-03 cpg-policy-review | MEDIUM | LOW | P1 |
+| SKL-04 cpg-health-report | MEDIUM | LOW-MEDIUM | P1 |
+| SKL-05 cpg-mcp-smoke | MEDIUM (release-quality signal) | LOW | P1 |
+| AUD-03 Managed audit window | HIGH (biggest differentiator) | HIGH | P2 (blocked on discuss-phase surface decision) |
+| AUD-04 SEC-01 two-mode proof | HIGH (trust/safety claim) | MEDIUM (conditional) | P2 |
+| SKL-02 cpg-audit-onboard | HIGH | MEDIUM | P2 |
+| COMPAT-02 Runtime detection + gating | MEDIUM-HIGH | MEDIUM | P2 |
+| `cpg-operator` agent (optional) | MEDIUM (defense-in-depth) | MEDIUM | P3 |
 
 **Priority key:**
-- P1: Must have for launch
-- P2: Should have, add when possible
-- P3: Nice to have, future consideration
+- P1: Ship-first, low-risk, no blocking open decisions
+- P2: Valuable, but sized/sequenced by the AUD-03 surface decision
+- P3: Nice to have, genuinely optional per the draft's own framing
 
-## Competitor / Reference Analysis
+---
 
-Real-world MCP servers examined for prior art, all in the infra/observability or session-automation space:
+## Comparable-Tool / Pattern Analysis
 
-| Concern | AWS CloudWatch MCP | GitHub MCP | Playwright / Browserbase MCP | cpg mcp (proposed) |
-|---------|--------------------|------------|-------------------------------|---------------------|
-| Tool naming | snake_case, verb_noun (`get_metric_data`, `analyze_log_group`) | snake_case, verb_noun (`get_file_contents`, `list_branches`) — every tool maps to exactly one toolset | Short verbs (`start`, `end`, `navigate`, `act`, `observe`, `extract`) | snake_case, verb_noun, no redundant `cpg_` prefix (host auto-namespaces) |
-| Long-running work | `execute_log_insights_query` returns a query ID; separate `get_logs_insight_query_results` polls it; `cancel_logs_insight_query` to abort | Mostly synchronous CRUD; IDs (issue/PR numbers) are the natural handles | Session stays open across tool calls; tools operate within it | `start_session` returns `session_id` immediately (background capture); `get_status` polled; `stop_session` to end |
-| Pagination | `execute_cwl_insights_batch` auto-chunks at a 10k-record limit; `\| limit N` clause pattern | Cursor-based, pass-through of GitHub API pagination | N/A (not a bulk-data domain) | `limit`+`cursor` args, `total_count`/`has_more` in response |
-| Session/state model | Query ID is the de facto explicit handle (predates SEP-2567 but same shape) | Stateless — every call self-contained, resource IDs (issue/PR numbers) act as handles | Explicit `start`/`end` tools bound a session; `--isolated` flag for fresh-per-session state | Explicit opaque `session_id`, single active session per process |
-| Read-only posture | Cross-account `profile_name='prod-readonly'` convention; IAM/SCP enforce no mutation | N/A (GitHub MCP is intentionally read/write, gated by scopes) | N/A (browser automation is inherently interactive/mutating) | Every tool `readOnlyHint: true`; **no mutating tool exists at all** in the v1.5 surface (architectural, not a flag) |
+| Pattern | How it works there | cpg's approach |
+|---------|--------------------|-----------------|
+| **Cilium's own "Creating Policies from Verdicts"** ([docs](https://docs.cilium.io/en/stable/security/policy-creation/)) | 5 fully-manual phases: enable audit (daemon-wide or per-endpoint) → apply default-deny CNP → `hubble observe -t policy-verdict` → hand-write allow policies → disable audit/enforce. Shell-command templates only, "no automation tooling recommendations" | Automates phases 2-4 end-to-end (bootstrap generation + AUDIT ingestion + existing policy-generation pipeline); phase 1 (enable) and 5 (enforce) are the contested "who mutates" surface (AUD-03 open decision) |
+| **Calico staged network policies** ([Tigera](https://www.tigera.io/blog/dry-run-your-kubernetes-network-policies-with-calico-staged-network-policies/)) | A first-class CRD tier (`StagedNetworkPolicy`/`StagedKubernetesNetworkPolicy`/`StagedGlobalNetworkPolicy`) that logs match verdicts without enforcing; promoted to real enforcement by manually changing the resource `kind:`. No time-based expiry — promotion/rollback is entirely a human, manual step | cpg has no equivalent first-class "staged CNP" resource (Cilium has no such native tier — confirmed: only daemon-wide or per-endpoint audit flags exist, not a policy-kind distinction) — cpg instead layers a managed, TTL-bound *process* (the audit window) on top of Cilium's coarser primitives, which is a stronger automatic-safety story than Calico's manual-promotion model, at the cost of not being a native CRD-level feature |
+| **Istio mTLS PERMISSIVE → STRICT migration** ([istio.io](https://istio.io/latest/docs/tasks/security/authentication/mtls-migration/)) | Namespace-by-namespace phased rollout (e.g., staging → dev → internal-tools → production), confirming stability before moving to the next scope, then a final mesh-wide STRICT policy | Validates the namespace-scoped, phased-rollout shape of cpg's onboarding design (one namespace's audit window at a time) as the industry-standard way to limit blast radius during a "lock down gradually" migration |
+| **JIT / break-glass privileged access** ([Teleport](https://goteleport.com/learn/just-in-time-access-for-amazon-eks/), [k8s-breakglass](https://github.com/telekom/k8s-breakglass)) | Time-boxed, task-scoped elevated access issued on request, auto-revoked at TTL expiry or task completion, no standing privilege | Direct structural analogue for AUD-03: the audit window is a JIT elevation of Cilium's audit-mode primitive, scoped to a session and a TTL, with the v1.5 SESS-05 bounded-cleanup fan-out as the "auto-revoke" mechanism |
+| **Generic K8s/Cilium MCP wrappers** ([Azure mcp-kubernetes](https://github.com/Azure/mcp-kubernetes), `containers/kubernetes-mcp-server`) | Expose `call_cilium`/`call_hubble` as raw command-execution tools; safety story relies on RBAC + documentation, not structural proof | cpg's typed, paginated, schema'd tools (and SEC-01's mutation-tested reachability proof) are a materially stronger safety posture than the generic-passthrough norm — worth explicitly protecting as new tools are added in this milestone |
+| **kagent** ([CNCF sandbox](https://github.com/kagent-dev/kagent)) | Full framework: K8s controller + CRDs for agents/tools + separate Python (Google ADK) reasoning engine + OTel tracing, aimed at general cross-tool (Istio/Argo/Prometheus) agentic ops | Confirms the draft's repo-local-only constraint is proportionate — a kagent-style standing controller would be a scope explosion for 5 skills serving one CLI tool; cpg's "just markdown files Claude Code already knows how to load" is the right tier for this milestone |
+| **MCP zero-permission-by-default posture** (Microsoft guidance via [Stytch MCP security writeup](https://stytch.com/blog/mcp-security/); "dangerous"-namespace gating pattern in community MCP servers) | Recommends granting zero permissions by default, deliberate opt-in for anything sensitive; some servers gate a whole class of tools behind a single explicit flag so the tools are entirely absent from `tools/list` unless opted in | Directly validates the draft's Design point 1 for AUD-03 ("consent = server launch flag... tool absent from `tools/list` without it") as matching current best practice, regardless of which surface (MCP vs CLI-only) is ultimately chosen |
+
+---
+
+## Gaps to Flag for Phase-Level Research (do not treat as resolved)
+
+- **`cilium-dbg` rename version:** the draft's working assumption is "≥1.14 (`cilium-dbg`), `cilium` before." Multiple community sources found in this research (Cilium cheat sheet, blog secondary sources) instead place the rename at **Cilium 1.15**, not 1.14 — sources conflict and I could not locate the authoritative PR/changelog entry to settle it. This is a load-bearing fact for both the compat floor table and the AUD-03 binary-selection logic — verify against the actual `cilium/cilium` changelog/PR before freezing it into COMPAT-01's table (LOW confidence as researched here).
+- **`policy.cilium.io`/`io.cilium.proxy-visibility` annotation status:** current stable docs (`/en/stable/observability/visibility/`) describe only the CiliumNetworkPolicy-based L7 visibility method and make no mention of the annotation-based approach that appears in docs through 1.13. I could not find an explicit deprecation notice (absence of documentation is suggestive, not proof of removal) — this affects the README's existing L7 two-step section independently of this milestone, exactly as flagged in the draft's research question #9 (MEDIUM-LOW confidence; needs a direct check against the current Helm/CRD schema or a changelog entry, not just doc-page absence).
+- **Exact introduction versions for the rest of the §3.E floor table** (Verdict_AUDIT/PolicyVerdictNotify encoding, observer gRPC API stability window) were not independently re-derived here — the draft's code-verified facts (§2) are the authoritative source for those and should be trusted over any web search on the topic.
+- **Version-detection source of truth** (image tag vs. `CiliumNode` CRD vs. Hubble Relay `ServerStatus` vs. `cilium-dbg version` exec) is an implementation decision, not an ecosystem-feature-landscape question — flagged in the draft's own research questions (§5.7) and correctly left for phase-level/architecture research rather than resolved here.
+
+---
 
 ## Sources
 
-**Official MCP specification (Context7-resolved `/websites/modelcontextprotocol_io_specification_2025-11-25` + direct WebFetch of modelcontextprotocol.io, HIGH confidence):**
-- [MCP overview / getting started](https://modelcontextprotocol.io/docs/getting-started/intro) — coordinator-supplied authoritative source, used to frame tools/resources/prompts/notifications as the canonical feature surface
-- [Tools specification](https://modelcontextprotocol.io/specification/2025-11-25/server/tools) — naming rules, annotations, structured content, output schema, `isError`/protocol-error split
-- [Resources specification](https://modelcontextprotocol.io/specification/2025-11-25/server/resources) — URI schemes, subscriptions, when servers expose resources vs tools
-- [Prompts specification](https://modelcontextprotocol.io/specification/2025-11-25/server/prompts) — user-controlled trigger model, argument schema
-- [Pagination specification](https://modelcontextprotocol.io/specification/2025-11-25/server/utilities/pagination) — cursor-based, list-operations-only scope
-- [Progress specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/progress) — `progressToken` correlates to a single in-flight request
-- [Elicitation specification](https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation) — form/URL modes, statefulness and identity-binding requirements, "MUST NOT request sensitive info via form mode"
-- [Sampling specification](https://modelcontextprotocol.io/specification/2025-11-25/client/sampling) — server-initiated LLM completion via the client
-- [SEP-2567: Sessionless MCP via Explicit State Handles](https://modelcontextprotocol.io/seps/2567-sessionless-mcp) — **Final, Standards Track**, accepted 2026; primary source for the explicit `session_id` handle recommendation, including the specific guidance that stdio servers "SHOULD NOT rely on process-lifetime state and SHOULD migrate to explicit handles"
-- Authorization scoping to HTTP transport (stdio "SHOULD NOT" implement OAuth, credentials from environment instead) — cross-checked via WebSearch against `modelcontextprotocol.io/specification/draft/basic/authorization`, MEDIUM confidence (search-synthesized, consistent across multiple independent write-ups)
-
-**Anthropic first-party guidance (HIGH confidence, official engineering blog):**
-- [Writing effective tools for AI agents](https://www.anthropic.com/engineering/writing-tools-for-agents) — namespacing, parameter naming, token-budget management, ~25k-token default response ceiling in Claude Code, `response_format` concise/detailed pattern
-
-**Production MCP servers examined (MEDIUM confidence, official repos/docs, WebFetch/WebSearch):**
-- [AWS CloudWatch MCP Server](https://awslabs.github.io/mcp/servers/cloudwatch-mcp-server) — tool catalog, async query-ID pattern, pagination/chunking behavior
-- [AWS MCP DESIGN_GUIDELINES.md](https://github.com/awslabs/mcp/blob/main/DESIGN_GUIDELINES.md) — naming limits, error-handling conventions, resources-vs-tools framing
-- [GitHub MCP Server](https://github.com/github/github-mcp-server) — verb_noun snake_case convention, toolset-per-tool mapping
-- [Playwright MCP](https://github.com/microsoft/playwright-mcp) — session-mode design (persistent/isolated/extension), context management
-- Browserbase MCP (`start`/`end`/`navigate`/`act`/`observe`/`extract`) — explicit session-tool precedent, via WebSearch synthesis of official docs
-- [WireMCP](https://github.com/0xKoda/WireMCP) — counter-example: synchronous single-call packet capture with no session/pagination model, used to contrast against cpg's chosen session-polling design
-
-**Ecosystem adoption / client-support gap (MEDIUM confidence — WebSearch-synthesized blog commentary, directionally consistent across multiple independent sources, partially corroborated by official Claude Code docs):**
-- Resources adoption gap and client-support inconsistency across MCP hosts — multiple independent write-ups (layered.dev, PulseMCP client-capability-gap post) agree on the chicken-and-egg dynamic
-- [Claude Code MCP docs](https://code.claude.com/docs/en/mcp) — confirms resources are surfaced via manual `@mention`, not autonomous model access
-- [anthropics/claude-code#18763](https://github.com/anthropics/claude-code/issues/18763) — confirms host-side auto-namespacing (`mcp__server__tool` / `Server:tool`) so server authors don't need a redundant prefix
-- "ResourceLink for large datasets" / dual preview+reference pattern — futuresearch.ai and an arXiv write-up on large-dataset MCP patterns, used for the `list_dropped_flows`/`get_evidence` response-shape recommendation
+- [Cilium — Creating Policies from Verdicts (stable docs)](https://docs.cilium.io/en/stable/security/policy-creation/) — HIGH confidence, official docs, fetched directly
+- [Cilium — Deny Policies (stable docs)](https://docs.cilium.io/en/latest/security/policy/deny/) — HIGH confidence, official docs
+- [cilium/cilium#35558 — CFP: Clarify default-deny-with-no-rules intent](https://github.com/cilium/cilium/issues/35558) — HIGH confidence, live upstream issue, fetched directly
+- [Tigera/Calico — Dry Run: staged network policies](https://www.tigera.io/blog/dry-run-your-kubernetes-network-policies-with-calico-staged-network-policies/) and [Calico Whisker + staged policies](https://www.tigera.io/blog/calico-whisker-staged-network-policies-secure-kubernetes-workloads-without-downtime/) — HIGH confidence, vendor-official blog
+- [CNCF — Safely managing Cilium network policies: testing and simulation techniques](https://www.cncf.io/blog/2025/11/06/safely-managing-cilium-network-policies-in-kubernetes-testing-and-simulation-techniques/) — MEDIUM-HIGH confidence, CNCF-published
+- [Istio — Mutual TLS Migration](https://istio.io/latest/docs/tasks/security/authentication/mtls-migration/) — HIGH confidence, official docs (via search summary)
+- [Cilium — Kubernetes Compatibility](https://docs.cilium.io/en/stable/network/kubernetes/compatibility/) — HIGH confidence, official docs
+- [Cilium — cilium-dbg command reference](https://docs.cilium.io/en/stable/cmdref/cilium-dbg/) — HIGH confidence, official docs; rename-version specifics MEDIUM-LOW (see Gaps)
+- [Cilium — Observability/Visibility (stable docs)](https://docs.cilium.io/en/stable/observability/visibility/) — MEDIUM confidence (fetched; absence of annotation-based method is suggestive, not a confirmed deprecation notice)
+- [Azure mcp-kubernetes](https://github.com/Azure/mcp-kubernetes) — MEDIUM-HIGH confidence, fetched directly, confirms generic-passthrough design
+- [kagent (CNCF sandbox)](https://github.com/kagent-dev/kagent) / [CNCF blog](https://www.cncf.io/blog/2025/04/15/kagent-bringing-agentic-ai-to-cloud-native/) — MEDIUM confidence
+- [Claude Code — Skill authoring best practices](https://docs.claude.com/en/docs/agents-and-tools/agent-skills/best-practices) — HIGH confidence, official docs
+- Skills-vs-subagents decision framework (aggregated from multiple 2026 community writeups: buildthisnow.com, totalum.app) — MEDIUM confidence (community sources, internally consistent with official skill docs)
+- [Model Context Protocol Blog — Tool Annotations as Risk Vocabulary](https://blog.modelcontextprotocol.io/posts/2026-03-16-tool-annotations/) — MEDIUM-HIGH confidence
+- [Stytch — Securing MCP: Threats & Defenses](https://stytch.com/blog/mcp-security/) — MEDIUM confidence, vendor security blog, corroborated by Microsoft zero-permission guidance cited within
+- [Teleport — Just-in-Time Access for Amazon EKS](https://goteleport.com/learn/just-in-time-access-for-amazon-eks/), [telekom/k8s-breakglass](https://github.com/telekom/k8s-breakglass) — MEDIUM-HIGH confidence, vendor/OSS-maintainer sources
+- Internal verified facts (Cilium audit-mode mechanics, filter sites, v1.5 assets) — from `.planning/drafts/v1.6-audit-onboarding-and-cpg-agent-tooling.md` §2, treated as ground truth, not re-derived
 
 ---
-*Feature research for: cpg v1.5 MCP server integration (readonly stdio tool surface only)*
-*Researched: 2026-07-20*
+*Feature research for: cpg v1.6 (Audit-Mode Onboarding & cpg-Dedicated Agent Tooling)*
+*Researched: 2026-07-22*

@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.5
-milestone_name: MCP Integration
-status: Awaiting next milestone
-last_updated: "2026-07-22T06:38:35.932Z"
-last_activity: 2026-07-22 — Milestone v1.5 completed and archived
+milestone: v1.6
+milestone_name: Audit-Mode Onboarding & cpg-Dedicated Agent Tooling
+status: milestone_complete
+last_updated: "2026-07-22T16:39:17.813Z"
+last_activity: 2026-07-22
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 21
-  completed_plans: 21
-  percent: 100
+  total_phases: 9
+  completed_phases: 3
+  total_plans: 17
+  completed_plans: 13
+  percent: 33
 ---
 
 # Project State
@@ -20,21 +20,23 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-22)
 
 **Core value:** Automatically generate correct CiliumNetworkPolicies from observed Hubble denials so that SREs spend zero time manually writing network policies in default-deny environments.
-**Current focus:** Milestone complete
+**Current focus:** Phase 21 — cilium-compatibility-matrix-runtime-detection
 
 ## Current Position
 
-Phase: Milestone v1.5 complete
-Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-07-22 — Milestone v1.5 completed and archived
+Phase: — (milestone v1.6 shipped 2026-07-22, archived)
+Plan: 2 of 3
+Status: Ready to execute
+Last activity: 2026-07-22
+
+Progress: [█████████░] 87%
 
 ## Performance Metrics
 
 **Velocity (cumulative):**
 
-- Total plans completed: 51 (across 13 phases, 4 milestones; v1.4 executed via direct workflow, no plans)
-- Total tests: 484 across 10 packages
+- Total plans completed: 55 (across 19 phases, 6 milestones; v1.4 executed via direct workflow, no plans)
+- Total tests: 610 across 12 packages
 
 **By Milestone:**
 
@@ -45,7 +47,8 @@ Last activity: 2026-07-22 — Milestone v1.5 completed and archived
 | v1.2 | 7-9 | 12 | 319 |
 | v1.3 | 10-13 | 8 | 418 |
 | v1.4 | 14-15 | 0 (direct workflow) | 484 |
-| v1.5 | 16-19 | TBD (planning not started) | - |
+| v1.5 | 16-19 | 21 | 610 |
+| v1.6 | 20-24 | TBD (planning not started) | - |
 
 *Updated after each plan completion.*
 | Phase 10-classifier-core P01 | 4 | 2 tasks | 5 files |
@@ -57,6 +60,8 @@ Last activity: 2026-07-22 — Milestone v1.5 completed and archived
 | Phase 13-flags-and-exit-code P02 | 8 | 2 tasks | 5 files |
 | Phase 13-flags-and-exit-code P03 | 146 | 2 tasks | 4 files |
 | Phase 17 P08 | ~13min | 2 tasks | 3 files |
+| Phase 22 P01 | 15min | 2 tasks | 2 files |
+| Phase 23 P02 | 45min | 3 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -84,6 +89,13 @@ Decisions logged in PROJECT.md Key Decisions table.
 - [Phase 17-session-lifecycle]: s.cancel() releases sessionCtx on the autonomous-exit path, placed inside the existing genuine-failure guard (not a separate step) — idempotent and safe w.r.t. Start's context.AfterFunc(sessionCtx, setupCancel), already un-registered by then
 - [Phase 17-session-lifecycle]: WR-02: Session.explicitStopSeen atomic.Bool decouples 'was Stop() already called' from 'is State == StateStopped' — same per-session primitive placement as cancel/done/stopOnce, keeps Manager stateless across sessions
 - [Phase 17-session-lifecycle]: explicitStopSeen.Swap(true) applied at BOTH of Stop's buildSummary call sites (the state==StateStopped early-return AND the post-stopOnce path) — the early-return is exactly the path a first-post-crash Stop() takes, so it needs the same already_stopped semantics
+- [v1.6 roadmap]: Phase 21 (COMPAT-01/02/03) sequenced before Phase 22 (AUD-02) on ARCHITECTURE.md's technical-dependency read — AUD-02 needs COMPAT-02's version capability gate for correct `enableDefaultDeny` emission; overrides FEATURES.md's priority-tier grouping, which had no code-level blocker forcing a later placement
+- [v1.6 roadmap]: Phase 23 (AUD-03/AUD-04) cannot be planned at file-level detail until `/gsd-discuss-phase` resolves (a) the surface decision — MCP flag-gated session property vs. CLI-only command — and (b), if MCP wins, the SEC-01 two-mode mechanism (build-tag split vs. path-scoped reachability assertion); both must land as recorded PROJECT.md Key Decisions before any audit-window mutation code is written
+- [v1.6 roadmap]: Research's 5-phase proposal adopted as-is (coarse granularity, 3-5 typical) — Phases 20/21 kept independent/parallelizable per both ARCHITECTURE.md and FEATURES.md; Phase 24 (SKL-01..06) sequenced last though most skills have no technical dependency forcing that position (scheduling flexibility noted, not a fixed constraint)
+- [Phase 22-bootstrap-artifact-generation]: Bootstrap CNP builder uses one-element-empty-rule form (from 22-RESEARCH.md verified Code Examples), not 22-PATTERNS.md's non-compiling sketch
+- [Phase 23]: auditwindow.Manager: preconditionFn error treated as undetermined (warn-and-proceed); active-with-no-error hard-refuses
+- [Phase 23]: resolveCurrentIDFn defaults to a listCEFn-based re-list-and-filter by UID, avoiding a new Get-by-name client path
+- [Phase 23]: rootCtx.Done()-triggered Shutdown goroutine spawned from Open, not NewManager, since nothing exists to revert before Open runs
 
 ### Pending Todos
 
@@ -91,7 +103,9 @@ None.
 
 ### Blockers/Concerns
 
-None open. v1.3 deferred items (L7-FUT-01, DNS-FUT-02, etc.) tracked in PROJECT.md Planned section. v1.4 lint debt (LINT-01..03) and release hardening (RELSEC-01..02) deliberately descoped — tracked in REQUIREMENTS.md v2 Requirements for v1.5+ (not in v1.5's 18 v1 requirements).
+Phase 23 (AUD-03/AUD-04) is blocked on an explicit `/gsd-discuss-phase` decision before it can be planned at file-level detail: AUD-03's surface (MCP flag-gated session property vs. CLI-only command, MCP staying pure-readonly) and, if the MCP variant wins, the SEC-01 two-mode mechanism (build-tag split vs. path-scoped reachability assertion) — see ROADMAP.md's decision-gate note and research/SUMMARY.md Tension 4. Does not block Phases 20, 21, 22, or 24.
+
+v1.3 deferred items (L7-FUT-01, DNS-FUT-02, etc.) tracked in PROJECT.md Planned section. v1.4 lint debt (LINT-01..03) and release hardening (RELSEC-01..02) deliberately descoped from v1.5 — remain tracked in PROJECT.md Planned, not yet claimed by v1.6.
 
 ### Quick Tasks Completed
 
@@ -100,6 +114,7 @@ None open. v1.3 deferred items (L7-FUT-01, DNS-FUT-02, etc.) tracked in PROJECT.
 | 260426-pa5 | ignore-protocol flag (cpg generate + replay) | 2026-04-26 | 8f33122 | [260426-pa5-ignore-protocol-flag-cpg-generate-replay](./quick/260426-pa5-ignore-protocol-flag-cpg-generate-replay/) |
 | 260427-aml | v1.3 code-review fixes (16 fixes, C1-C3, I1-I8, M1-M7) | 2026-04-27 | e3b3e77 | [260427-aml-v1-3-code-review-fixes](./quick/260427-aml-v1-3-code-review-fixes/) |
 | 260427-bp7 | v1.3 second-pass review fixes (12 fixes, C1-C2, I1-I9, M1+M3) | 2026-04-27 | 42f0f57 | [260427-bp7-v1-3-second-pass-review-fixes](./quick/260427-bp7-v1-3-second-pass-review-fixes/) |
+| 260723-b26 | WebSocket exec with SPDY fallback in audit-window exec path (AUD-FUT-01) | 2026-07-23 | 2465740 | [20260723-websocket-exec-fallback](./quick/20260723-websocket-exec-fallback/) |
 
 ## Deferred Items
 
@@ -113,10 +128,12 @@ Items acknowledged and deferred at milestone close on 2026-07-20 (v1.4); re-ackn
 
 ## Session Continuity
 
-Last session: 2026-07-21T16:45:44.013Z
-Stopped at: Phase 19 context gathered (auto)
-Resume: `/gsd-verify-phase 17` — verify Phase 17 session-lifecycle (all 8 plans complete, gap closures WR-01/WR-02/WR-03/WR-04/D-02 done)
+Last session: 2026-07-22T16:39:17.807Z
+Stopped at: Completed 23-02-PLAN.md
+Resume: `/gsd-plan-phase 20` — plan `--include-audit` Verdict Ingestion (AUD-01)
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Review the roadmap draft in .planning/ROADMAP.md
+- Start planning with /gsd-plan-phase 20
+- Note: Phase 23 requires /gsd-discuss-phase (AUD-03 surface + SEC-01 mechanism decisions) before it can be planned

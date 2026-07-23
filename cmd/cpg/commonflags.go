@@ -54,6 +54,8 @@ type commonFlags struct {
 
 	l7 bool
 
+	includeAudit bool
+
 	ignoreProtocols   []string
 	ignoreDropReasons []string
 	failOnInfraDrops  bool
@@ -81,6 +83,8 @@ func addCommonFlags(cmd *cobra.Command) {
 
 	f.Bool("l7", false, "enable L7 (HTTP/DNS) policy generation; Phase 7 plumbs the flag, codegen lights up in v1.2 Phase 8/9")
 
+	f.Bool("include-audit", false, "ingest Verdict_AUDIT flows alongside DROPPED (opt-in; default preserves pre-v1.6 DROPPED-only behavior)")
+
 	f.StringSlice("ignore-protocol", nil, "drop flows whose L4 protocol matches (repeatable, comma-separated). Valid: tcp, udp, icmpv4, icmpv6, sctp")
 
 	f.StringSlice("ignore-drop-reason", nil,
@@ -106,6 +110,7 @@ func parseCommonFlags(cmd *cobra.Command) commonFlags {
 	out.evidenceSamples, _ = f.GetInt("evidence-samples")
 	out.evidenceSessions, _ = f.GetInt("evidence-sessions")
 	out.l7, _ = f.GetBool("l7")
+	out.includeAudit, _ = f.GetBool("include-audit")
 	out.ignoreProtocols, _ = f.GetStringSlice("ignore-protocol")
 	out.ignoreDropReasons, _ = f.GetStringSlice("ignore-drop-reason")
 	out.failOnInfraDrops, _ = f.GetBool("fail-on-infra-drops")
@@ -244,4 +249,3 @@ func validateIgnoreDropReasons(in []string, logger *zap.Logger) ([]string, error
 	}
 	return out, nil
 }
-

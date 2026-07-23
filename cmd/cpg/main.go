@@ -58,6 +58,8 @@ func main() {
 	rootCmd.AddCommand(newReplayCmd())
 	rootCmd.AddCommand(newExplainCmd())
 	rootCmd.AddCommand(newMCPCmd())
+	rootCmd.AddCommand(newBootstrapCmd())
+	rootCmd.AddCommand(newAuditWindowCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		var ec *hubble.ExitCodeError

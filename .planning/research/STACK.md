@@ -1,150 +1,132 @@
 # Stack Research
 
-**Domain:** MCP (Model Context Protocol) server integration, stdio transport, Go 1.25 CLI backend
-**Researched:** 2026-07-20
-**Confidence:** HIGH
+**Domain:** Additive milestone on an existing Go CLI + K8s controller-adjacent tool (Cilium/Hubble policy generation)
+**Researched:** 2026-07-22
+**Confidence:** HIGH — verified by reading the actual vendored module source under `$(go env GOMODCACHE)` for `github.com/cilium/cilium@v1.19.4` and `k8s.io/client-go@v0.35.4`/`k8s.io/apimachinery@v0.35.4` (not just docs), plus a live fetch of `kubernetes/kubectl@master` and current `code.claude.com` docs.
+
+## Headline Finding
+
+**v1.6 needs zero new `go.mod` `require` lines.** Every capability in scope (AUD-01..04, COMPAT-01/02) is reachable through subpackages of modules already direct dependencies: `github.com/cilium/cilium v1.19.4`, `k8s.io/client-go`/`k8s.io/api`/`k8s.io/apimachinery v0.35.4`, `golang.org/x/mod v0.37.0`, `golang.org/x/sync v0.21.0`, `golang.org/x/tools v0.47.0`. This is unusual for a milestone this size and worth stating plainly to the roadmapper: **no dependency-upgrade or new-vendor risk gates any v1.6 phase.** The only "stack" work is wiring already-vendored subpackages that cpg does not currently import.
+
+SKL-01..05 (repo-local skills/agents) need **zero Go dependencies at all** — they are markdown files consumed natively by the Claude Code binary itself, unrelated to `go.mod`.
 
 ## Recommended Stack
 
-### Core Technologies
+### Core Technologies (capability → mechanism, all already-vendored)
 
-| Technology | Version | Purpose | Why Recommended |
-|------------|---------|---------|-----------------|
-| `github.com/modelcontextprotocol/go-sdk/mcp` | v1.6.1 (latest stable tag, 2026-05-22) | MCP server runtime: session lifecycle, tool registration/dispatch, JSON Schema inference, stdio JSON-RPC framing | **Only Go SDK listed on the official SDK page** (modelcontextprotocol.io/docs/sdk), classified **Tier 1** (same tier as the TypeScript/Python/C# SDKs) and explicitly "maintained in collaboration with Google." Stable `v1.x` — semver-committed, no breaking changes within the major version. Requires `go 1.25.0`; cpg is already on `go 1.25.1` / toolchain `go1.25.12` — zero toolchain change. |
-| `go.uber.org/zap/exp/zapslog` | bundled inside the already-pinned `go.uber.org/zap v1.27.1` (no new go.mod line — verified the `exp/zapslog` package exists at the exact `v1.27.1` tag cpg already depends on) | `slog.Handler` adapter that lets go-sdk's internal `*slog.Logger` hook write through cpg's existing zap cores | go-sdk's `ServerOptions.Logger` is a `*slog.Logger`; bridging it into zap means the SDK's own session lifecycle logs (connect/disconnect/errors) land in the same structured stderr stream as the rest of cpg instead of a second, disconnected logging path. |
+| Capability | Package(s) | Purpose | Why Recommended |
+|------------|-----------|---------|-----------------|
+| AUD-01 AUDIT verdict ingestion | *(none — application logic only)* | Widen 5 filter sites to `{DROPPED, AUDIT}` | `Verdict_AUDIT`, `PolicyVerdictNotify` decode, and drop-reason attribution already exist in `github.com/cilium/cilium/api/v1/flow` + `pkg/hubble/parser/threefour` (vendored, verified in draft §2). This is a predicate change in `pkg/hubble/client.go`, `pkg/flowsource/file.go`, `pkg/hubble/aggregator.go` — no new import. |
+| AUD-02 bootstrap CNP + runbook | `github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2` (`DefaultDenyConfig`) | Generate `enableDefaultDeny` CNP YAML | Same type already used by `pkg/policy/builder.go` for every CNP cpg emits today; `DefaultDenyConfig` is present in the vendored v1.19.4 API (confirmed by direct grep). Pure `pkg/policy`/`pkg/output` reuse. |
+| AUD-03 `pods/exec` to reach `cilium-dbg` | `k8s.io/client-go/tools/remotecommand`, `k8s.io/client-go/transport/spdy` (already imported), `k8s.io/client-go/transport/websocket`, `k8s.io/client-go/kubernetes/scheme`, `k8s.io/api/core/v1` (`PodExecOptions`) | Build the exec stream to `cilium-agent` pods | `remotecommand.NewSPDYExecutor(config, method, url)` calls `spdy.RoundTripperFor(config)` — **the exact same call** `pkg/k8s/portforward.go:51` already makes for port-forward. Confirmed present in `k8s.io/client-go@v0.35.4/tools/remotecommand/{spdy,websocket,fallback}.go`. |
+| AUD-03 new-endpoint detection | `github.com/cilium/cilium/pkg/k8s/client/clientset/versioned` (already imported by `pkg/k8s/cluster_dedup.go`), `.../informers/externalversions/cilium.io/v2`, `.../listers/cilium.io/v2`, built on `k8s.io/client-go/tools/cache` | Detect new pods becoming flippable endpoints | Cilium ships a **generated, namespace-filterable `CiliumEndpointInformer`** (`NewFilteredCiliumEndpointInformer`) built directly on `cache.NewSharedIndexInformer` — confirmed by reading the generated file. Zero hand-rolled watch/resync/backoff logic needed. |
+| COMPAT-02 Cilium version detection | `github.com/cilium/cilium/api/v1/observer` (`ObserverClient.ServerStatus`/`.GetNodes`, already imported type family) | Detect running Cilium/Hubble version | `ServerStatusResponse.Version` and `Node.Version` are real proto fields ("Version is the version of Cilium/Hubble") reachable on the **same already-open** `observerpb.NewObserverClient(conn)` cpg dials for every invocation (`pkg/hubble/client.go`). Zero new RBAC, zero new connection, works even with digest-pinned images. |
+| COMPAT-02 version comparison | `k8s.io/apimachinery/pkg/util/version` (`ParseGeneric`, `AtLeast`) | Parse + compare against the declared floor | Already a direct-dependency subpackage (`k8s.io/apimachinery` v0.35.4). Purpose-built for exactly this: "2+ dot-separated numeric fields... followed by arbitrary uninterpreted data... optionally preceded by v" (official pkg.go.dev docs) — tolerates `-cee.1`/`-eks`/`-rc1` suffixes real Cilium/enterprise images carry. `AtLeast()` is literally the floor check COMPAT-02 needs. |
+| SKL-01..05 skills, `cpg-operator` agent | *(none)* | Repo-local LLM-facing procedures | Plain Markdown + YAML frontmatter, natively parsed by the Claude Code binary. No Go, no npm, no runtime. |
 
-### Supporting Libraries
+### Supporting Libraries (new subpackage imports within already-required modules — zero go.mod diff)
 
-| Library | Version | Purpose | When to Use |
-|---------|---------|---------|-------------|
-| `github.com/google/jsonschema-go` | v0.4.3 (transitive, pinned by go-sdk's own go.mod — do not pin separately) | JSON Schema types + `jsonschema.For[T]` reflection-based schema inference | Invisible plumbing for the common case — `mcp.AddTool[In, Out]` infers `InputSchema`/`OutputSchema` from Go struct types plus `jsonschema:"description text"` field tags. Only import it **directly** if a tool needs schema constraints structs can't express (enum, min/max, regex pattern) — e.g. `dropped-flows` tool's severity filter as an enum. |
-| `golang.org/x/sync/errgroup` | v0.20.0 (already a **direct** dependency in cpg's go.mod) | Goroutine-group lifecycle for the background Hubble capture launched by `start_session` running alongside `server.Run` | Already the pattern used in `pkg/hubble/pipeline.go` for the live capture pipeline (`golang.org/x/sync/errgroup` import confirmed at that file). Reuse it for the MCP session runner instead of hand-rolling goroutine/channel bookkeeping — one less concurrency idiom in the codebase. |
+| Import Path | Module (already required) | When to Use |
+|---|---|---|
+| `k8s.io/client-go/tools/remotecommand` | `k8s.io/client-go v0.35.4` | `NewSPDYExecutor` / `NewWebSocketExecutor` / `NewFallbackExecutor` + `Executor.StreamWithContext(StreamOptions{Stdin,Stdout,Stderr})` to run `cilium-dbg endpoint config <ID> PolicyAuditMode=Enabled` inside the target agent pod. |
+| `k8s.io/client-go/transport/websocket` | `k8s.io/client-go v0.35.4` | Only if adopting the WebSocket-primary pattern (see "Stack Patterns by Variant"). Internally uses `github.com/gorilla/websocket` (already an *indirect* dep pulled by client-go itself — cpg never imports gorilla directly). |
+| `k8s.io/client-go/kubernetes/scheme` + `k8s.io/api/core/v1.PodExecOptions` | `k8s.io/client-go` / `k8s.io/api v0.35.4` | Build the exec request: `clientset.CoreV1().RESTClient().Post().Resource("pods").Namespace(ns).Name(pod).SubResource("exec").VersionedParams(&corev1.PodExecOptions{Command:[]string{"cilium-dbg","endpoint","config",id,"PolicyAuditMode=Enabled"}, Stdout:true, Stderr:true}, scheme.ParameterCodec)`. Same idiom as the existing `pkg/k8s/portforward.go` URL construction, one line different (`SubResource("exec")` vs `SubResource("portforward")`). |
+| `k8s.io/apimachinery/pkg/util/httpstream` (`IsUpgradeFailure`, `IsHTTPSProxyError`) | `k8s.io/apimachinery v0.35.4` | The `shouldFallback` predicate if implementing `NewFallbackExecutor` (see kubectl reference below). Confirmed present in vendored source. |
+| `github.com/cilium/cilium/pkg/k8s/client/informers/externalversions` (+ `/cilium.io/v2`) | `github.com/cilium/cilium v1.19.4` | `externalversions.NewSharedInformerFactoryWithOptions(ciliumClientset, resync, externalversions.WithNamespace(ns)).Cilium().V2().CiliumEndpoints().Informer()` — namespace-scoped watch for new/changed endpoints. Reuses the same `ciliumClientset` type already constructed in `pkg/k8s/cluster_dedup.go`. |
+| `k8s.io/apimachinery/pkg/util/version` | `k8s.io/apimachinery v0.35.4` | `version.ParseGeneric(imageTag)` / `.AtLeast(floor)` for COMPAT-02's declared-floor check, whichever source (Hubble `ServerStatus` or `ds/cilium` image tag fallback) supplies the raw string. |
+| `golang.org/x/sync/errgroup` | `golang.org/x/sync v0.21.0` (already direct, already used in `pkg/hubble/pipeline.go`) | Fan-out per-endpoint audit flips and the lifecycle-bound bulk revert — same concurrency idiom `pkg/session` already established for SESS-05 cleanup. Don't introduce a second concurrency pattern. |
+| `golang.org/x/tools/go/callgraph/rta`, `/ssa`, `/ssautil` | `golang.org/x/tools v0.47.0` (already direct, already used in `cmd/cpg/mcp_audit_test.go`) | **Not a new dependency** — flagged here because AUD-04 (SEC-01 two-mode proof) extends the *existing* audit test, it does not add a new static-analysis library. |
 
 ### Development Tools
 
-| Tool | Purpose | Notes |
-|------|---------|-------|
-| `mcp.LoggingTransport` (from the go-sdk itself, no extra dep) | Wraps `&mcp.StdioTransport{}` to mirror raw JSON-RPC traffic to a file/buffer for debugging | Use during development of the new tool handlers: `mcp.NewLoggingTransport(mcp.NewStdioTransport(), logFile)` — writes to any `io.Writer`, never to stdout, so it's safe to leave wired to `os.Stderr` or a debug file behind a `--debug` flag. |
-| `MCPGODEBUG` env var | go-sdk's internal debug/compat knobs (e.g. `hintomitempty=1`, `allowsessionsinstateless=1`) | No code change needed; documented in go-sdk's `docs/mcpgodebug.md`. Only relevant if a future SDK bump changes default wire behavior and cpg needs the old behavior temporarily. |
-| Existing CI (`golangci-lint`, `govulncheck`, `go test -race`) | Lints/vuln-scans/tests the new MCP code paths | No new tool or config needed — a new `pkg/mcpserver/` (or `cmd/cpg/mcp.go`) package is automatically covered by the existing pipeline. |
+No changes. `golangci-lint`, `govulncheck`, CI pinning, and `go test -race` are unaffected — all new code lives in already-linted packages using already-vetted modules. Sandbox note (repo memory): `make test` is sandbox-denied here; use `rtk proxy go test ./... -count=1 -race` directly.
 
 ## Installation
 
 ```bash
-# Core — pins the MCP SDK to the exact version researched (consistent with cpg's
-# existing exact-pin convention for cilium v1.19.4 and SHA-pinned GH Actions)
-go get github.com/modelcontextprotocol/go-sdk/mcp@v1.6.1
+# No `go get` required. Every needed package is a subpackage of a module
+# already in go.mod at a sufficient version. After writing the first import
+# of e.g. k8s.io/client-go/tools/remotecommand or the cilium informers
+# package, just run:
 go mod tidy
 
-# Nothing else to install:
-# - github.com/google/jsonschema-go arrives transitively; `go get` it directly
-#   only if/when a tool needs schema constraints beyond struct-tag inference.
-# - go.uber.org/zap/exp/zapslog ships inside the already-vendored
-#   go.uber.org/zap v1.27.1 — it's an import, not a go.mod change.
+# This will at most promote already-indirect entries (e.g. github.com/gorilla/websocket,
+# used transitively by k8s.io/client-go/transport/websocket) — it will NOT add a
+# new top-level `require`. Verify with:
+go mod why k8s.io/client-go/transport/websocket   # sanity check only, not required today
 ```
-
-## Integration with the Existing cobra/zap Stack
-
-**cobra:** `cpg mcp` is one more subcommand, wired exactly like `newGenerateCmd()` / `newReplayCmd()` / `newExplainCmd()` in `cmd/cpg/main.go`. go-sdk's `Server.Run(ctx, transport)` does **not** install SIGINT/SIGTERM handling itself (verified from source: it only selects on `ctx.Done()` vs. the session-closed channel) — the `RunE` must wrap `cmd.Context()` with `signal.NotifyContext` so `stop_session`'s tmpdir cleanup runs on Ctrl-C / harness shutdown, not just on client-initiated disconnect:
-
-```go
-func newMCPCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "mcp",
-		Short: "Run cpg as a readonly MCP server over stdio",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
-
-			server := mcp.NewServer(&mcp.Implementation{Name: "cpg", Version: version}, &mcp.ServerOptions{
-				Logger: slog.New(zapslog.NewHandler(logger.Core())), // logger = existing package-level *zap.Logger
-			})
-			registerSessionTools(server) // start_session / status / stop_session
-			registerQueryTools(server)   // dropped-flows / policies / explain / cluster-health
-
-			return server.Run(ctx, &mcp.StdioTransport{})
-		},
-	}
-}
-```
-
-**zap and stdout — the good news, verified, not assumed:** cpg's existing `buildLogger()` (`cmd/cpg/main.go:71-102`) needs **zero changes**. Checked zap's source directly (`config.go`, `master` branch): both `zap.NewProductionConfig()` and `zap.NewDevelopmentConfig()` already default `OutputPaths: []string{"stderr"}` and `ErrorOutputPaths: []string{"stderr"}`, and `zap.NewDevelopment()` is a thin wrapper over the latter. All three of `buildLogger()`'s branches (`--json`, `--debug`, default console) were already stderr-only before this milestone. The only genuine stdout risks for `cpg mcp` are:
-
-1. **Any new `fmt.Println`/`fmt.Printf`/stdlib `log.Print*`** written in the new MCP code — none of the existing zap paths are at risk, but a careless debug print anywhere in the new tool handlers corrupts the newline-delimited JSON-RPC stream. Use the existing `logger` (stderr) or `fmt.Fprintln(os.Stderr, ...)`.
-2. **Reusing `pkg/hubble/writer.go` / `pkg/hubble/pipeline.go` unmodified.** Both already have an injectable `io.Writer` seam that defaults to `os.Stdout` when left nil (`writer.go:35,131` — "defaults to os.Stdout when nil"; `pipeline.go:92,358` — same, used today for the CLI's dry-run diff output and the v1.3 session-summary block). `start_session`'s background capture **must** pass that parameter explicitly (`io.Discard`, or a `bytes.Buffer` whose contents get surfaced back through a tool's structured result) rather than leaving it nil — the seam already exists for tests, so this is reuse, not new plumbing.
-
-go-sdk itself is safe by default even without the zap bridge: `ServerOptions.Logger` defaults to `slog.New(slog.DiscardHandler)` when left `nil` (verified in `mcp/logging.go`'s `ensureLogger`) — the SDK never touches stdout *or* stderr unless cpg opts in. Wiring `zapslog` is about **operability** (seeing SDK-internal session errors in cpg's existing structured logs), not about avoiding a stdout leak — that leak simply cannot happen from the SDK's own logging path.
-
-**Readonly guarantee → tool annotations:** go-sdk's `mcp.Tool.Annotations` includes `ToolAnnotations{ReadOnlyHint, IdempotentHint bool; DestructiveHint, OpenWorldHint *bool; Title string}` (verified in `mcp/protocol.go`). Every one of cpg's 7 planned tools (`start_session`, `status`, `stop_session`, dropped-flows, generated-policies, explain/evidence, cluster-health) should set `ReadOnlyHint: true` — this is a spec-level signal to the LLM harness, not just documentation, and it directly encodes the milestone's "never mutates the cluster" contract into the protocol surface itself. (`start_session`/`stop_session` mutate *cpg's own ephemeral tmpdir*, not the cluster — still readonly with respect to the cluster and any files outside the session dir.)
 
 ## Alternatives Considered
 
-| Recommended | Alternative | When to Use Alternative |
-|-------------|-------------|--------------------------|
-| `github.com/modelcontextprotocol/go-sdk` | `github.com/mark3labs/mcp-go` (v0.56.0) | If the MCP surface were large/dynamic (tools registered/deregistered at runtime), or the team wanted the extra convenience of `server.ServeStdio(s)` (bundles SIGINT/SIGTERM handling that go-sdk makes you wire yourself). It's also more widely adopted by raw GitHub stars (8,910 vs. 4,822 as of 2026-07-20) and predates the official SDK by roughly 1.5 years, so tutorials/examples skew toward it. None of that outweighs the stability gap for cpg's fixed, small (7-tool) surface — see rationale below. |
-| Struct-tag `jsonschema` inference (bundled with go-sdk) | Hand-written `jsonschema.Schema` literals, or `invopop/jsonschema` (mcp-go's older, now-superseded schema generator — mcp-go itself migrated to `google/jsonschema-go` by v0.56.0, per its current go.mod) | Only when a field needs constraints structs can't express via tags alone (enum sets, numeric ranges, regex patterns) — then build/customize a `jsonschema.Schema` via `jsonschema.For[T](&jsonschema.ForOptions{...})` and pass it as `Tool.InputSchema`/`OutputSchema` explicitly. |
-
-### Why go-sdk over mcp-go, in detail
-
-- **Official standing.** `modelcontextprotocol.io/docs/sdk` lists exactly one Go SDK — `go-sdk`, Tier 1. `mcp-go` does not appear on that page at all; it is a well-regarded third-party implementation, not an officially recognized one.
-- **API stability, evidenced not assumed.** `go-sdk` is `v1.6.1` — a stable major version under semver. `mcp-go` is `v0.56.0` — still pre-1.0, and its own docs currently document **real, recent breaking changes** within the pre-1.0 series: `ClientCapabilities.Sampling`/`ServerCapabilities.Sampling` changed from `*struct{}` to `*mcp.SamplingCapability` (compile-time break), and the struct-tag schema syntax changed from `jsonschema_description:"…"` to `jsonschema:"…"` with `jsonschema:"required"` deprecated in favor of `omitempty` absence. For a milestone that wants to add MCP once and not re-chase the API every few weeks, the stable SDK is the lower-maintenance choice.
-- **Institutional backing.** Maintained in collaboration with Google; MCP itself is stewarded by Anthropic. No other Go option has comparable backing.
-- **Protocol parity where it matters.** Both SDKs implement the same current spec revision (`2025-11-25` — see table below), so there's no functional-completeness gap driving the choice either way.
-- **Structured output fits cpg's query tools directly.** `mcp.AddTool[In, Out]` auto-populates `CallToolResult.StructuredContent` from a typed `Out` return value and auto-infers `OutputSchema` from that type (SEP-2106) — cpg's query tools (dropped flows, generated policies, explain/evidence, cluster health) can return the same Go structs the existing writers/readers already use, with zero manual JSON-schema authoring.
-- **Zero HTTP/transport bloat either way.** Both SDKs ship SSE/StreamableHTTP support in the same module as stdio; cpg only imports/uses `&mcp.StdioTransport{}` regardless of which SDK is picked, so this isn't a differentiator — it's a reason neither choice requires an extra transport dependency (see "What NOT to Use").
+| Recommended | Alternative | Why Not (for v1.6) |
+|-------------|-------------|---------------------|
+| CiliumEndpoint informer (`cache.SharedIndexInformer` via generated cilium informer) as the "new endpoint" signal | Plain `clientset.CoreV1().Pods(ns).Watch(...)` loop | A Pod ADD event races ahead of Cilium actually creating the endpoint — you'd still need to poll/retry for the endpoint ID before `cilium-dbg endpoint config <ID>` can run. Watching `CiliumEndpoint` directly fires exactly when `Status.ID` becomes available — the natural trigger, one watch instead of two, no hand-rolled retry loop. |
+| CiliumEndpoint informer | Raw `Watch()` call without `client-go/tools/cache` | `cache.SharedIndexInformer` gives you resync, reconnect-on-disconnect, delta-FIFO dedup, and an in-memory indexed store for free — a raw `Watch()` loop means reimplementing all of that by hand and testing it under `-race`. The generated `NewFilteredCiliumEndpointInformer` is already built on `cache.NewSharedIndexInformer`, so "informer vs plain Watch" isn't really a choice cpg has to make — the pre-built option is also the zero-effort option. |
+| Hubble `ServerStatus`/`GetNodes` RPC as the Cilium version source of truth | `ds/cilium` image tag parsing (kube-system DaemonSet) | Requires **zero new RBAC** (reuses the connection cpg already holds for every invocation) and **survives digest-pinned images** (`image: quay.io/cilium/cilium@sha256:...` has no tag to parse — a real GitOps/Renovate pattern). Image-tag parsing needs `daemonsets/get` in kube-system (same tier as the existing `cilium-envoy` preflight check, so not a new privilege *class*, but still an extra explicit grant) and fails outright on digest pins. Recommend keeping image-tag parsing as an optional cross-check/fallback only, never the primary signal. |
+| `k8s.io/apimachinery/pkg/util/version` for parsing/comparing the detected version | `github.com/blang/semver/v4` | Already present, but only as an **indirect** dependency pulled in by `github.com/cilium/cilium/pkg/version` (Cilium's own `ParseKernelVersion` helper, used for *kernel* version checks, not Cilium's own version, and not something cpg calls today — confirmed via `go mod why`). Promoting it to direct adds nothing `apimachinery/util/version` doesn't already give with zero go.mod change, and its parser is stricter (rejects the trailing free-form suffix format apimachinery is explicitly built to tolerate). |
+| `k8s.io/apimachinery/pkg/util/version` | `golang.org/x/mod/semver` | Also already a direct dependency (imported today via `golang.org/x/mod/modfile` in `pkg/dropclass/version_test.go`), so also a zero-cost option — but it enforces strict SemVer 2.0 (mandatory `vMAJOR.MINOR.PATCH`, no tolerance for non-conformant suffixes) and is designed for Go *module* versions, not Kubernetes-ecosystem component/image tags. `apimachinery/util/version` is the idiomatic choice the K8s ecosystem itself uses for this exact class of string (client-go's own discovery/version-skew handling). |
+| `remotecommand.NewSPDYExecutor` alone (matches existing port-forward pattern 1:1) as the v1.6 MVP | `remotecommand.NewFallbackExecutor(websocketExec, spdyExec, shouldFallback)` (mirrors current `kubectl exec`) | Both already available with zero new deps. SPDY-only is the smaller diff and matches `pkg/k8s/portforward.go` exactly (same `spdy.RoundTripperFor` call, same operational track record since v1.0). Cluster-internal exec to a kube-system agent pod (not through a browser/corporate proxy) is exactly the case where SPDY's known weak spot — intermediary proxies stripping the upgrade — is least likely to bite. Recommend shipping SPDY-only first; the WebSocket+fallback hardening is a documented, low-effort (~10-15 line), zero-new-dependency follow-up, not a blocking v1.6 requirement. |
+| Cilium-generated typed clientset (`pkg/k8s/client/clientset/versioned`, already in use) | `k8s.io/client-go/dynamic` (unstructured client) | Not a live question — cpg already uses the generated typed clientset for `CiliumNetworkPolicy` (`pkg/k8s/cluster_dedup.go`). The same clientset's `CiliumV2().CiliumEndpoints(ns)` and the sibling generated informer are the natural, already-consistent choice for `CiliumEndpoint`. Introducing a *second*, untyped client style for one new CRD would be an inconsistency, not a simplification. |
 
 ## What NOT to Use
 
 | Avoid | Why | Use Instead |
 |-------|-----|--------------|
-| `mcp.SSEHandler` / `mcp.StreamableHTTPHandler` (go-sdk's HTTP transport types) or any HTTP-transport setup | v1.5 scope is stdio-only — the harness spawns `cpg mcp` as a subprocess. HTTP transport pulls in the SDK's OAuth machinery (`golang.org/x/oauth2`, `golang-jwt/jwt/v5`) which is irrelevant here and would add a network-exposed surface + auth code path with nothing exercising or securing it. | `&mcp.StdioTransport{}` only — this was also the coordinator's explicit constraint (no OAuth/authorization; that's an HTTP-transport concern). |
-| `fmt.Println` / `fmt.Printf` / bare `log.Print*` anywhere in the new MCP code | Corrupts the newline-delimited JSON-RPC stream on stdout — the harness sees garbled frames and the session breaks silently or fatally. | The existing package-level `*zap.Logger` (already stderr-only) or `fmt.Fprintln(os.Stderr, ...)`. |
-| Calling `pkg/hubble/writer.go` / `pipeline.go` diff-writer paths with a `nil` `io.Writer` from inside an MCP tool handler | Both default that parameter to `os.Stdout` when nil (pre-existing behavior for the CLI's `--dry-run` diff and v1.3 session-summary block) — silently corrupts stdio framing if triggered from `start_session`. | Pass `io.Discard` or a captured `bytes.Buffer` explicitly through the parameter that already exists for test injection. |
-| A second logging library for the MCP path (slog-only setup, logrus, zerolog, etc.) | Violates the "no new logging lib" constraint and splits structured logs across two pipelines, defeating the point of one `zap`-backed operational log. | `zap`, bridged into go-sdk's `*slog.Logger` hook via `zap/exp/zapslog` (already bundled, no new dependency). |
-| `mark3labs/mcp-go`'s `server.ServeStdio(s)` convenience wrapper | Not applicable once go-sdk is the chosen SDK — this is a note for anyone tempted to mix packages. | `server.Run(ctx, &mcp.StdioTransport{})` + explicit `signal.NotifyContext(...)` (see integration snippet above). |
+| Promoting `github.com/blang/semver/v4` from indirect to direct | Redundant — solves nothing `apimachinery/util/version` doesn't, and it's currently pulled in for an unrelated purpose (Cilium's kernel-version parsing) | `k8s.io/apimachinery/pkg/util/version` |
+| A hand-rolled `for { Watch(); reconnect on error }` loop for endpoints or pods | Reinvents `client-go/tools/cache`'s resync/backoff/dedup machinery, needs its own `-race` test suite, duplicates what the generated informer already gives for free | `cache.SharedIndexInformer` via the generated `CiliumEndpointInformer` |
+| `ds/cilium` image tag as the *only* version source | Breaks silently on digest-pinned images (no tag) and floating tags (`latest`, `stable`); needs `daemonsets/get` RBAC cpg doesn't strictly need for this purpose | Hubble `ServerStatus`/`GetNodes` (`.Version`) over the already-open observer connection; image tag only as an optional secondary cross-check, parsed leniently and allowed to fail into "version unknown, skipping check" — never abort (matches the existing `pkg/k8s/preflight.go` warn-and-proceed philosophy). |
+| `CiliumNode` CRD as a version source | Confirmed by reading `pkg/k8s/apis/cilium.io/v2/types.go`: `CiliumNode`/`NodeSpec` track IPAM/routing state, not agent version. No such field exists. | Hubble `ServerStatus`/`GetNodes`, as above. |
+| Assuming the existing SEC-01 verb-name audit (`cmd/cpg/mcp_audit_test.go`) automatically catches the new exec path | `remotecommand.NewSPDYExecutor(...).StreamWithContext(...)` and the WebSocket path are HTTP upgrade calls (`RESTClient().Post()/Get()...SubResource("exec")...Do()`), **not** a typed `.Create(`/`.Update(` clientset call. PROJECT.md's own Key Decision log notes the RTA/SSA scan is verb-*name*-based specifically to avoid false positives — an untyped upgrade call has no such verb name to match, so it can pass through undetected today. This is a direct consequence of the library choice above and should be treated as a required addition to the AUD-04 two-mode proof (an explicit reachability assertion targeting the exec call sites / `remotecommand` symbols), not assumed to fall out of the current test for free. | Extend `cmd/cpg/mcp_audit_test.go`'s allowlist/assertions with an explicit check for reachability of the exec-invoking function(s), mirroring how fs-write functions are already allowlisted by name. |
+| A new plugin/runtime framework, package manager, or build step for skills/agents | Not how Claude Code skills or subagents work | Plain `.claude/skills/<name>/SKILL.md` and `.claude/agents/<name>.md` — YAML frontmatter (`name`, `description` required; skills also support `allowed-tools`/`disallowed-tools`; subagents also support `tools`, `model`, `mcpServers`, etc.) + Markdown body, matching the `desloppify` skill already checked into this repo at `.claude/skills/desloppify/SKILL.md`. |
+| A typed CRD `Create`/`Update`/`Delete` call for the default-deny CNP itself in v1.6 | Out of scope per the draft (§3.C.4: "v1 mutates ONLY endpoint audit config... The default-deny CNP itself stays human-applied") and per PROJECT.md's existing "No apply_policy MCP tool" constraint | Keep CNP generation write-to-file only (existing `pkg/output` writer); the CNP `Create` path is explicitly a possible *later* extension, not v1.6 stack. |
 
 ## Stack Patterns by Variant
 
-**If a tool call must not block indefinitely (e.g. `status` on a stuck capture):**
-- Rely on the `ctx context.Context` that's already the first parameter of every `ToolHandlerFor[In, Out]` handler.
-- Because go-sdk propagates client-side cancellation as a `notifications/cancelled` message directly onto that context (verified in go-sdk's design docs) — no manual polling/timeout plumbing needed beyond a normal `context.WithTimeout` if cpg wants a server-side ceiling too.
+**If AUD-03's exec/watch surface ships MCP-flag-gated (`cpg mcp --enable-audit-bootstrap`):**
+- Same libraries as the CLI-only variant below. The open decision in the draft (§3.C, "MCP flag-gated vs CLI-only") is a *product-surface* decision, not a stack decision — `remotecommand`, the cilium informer, and `apimachinery/util/version` are needed identically either way.
+- Extra requirement: the exec/watch/revert code paths must be reachable only from the gated code path, so AUD-04's SSA/RTA audit can assert "unreachable without the flag" the same way it asserts "zero write verbs reachable" today (same `golang.org/x/tools` machinery, no new library).
 
-**If a tool's output must be both human-readable (for chat transcripts) and machine-parseable (for the harness to act on):**
-- Return the typed `Out` struct from the handler and leave `CallToolResult.Content` nil.
-- Because go-sdk auto-populates `Content` with JSON text derived from the structured value when `Content` is left unset — cpg gets both channels from a single typed return, no hand-written duplicate text formatting.
+**If AUD-03 ships CLI-only (`cpg audit enable|disable -n <ns> --watch --ttl`):**
+- Same libraries; the MCP server stays exactly as shipped in v1.5 (zero new tool registration), so SEC-01's *existing* single-mode proof is untouched — only a new CLI command's own tests need coverage. Simplifies AUD-04 to "still nothing new reachable from `runMCPServer`" (cheaper to prove) at the cost of the LLM-driven workflow argument from the draft's rationale (§3.C intro).
 
-**If the binary is invoked as a kubectl plugin vs. standalone (`cpg mcp` today already inherits this ambiguity from `main.go`):**
-- Reuse the existing `isKubectlPlugin()` helper when constructing `mcp.Implementation{Name: ...}`.
-- Because it's already resolved once at startup for the cobra `Use:` string; the MCP server identity can reflect the same invocation context without a second detection path.
+**If hardening exec beyond SPDY-only (recommended as a fast-follow, not blocking):**
+- Mirror `kubectl`'s current `createExecutor` (verified live against `kubernetes/kubectl@master`, 2026-07-22):
+  ```go
+  func createExecutor(url *url.URL, config *restclient.Config) (remotecommand.Executor, error) {
+      exec, err := remotecommand.NewSPDYExecutor(config, "POST", url)
+      if err != nil {
+          return nil, err
+      }
+      websocketExec, err := remotecommand.NewWebSocketExecutor(config, "GET", url.String())
+      if err != nil {
+          return nil, err
+      }
+      return remotecommand.NewFallbackExecutor(websocketExec, exec, func(err error) bool {
+          return httpstream.IsUpgradeFailure(err) || httpstream.IsHTTPSProxyError(err)
+      })
+  }
+  ```
+  Note the method asymmetry: WebSocket must use `"GET"` (RFC 6455 §4.1), SPDY uses `"POST"` — same URL, two request objects.
 
 ## Version Compatibility
 
 | Package A | Compatible With | Notes |
-|-----------|------------------|-------|
-| `github.com/modelcontextprotocol/go-sdk v1.6.1` | `go 1.25.1` (cpg's module directive) / toolchain `go1.25.12` | SDK's own `go.mod` requires `go 1.25.0` minimum — cpg already exceeds it. Zero toolchain change. |
-| `github.com/modelcontextprotocol/go-sdk v1.6.1` | `golang.org/x/oauth2` (cpg currently pins `v0.34.0` indirect) | SDK requires `v0.35.0` → `go mod tidy` will bump this transitively. The package is unused code for cpg (OAuth is HTTP-transport-only, and cpg is stdio-only) — the bump is inert, not a new attack surface to review. |
-| `github.com/modelcontextprotocol/go-sdk v1.6.1` | `golang.org/x/tools` (cpg currently pins `v0.44.0` indirect) | SDK requires only `v0.42.0`; Go's minimum-version-selection keeps cpg's existing (newer) `v0.44.0` — no change at all. |
-| `github.com/modelcontextprotocol/go-sdk v1.6.1` | `github.com/google/go-cmp v0.7.0` | Already pinned identically in cpg's `go.sum` — no change. |
-| `go.uber.org/zap/exp/zapslog` | `go.uber.org/zap v1.27.1` (cpg's existing pin) | Confirmed present at the exact `v1.27.1` tag via GitHub API — import-only, no version bump. Requires Go 1.21+ (cpg's 1.25.x already clears this). |
-| Protocol spec revision `2025-11-25` (current "latest" per modelcontextprotocol.io) | `go-sdk` v1.4.0 – v1.6.1 (stable channel) **and** `mark3labs/mcp-go` v0.56.0 | Both SDKs are at wire-protocol parity on the current published spec (plus backward compat to `2025-06-18`, `2025-03-26`, `2024-11-05`) — spec support was not a differentiator in the SDK choice. |
-| Protocol spec draft `2026-07-28` | `go-sdk` **v1.7.0-pre.1..pre.3 only** (prerelease, latest `pre.3` published 2026-07-17) | Not yet on modelcontextprotocol.io's public spec pages and not GA in go-sdk. Do not adopt for v1.5 — stay on the `v1.6.1` stable channel and re-check at the next milestone. |
+|-----------|-----------------|-------|
+| `github.com/cilium/cilium v1.19.4` | `k8s.io/client-go`/`k8s.io/api`/`k8s.io/apimachinery v0.35.4` | Already proven compatible (current go.mod, 610 passing `-race` tests). All types this research relies on (`DefaultDenyConfig`, `CiliumEndpoint`, generated informers/listers, `ServerStatusResponse.Version`, `Node.Version`) are already present at these exact pinned versions — no bump needed for v1.6. |
+| `k8s.io/apimachinery/pkg/util/version` | Any `k8s.io/apimachinery` version cpg will realistically run | Extremely stable, long-lived package (predates client-go's own use of it for server-version handling); no known breaking changes across the k8s.io release train. |
+| `k8s.io/client-go/transport/websocket` | `k8s.io/client-go v0.35.4` | Present and used internally by `remotecommand/websocket.go` today — confirmed by reading the vendored file's imports (`gwebsocket "github.com/gorilla/websocket"`, `k8s.io/client-go/transport/websocket`). No separate version pin needed; travels with `k8s.io/client-go`. |
+| Runtime cluster Cilium version (the thing COMPAT-02 *detects*) | cpg's own `go.mod` cilium v1.19.4 | **Not the same axis.** The vendored module version governs which Go *types* cpg can compile against (already sufficient for all v1.6 features). The *cluster's* running Cilium version is a runtime data value COMPAT-02 reads and compares — it can be older than v1.19.4 (down to the declared floor) without requiring any go.mod change. Don't conflate "declared floor for cluster compatibility" with "go.mod dependency version" when scoping requirements. |
 
 ## Sources
 
-- Context7 `/modelcontextprotocol/go-sdk` — stdio transport (`StdioTransport`, `server.Run`), `AddTool`/`ToolHandlerFor` signatures, struct-tag schema inference, `ServerOptions.Logger` default, `ToolAnnotations`, `LoggingTransport` debug helper
-- Context7 `/mark3labs/mcp-go` — `ServeStdio`, `WithInputSchema`/`WithOutputSchema`, `NewToolResultStructured`, breaking-change history (Sampling capability type change, schema tag rename)
-- Context7 `/uber-go/zap` — `zapslog.NewHandler` usage
-- https://modelcontextprotocol.io/docs/sdk — official SDK tier listing; Go = Tier 1, `mcp-go` absent (user-directed source, treated as authority per instructions)
-- https://modelcontextprotocol.io/specification/latest — current spec revision `2025-11-25` (user-directed source)
-- https://modelcontextprotocol.io/docs/develop/build-server (Go tab) — official Go quickstart: `go get github.com/modelcontextprotocol/go-sdk/mcp`, stdio logging guidance ("never use fmt.Println/fmt.Printf... use log.Println() which defaults to stderr"), `go 1.24+` system requirement
-- https://github.com/modelcontextprotocol/go-sdk — README (Google collaboration statement), `releases` (v1.6.1 stable 2026-05-22; v1.7.0-pre.1..3 prereleases through 2026-07-17), `go.mod` at the `v1.6.1` tag (dependency list, `go 1.25.0` directive)
-- https://raw.githubusercontent.com/modelcontextprotocol/go-sdk/v1.6.1/mcp/logging.go — `ensureLogger` default (`slog.New(slog.DiscardHandler)`)
-- https://raw.githubusercontent.com/modelcontextprotocol/go-sdk/v1.6.1/mcp/server.go — `Server.Run` has no built-in signal handling (only `ctx.Done()` vs. session-closed select)
-- https://github.com/mark3labs/mcp-go — README (protocol `2025-11-25` support statement), `releases` (v0.56.0, 2026-07-09), `go.mod` at the `v0.56.0` tag
-- https://raw.githubusercontent.com/uber-go/zap/master/config.go — `NewProductionConfig`/`NewDevelopmentConfig` both default `OutputPaths`/`ErrorOutputPaths` to `["stderr"]`
-- GitHub REST API (`gh api`) — repo stats as of 2026-07-20 (go-sdk: 4,822 stars / 68 open issues / pushed 2026-07-17; mcp-go: 8,910 stars / 36 open issues / pushed 2026-07-09); confirmed `exp/zapslog` present in the `uber-go/zap` repo at the `v1.27.1` tag
-- Local repo inspection — `/home/gule/Workspace/team-infrastructure/cpg/go.mod`, `go.sum`, `cmd/cpg/main.go` (`buildLogger`, cobra wiring), `pkg/hubble/writer.go`, `pkg/hubble/pipeline.go` (existing `os.Stdout`-defaulting `io.Writer` seams), `pkg/hubble/pipeline.go` (`golang.org/x/sync/errgroup` usage)
+- Direct source inspection (HIGH confidence) — `$(go env GOMODCACHE)/github.com/cilium/cilium@v1.19.4/{api/v1/observer/observer.proto,pkg/k8s/apis/cilium.io/v2/types.go,pkg/k8s/client/informers/externalversions/cilium.io/v2/ciliumendpoint.go,pkg/k8s/client/listers/cilium.io/v2/ciliumendpoint.go,pkg/option/endpoint.go,pkg/version/version.go}` and `$(go env GOMODCACHE)/k8s.io/{client-go,apimachinery}@v0.35.4/{tools/remotecommand/*.go,util/version/version.go,util/httpstream/httpstream.go}`.
+- Existing cpg source (HIGH confidence, defines the patterns to mirror) — `pkg/k8s/portforward.go`, `pkg/k8s/preflight.go`, `pkg/k8s/cluster_dedup.go`, `pkg/hubble/client.go`, `pkg/dropclass/version.go`/`version_test.go`, `cmd/cpg/mcp_audit_test.go`, `go.mod`.
+- [kubernetes/kubectl `pkg/cmd/exec/exec.go` @ master](https://github.com/kubernetes/kubectl/blob/master/pkg/cmd/exec/exec.go) — live fetch 2026-07-22, HIGH confidence: confirms current production `createExecutor` fallback pattern.
+- [k8s.io/apimachinery/pkg/util/version — pkg.go.dev](https://pkg.go.dev/k8s.io/apimachinery/pkg/util/version) — HIGH confidence: official `ParseGeneric`/`AtLeast` semantics.
+- [Claude Code — Create custom subagents](https://code.claude.com/docs/en/sub-agents) — live fetch 2026-07-22, HIGH confidence: frontmatter schema (`name`/`description` required, rest optional), `.claude/agents/` project vs `~/.claude/agents/` user scoping.
+- [Claude Code — Extend Claude with skills](https://code.claude.com/docs/en/skills) — live fetch 2026-07-22, HIGH confidence: `.claude/skills/<name>/SKILL.md` project scoping, Agent Skills open standard, `allowed-tools`/`disallowed-tools` frontmatter.
+- `.planning/drafts/v1.6-audit-onboarding-and-cpg-agent-tooling.md` §2 (verified facts, not re-derived), §5 (research questions this file answers where in scope), §3.E (known floor table — COMPAT-01's exact per-feature introduction versions remain an open item for phase-specific research, not re-verified here since it's a documentation/requirements task, not a stack/dependency one).
 
 ---
-*Stack research for: MCP server integration (readonly, stdio transport) for cpg v1.5*
-*Researched: 2026-07-20*
+*Stack research for: cpg v1.6 (Audit-Mode Onboarding & cpg-Dedicated Agent Tooling)*
+*Researched: 2026-07-22*
