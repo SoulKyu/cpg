@@ -494,21 +494,30 @@ func TestMCPAuditReadonlyReachability(t *testing.T) {
 	}
 }
 
-// execConstructorSymbol is the exact StaticCallee().String() form of the
+// execConstructorSymbols is the exact StaticCallee().String() form of every
 // privileged exec-executor constructor Property 3 watches for
-// (AUD-04/T-23-08): remotecommand.NewSPDYExecutor, the SPDY dialer entry
-// point pkg/k8s/exec.go's ExecPolicyAuditMode/ReadPolicyAuditMode ultimately
-// call through to actually perform a `pods/exec` mutation.
-const execConstructorSymbol = "k8s.io/client-go/tools/remotecommand.NewSPDYExecutor"
+// (AUD-04/T-23-08): the SPDY dialer, the WebSocket dialer, and the fallback
+// wrapper that composes them — pkg/k8s/exec.go's newFallbackExecutor
+// (called from ExecCiliumDbg, which ReadPolicyAuditMode/SetPolicyAuditMode
+// ultimately call through) constructs all three to actually perform a
+// `pods/exec` mutation.
+var execConstructorSymbols = map[string]bool{
+	"k8s.io/client-go/tools/remotecommand.NewSPDYExecutor":      true,
+	"k8s.io/client-go/tools/remotecommand.NewWebSocketExecutor": true,
+	"k8s.io/client-go/tools/remotecommand.NewFallbackExecutor":  true,
+}
 
 // TestAuditWindowNotReachableFromMCP is the SEC-01 structural evolution
 // (AUD-04, Property 3): it proves, over the same whole-program SSA/RTA setup
 // TestMCPAuditReadonlyReachability already uses, that no cpg-owned function
 // GENUINELY (non-reflect-swept) reachable from runMCPServer contains a
-// static call instruction to remotecommand.NewSPDYExecutor — the negative
-// half — AND that the same call IS genuinely reachable from runAuditWindow
-// — the non-vacuous positive half (require.True; a vacuous "not reachable
-// from MCP" proof that also isn't reachable from anywhere is worthless).
+// static call instruction to any symbol in execConstructorSymbols
+// (remotecommand.NewSPDYExecutor, NewWebSocketExecutor, NewFallbackExecutor
+// — pkg/k8s/exec.go's newFallbackExecutor constructs all three) — the
+// negative half — AND that NewFallbackExecutor and NewSPDYExecutor are both
+// genuinely reachable from runAuditWindow — the non-vacuous positive half
+// (require.True; a vacuous "not reachable from MCP" proof that also isn't
+// reachable from anywhere is worthless).
 //
 // "Genuinely reachable" uses bfsFromRootGenuine (Edge.Site != nil only,
 // filtering RTA's reflect.Value.Call sweep), specifically so a cobra RunE
@@ -610,7 +619,7 @@ func TestAuditWindowNotReachableFromMCP(t *testing.T) {
 				if !ok {
 					continue
 				}
-				if callee := call.Common().StaticCallee(); callee != nil && callee.String() == execConstructorSymbol {
+				if callee := call.Common().StaticCallee(); callee != nil && execConstructorSymbols[callee.String()] {
 					// f may be a nested closure not itself in the BFS parent
 					// map; anchor the diagnostic path on its outermost lexical
 					// ancestor, which IS a genuinely-reachable function.
@@ -619,17 +628,20 @@ func TestAuditWindowNotReachableFromMCP(t *testing.T) {
 						enclosing = enclosing.Parent()
 					}
 					t.Errorf("SEC-01/AUD-04: %s genuinely (non-reflect) reaches %s from runMCPServer\n  call path: %s",
-						f.String(), execConstructorSymbol, callPathFrom(genuineFromMCPAll, mcpRoot, enclosing))
+						f.String(), callee.String(), callPathFrom(genuineFromMCPAll, mcpRoot, enclosing))
 				}
 			}
 		}
 	}
 
 	// Positive half (AUD-04's "reachable ONLY from audit-window" other side):
-	// the exec constructor must be genuinely reachable from runAuditWindow —
-	// non-vacuous proof that this audit is actually watching something real.
+	// at least NewFallbackExecutor AND NewSPDYExecutor must be genuinely
+	// reachable from runAuditWindow — the fallback executor wraps both a
+	// WebSocket and a SPDY executor (newFallbackExecutor constructs all
+	// three), so a non-vacuous proof requires seeing the wrapper itself and
+	// the SPDY secondary it composes, not just any one of the three symbols.
 	genuineFromAudit := bfsFromRootGenuine(rtaRes.CallGraph, auditRoot)
-	foundExecCaller := false
+	foundExecConstructors := map[string]bool{}
 	for f := range restrictToCpgOwned(genuineFromAudit.visited) {
 		for _, b := range f.Blocks {
 			for _, instr := range b.Instrs {
@@ -637,14 +649,16 @@ func TestAuditWindowNotReachableFromMCP(t *testing.T) {
 				if !ok {
 					continue
 				}
-				if callee := call.Common().StaticCallee(); callee != nil && callee.String() == execConstructorSymbol {
-					foundExecCaller = true
-					t.Logf("SEC-01/AUD-04: exec constructor genuinely reachable via %s",
-						callPathFrom(genuineFromAudit, auditRoot, f))
+				if callee := call.Common().StaticCallee(); callee != nil && execConstructorSymbols[callee.String()] {
+					foundExecConstructors[callee.String()] = true
+					t.Logf("SEC-01/AUD-04: %s genuinely reachable via %s",
+						callee.String(), callPathFrom(genuineFromAudit, auditRoot, f))
 				}
 			}
 		}
 	}
-	require.True(t, foundExecCaller,
+	require.True(t, foundExecConstructors["k8s.io/client-go/tools/remotecommand.NewFallbackExecutor"],
+		"SEC-01/AUD-04: remotecommand.NewFallbackExecutor must be genuinely reachable from runAuditWindow — audit is vacuous otherwise")
+	require.True(t, foundExecConstructors["k8s.io/client-go/tools/remotecommand.NewSPDYExecutor"],
 		"SEC-01/AUD-04: remotecommand.NewSPDYExecutor must be genuinely reachable from runAuditWindow — audit is vacuous otherwise")
 }
