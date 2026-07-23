@@ -41,5 +41,6 @@ which needs `list` on `ciliumnetworkpolicies.cilium.io`.
 
 ## Related
 
+- [Audit mode](audit-mode.md) — how the audit-window lifecycle and its guarantees work
 - [MCP server guide](mcp-server.md) — secrets posture when exposing sessions to an LLM
 - [Bootstrap runbook](bootstrap-runbook.md) — the full audit-window workflow and its RBAC details

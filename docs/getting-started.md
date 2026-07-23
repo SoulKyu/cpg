@@ -84,7 +84,8 @@ kubectl apply -f ./policies/production/
 On a **fresh namespace** (no live traffic) you can invert steps 1 and 2 -- bootstrap first
 means the namespace is protected from the very first pod, and there is nothing running to
 drop. Both orders, the new-endpoint race window, and the RBAC details are covered in the
-[runbook](bootstrap-runbook.md).
+[runbook](bootstrap-runbook.md); how the pieces work under the hood is the
+[audit mode guide](audit-mode.md).
 
 ## Next steps
 

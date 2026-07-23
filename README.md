@@ -65,6 +65,7 @@ Full documentation lives in [`docs/`](docs/README.md):
 | [Installation](docs/installation.md) | krew, `go install`, source builds, supported Cilium versions, k9s plugin |
 | [Getting started](docs/getting-started.md) | First live capture, offline replay, audit-mode onboarding |
 | [Bootstrap runbook](docs/bootstrap-runbook.md) | Default-deny onboarding with `cpg bootstrap` + `cpg audit-window` |
+| [Audit mode](docs/audit-mode.md) | How the audit-window, bootstrap, and `--include-audit` pieces fit together |
 | [Policy generation](docs/policy-generation.md) | Generated YAML examples, label selection, dedup, unhandled flows |
 | [L7 guide](docs/l7-guide.md) | HTTP/DNS rules with `--l7`: prerequisites and visibility bootstrap |
 | [Explain & evidence](docs/explain.md) | `cpg explain` -- the flow evidence behind every rule |

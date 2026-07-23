@@ -17,6 +17,7 @@ for the elevator pitch, see the [project README](../README.md).
 | Guide | What's inside |
 |-------|---------------|
 | [Policy generation](policy-generation.md) | The pipeline, generated YAML examples, label selection, deduplication, unhandled flows |
+| [Audit mode](audit-mode.md) | How `cpg audit-window`, `cpg bootstrap`, and `--include-audit` fit together; lifecycle guarantees |
 | [L7 guide](l7-guide.md) | HTTP/DNS rules with `--l7`: prerequisites, the two-step workflow, visibility bootstrap |
 | [Explain & evidence](explain.md) | `cpg explain` — per-rule flow evidence behind every generated rule |
 | [MCP server](mcp-server.md) | `cpg mcp` — readonly MCP server for LLM harnesses, tool catalog, harness configuration |
