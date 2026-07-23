@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/httpstream"
 	apiversion "k8s.io/apimachinery/pkg/util/version"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -55,8 +57,8 @@ var execCiliumDbgFn = ExecCiliumDbg
 // A non-nil error wrapping exec.CodeExitError (detected via errors.As) means
 // the remote command itself exited non-zero (bad endpoint ID, bad option,
 // agent socket unreachable) — this is always distinguished from a transport
-// failure (SPDY dial/stream error), which wraps a different message so
-// callers and operators can tell the two apart at a glance.
+// failure (WebSocket/SPDY dial or stream error), which wraps a different
+// message so callers and operators can tell the two apart at a glance.
 func ExecCiliumDbg(ctx context.Context, config *rest.Config, clientset kubernetes.Interface, podName, binary string, args []string) (stdout, stderr string, err error) {
 	req := clientset.CoreV1().RESTClient().Post().
 		Resource("pods").
@@ -70,9 +72,9 @@ func ExecCiliumDbg(ctx context.Context, config *rest.Config, clientset kubernete
 			Stderr:    true,
 		}, scheme.ParameterCodec)
 
-	executor, err := remotecommand.NewSPDYExecutor(config, "POST", req.URL())
+	executor, err := newFallbackExecutor(config, req.URL())
 	if err != nil {
-		return "", "", fmt.Errorf("creating SPDY executor for pod %s: %w", podName, err)
+		return "", "", fmt.Errorf("creating exec executor for pod %s: %w", podName, err)
 	}
 
 	var stdoutBuf, stderrBuf bytes.Buffer
@@ -89,6 +91,37 @@ func ExecCiliumDbg(ctx context.Context, config *rest.Config, clientset kubernete
 		return stdoutBuf.String(), stderrBuf.String(), fmt.Errorf("exec transport failure in pod %s: %w", podName, err)
 	}
 	return stdoutBuf.String(), stderrBuf.String(), nil
+}
+
+// newFallbackExecutor mirrors kubectl's own exec construction
+// (kubectl@v0.33.0 pkg/cmd/exec/exec.go): WebSocket is the primary
+// transport (kubectl's default since 1.30+), SPDY is the secondary,
+// falling back only on an upgrade failure — never silently swallowing any
+// other transport error.
+func newFallbackExecutor(config *rest.Config, url *url.URL) (remotecommand.Executor, error) {
+	wsExec, err := remotecommand.NewWebSocketExecutor(config, "POST", url.String())
+	if err != nil {
+		return nil, fmt.Errorf("creating WebSocket executor: %w", err)
+	}
+	spdyExec, err := remotecommand.NewSPDYExecutor(config, "POST", url)
+	if err != nil {
+		return nil, fmt.Errorf("creating SPDY executor: %w", err)
+	}
+	executor, err := remotecommand.NewFallbackExecutor(wsExec, spdyExec, shouldFallbackToSPDY)
+	if err != nil {
+		return nil, fmt.Errorf("creating fallback executor: %w", err)
+	}
+	return executor, nil
+}
+
+// shouldFallbackToSPDY is kubectl's exact fallback predicate
+// (kubectl@v0.33.0 pkg/cmd/exec/exec.go:158): fall back from WebSocket to
+// SPDY only when the WebSocket upgrade itself failed, or when a proxy
+// rejects the wss:// scheme it doesn't understand — any other transport
+// error (auth failure, pod not found, ...) is returned as-is, never masked
+// by a SPDY retry.
+func shouldFallbackToSPDY(err error) bool {
+	return httpstream.IsUpgradeFailure(err) || httpstream.IsHTTPSProxyError(err)
 }
 
 // FindAgentPodForNode resolves the running cilium-agent pod (kube-system,

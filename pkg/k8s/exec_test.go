@@ -2,14 +2,33 @@ package k8s
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/httpstream"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 )
+
+// TestExecFallbackPredicate proves shouldFallbackToSPDY matches kubectl's
+// exact fallback predicate: true for an upgrade-failure error
+// (httpstream.UpgradeFailureError, exported for exactly this purpose), false
+// for an unrelated transport error that must never be silently masked by a
+// SPDY retry.
+func TestExecFallbackPredicate(t *testing.T) {
+	upgradeErr := &httpstream.UpgradeFailureError{Cause: errors.New("dial tcp: connection refused")}
+	if !shouldFallbackToSPDY(upgradeErr) {
+		t.Error("shouldFallbackToSPDY(UpgradeFailureError) = false, want true")
+	}
+
+	plainErr := errors.New("pods \"cilium-abc123\" is forbidden")
+	if shouldFallbackToSPDY(plainErr) {
+		t.Error("shouldFallbackToSPDY(plain error) = true, want false")
+	}
+}
 
 // ciliumAgentPodWithHostIP builds a cilium-agent pod (kube-system,
 // k8s-app=cilium) with the given HostIP and phase, reusing the naming
