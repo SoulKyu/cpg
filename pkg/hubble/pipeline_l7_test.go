@@ -119,11 +119,11 @@ func TestPipeline_L7Empty_FiresWarning(t *testing.T) {
 	for _, e := range logs.All() {
 		if strings.Contains(e.Message, "no L7 records observed") {
 			matches++
-			// hint must include the README anchor + flag name.
+			// hint must include the L7 guide path + flag name.
 			fields := e.ContextMap()
 			hint, ok := fields["hint"].(string)
 			assert.True(t, ok, "hint field must be a string")
-			assert.Contains(t, hint, "#l7-prerequisites")
+			assert.Contains(t, hint, "docs/l7-guide.md")
 			assert.Contains(t, e.Message, "--l7")
 			// workloads slice must be non-empty and sorted.
 			ws, ok := fields["workloads"].([]interface{})

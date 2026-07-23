@@ -330,7 +330,7 @@ func TestReplay_L7HTTP_DisabledByteStable(t *testing.T) {
 
 // TestReplay_L7HTTP_EmptyFixtureFiresWarning asserts VIS-01: when --l7 is set
 // against an L4-only fixture, the pipeline emits exactly one warning
-// referencing #l7-prerequisites and produces no http: block in the output.
+// referencing docs/l7-guide.md and produces no http: block in the output.
 func TestReplay_L7HTTP_EmptyFixtureFiresWarning(t *testing.T) {
 	logs := initObservedLoggerForTesting(t)
 
@@ -357,7 +357,7 @@ func TestReplay_L7HTTP_EmptyFixtureFiresWarning(t *testing.T) {
 			fields := e.ContextMap()
 			hint, ok := fields["hint"].(string)
 			assert.True(t, ok, "hint field must be a string")
-			assert.Contains(t, hint, "#l7-prerequisites", "hint must reference README anchor")
+			assert.Contains(t, hint, "docs/l7-guide.md", "hint must reference the L7 guide")
 			assert.Contains(t, e.Message, "--l7", "warning must reference --l7 flag verbatim")
 			if ws, ok := fields["workloads"].([]interface{}); ok {
 				assert.NotEmpty(t, ws, "workloads must be non-empty")

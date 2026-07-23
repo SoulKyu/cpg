@@ -358,7 +358,7 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 		cfg.Logger.Warn("--l7 set but no L7 records observed in window",
 			zap.Strings("workloads", agg.ObservedWorkloads()),
 			zap.Uint64("flows", stats.FlowsSeen),
-			zap.String("hint", "see README L7 prerequisites: #l7-prerequisites"),
+			zap.String("hint", "see L7 visibility prerequisites: docs/l7-guide.md"),
 		)
 	}
 
