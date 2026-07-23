@@ -19,14 +19,14 @@ from observed traffic instead of hand-writing it.
 
 ## Prerequisites
 
-- `cpg` installed and on `PATH` (see the main [README](../README.md#install)).
+- `cpg` installed and on `PATH` (see the [installation guide](installation.md)).
 - A working `kubeconfig` pointed at the target cluster, with the same RBAC `cpg generate` already
   needs (`pods` list/get, `ciliumnetworkpolicies` read, and -- for this runbook -- `create`/
   `apply` once you're ready to land the generated policy).
 - Cilium **>= 1.16** on the target cluster. `cpg bootstrap` detects the cluster's Cilium version
   and refuses to emit an artifact below that floor, because the `enableDefaultDeny` field it
   relies on is silently pruned by the CRD schema on older clusters (see the
-  [Supported Cilium versions](../README.md#supported-cilium-versions) table). If version
+  [Supported Cilium versions](installation.md#supported-cilium-versions) table). If version
   detection fails (no reachable cluster), `cpg bootstrap` warns and proceeds -- useful for
   offline/CI artifact generation, but confirm the target cluster's version yourself before
   applying anything it produces.
@@ -71,7 +71,7 @@ access: exactly the state the rest of this runbook safely fills in.
 Prefer to review before applying? Redirect the artifact to a file instead of piping it
 (`cpg bootstrap -n <namespace> > default-deny.yaml`), inspect it, then `kubectl apply -f` it
 yourself. The
-[MCP](../README.md#mcp-server-cpg-mcp) `get_bootstrap_policy` tool returns the same YAML as
+[MCP](mcp-server.md) `get_bootstrap_policy` tool returns the same YAML as
 read-only tool-result content, for harnesses that want to inspect it programmatically before an
 operator applies it.
 
@@ -126,8 +126,8 @@ generating the traffic you want captured.
 
 **RBAC:** `cpg audit-window` needs `pods/exec` (create, in `kube-system`) to reach each node's
 cilium-agent, and `ciliumendpoints` (list/watch) to discover endpoints -- a step-up beyond
-anything else this runbook or `cpg generate` needs. See the main README's
-[Readonly by default](../README.md#readonly-by-default) section for the full RBAC posture and
+anything else this runbook or `cpg generate` needs. See the
+[security model](security.md) for the full RBAC posture and
 its scoping limitation.
 
 If you need the underlying `$ENDPOINT`/`$CILIUM_POD` values for the Hubble observation step

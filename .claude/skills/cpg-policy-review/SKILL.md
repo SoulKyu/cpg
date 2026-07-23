@@ -13,7 +13,7 @@ description: >
 # cpg-policy-review
 
 Router for an offline policy audit. This skill routes to `cpg explain` and
-the `get_evidence` tool for evidence, and points at the README rather than
+the `get_evidence` tool for evidence, and points at the docs rather than
 restating flag lists or field shapes.
 
 ## Step 1: Locate the target
@@ -44,8 +44,8 @@ For each rule `cpg explain` surfaces, check:
   evidence actually shows traffic from? A rule matching a whole namespace
   when evidence shows only one workload talking is a candidate to tighten.
 - **L7 anchoring:** for HTTP/DNS rules, is the L7 detail (method, path,
-  matchName) actually present and correctly anchored? See the README's
-  [L7 Prerequisites](../../../README.md#l7-prerequisites) section for the
+  matchName) actually present and correctly anchored? See the
+  [L7 guide](../../../docs/l7-guide.md) for the
   capture-time requirements a rule needs before L7 attribution is even
   possible — do not re-derive those requirements here, route to it.
 - **Missing DNS-53 companions:** an egress rule permitting a `toFQDNs` peer
@@ -67,7 +67,7 @@ genuinely varied evidence samples justifying the breadth.
 
 Summarize findings per rule: keep as-is, tighten (with the specific narrower
 selector/port/L7 filter suggested), or flag as a dedup candidate. Point the
-operator at [Explain policies](../../../README.md#explain-policies) in the
-README for the full worked examples of `cpg explain` usage if they want to
+operator at [Explain & evidence](../../../docs/explain.md)
+for the full worked examples of `cpg explain` usage if they want to
 reproduce a finding themselves. This skill reports; the operator decides
 whether and how to edit the policy YAML.

@@ -12,8 +12,9 @@ import (
 // TestReadmeCompatSection is the golden consistency test for COMPAT-01 and
 // COMPAT-03 (see .planning/phases/21-cilium-compatibility-matrix-runtime-detection).
 //
-// It pins two facts about README.md's user-facing Cilium compatibility prose
-// so a future edit cannot silently regress them:
+// It pins two facts about the user-facing Cilium compatibility prose in
+// docs/installation.md (originally in README.md; moved when the README was
+// slimmed down to an overview) so a future edit cannot silently regress them:
 //
 //  1. COMPAT-01: a "## Supported Cilium versions" section exists, declaring
 //     the documented floor (1.14) plus the PR-verified per-feature floor
@@ -29,16 +30,16 @@ import (
 // the check, and so the test runs deterministically with no cluster, no
 // build tags, and no external process.
 func TestReadmeCompatSection(t *testing.T) {
-	data, err := os.ReadFile("../../README.md")
-	require.NoError(t, err, "README.md must be readable at the repo root")
+	data, err := os.ReadFile("../../docs/installation.md")
+	require.NoError(t, err, "docs/installation.md must exist and be readable")
 	readme := string(data)
 
 	assert.Contains(t, readme, "## Supported Cilium versions",
-		"COMPAT-01: README must declare the 'Supported Cilium versions' section")
+		"COMPAT-01: installation guide must declare the 'Supported Cilium versions' section")
 
 	for _, tok := range []string{"1.14", "1.15", "1.16", "1.17"} {
 		assert.Contains(t, readme, tok,
-			"COMPAT-01: README compat section must carry the PR-verified version token %q", tok)
+			"COMPAT-01: compat section must carry the PR-verified version token %q", tok)
 	}
 
 	// T-21-02-01 mitigation: pin the merged-PR citations backing the three
@@ -47,17 +48,17 @@ func TestReadmeCompatSection(t *testing.T) {
 	// just the bare version numbers.
 	for _, pr := range []string{"#28085", "#30572", "#35019"} {
 		assert.Contains(t, readme, pr,
-			"COMPAT-01: README compat table must cite merged PR %q backing its version claim", pr)
+			"COMPAT-01: compat table must cite merged PR %q backing its version claim", pr)
 	}
 
 	// AUD-02 c5 (22-03-PLAN.md): the existing enableDefaultDeny/1.16 compat
 	// row must stay cross-referenced to `cpg bootstrap` and the runbook it
 	// links to, rather than regressing to a bare, uncontextualized PR
 	// citation or -- worse -- fragmenting into a duplicate row.
-	assert.Contains(t, readme, "docs/bootstrap-runbook.md",
-		"AUD-02 c5: README must link docs/bootstrap-runbook.md")
+	assert.Contains(t, readme, "bootstrap-runbook.md",
+		"AUD-02 c5: compat section must link the bootstrap runbook")
 	assert.Contains(t, readme, "cpg bootstrap",
-		"AUD-02 c5: README must mention cpg bootstrap alongside its enableDefaultDeny compat row")
+		"AUD-02 c5: compat section must mention cpg bootstrap alongside its enableDefaultDeny compat row")
 
 	lines := strings.Split(readme, "\n")
 
@@ -76,7 +77,7 @@ func TestReadmeCompatSection(t *testing.T) {
 	// states the real 1.16/1.17 removal boundary within its own prose
 	// block (the lines from that mention down to the next blank line).
 	assert.True(t, proxyVisibilityBoundaryStated(lines),
-		"COMPAT-03: README must state the proxy-visibility removal boundary "+
+		"COMPAT-03: installation guide must state the proxy-visibility removal boundary "+
 			"(1.16 or 1.17) in the same paragraph as a 'proxy-visibility' mention")
 }
 

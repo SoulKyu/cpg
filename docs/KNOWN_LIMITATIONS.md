@@ -16,7 +16,7 @@ For the full list of upcoming features, see [`.planning/PROJECT.md`](../.plannin
 
 cpg cannot bootstrap visibility itself. Without these prerequisites, `--l7` has nothing to read.
 
-**Workaround:** Follow the two-step workflow documented in the README under [L7 Prerequisites](../README.md#l7-prerequisites). Deploy the starter L7-visibility CNP first, capture again, then re-run `cpg generate --l7`.
+**Workaround:** Follow the two-step workflow documented in the [L7 guide](l7-guide.md). Deploy the starter L7-visibility CNP first, capture again, then re-run `cpg generate --l7`.
 
 **Tracking:** No issue — by-design constraint of Cilium architecture. Future UX improvement (`cpg setup-visibility <workload>` interactive bootstrap) is on the v1.3 wishlist but not committed.
 

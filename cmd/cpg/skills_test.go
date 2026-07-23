@@ -22,14 +22,14 @@ const wantToolCount = 9
 // identifiers — every one of the 9 current MCP tool names starts with
 // start_/get_/stop_/list_ (see 24-RESEARCH.md "MCP Tool Reference"). Skill
 // authors are required (by this test) to always backtick-quote tool names
-// in prose, mirroring the convention already visible in README.md's MCP
-// tool table. Deliberately narrow so it excludes arg-name prose like
+// in prose, mirroring the convention already visible in docs/mcp-server.md's
+// MCP tool table. Deliberately narrow so it excludes arg-name prose like
 // all_namespaces.
 var toolNameToken = regexp.MustCompile("`((?:start|get|stop|list)_[a-z_]+)`")
 
 // TestSkillsConsistencyTripwire is the compiled mitigation for the exact
 // drift Phase 24 targets: a future MCP tool added without a corresponding
-// skill/agent/README sweep. It enumerates the live tool registry (never a
+// skill/agent/docs sweep. It enumerates the live tool registry (never a
 // hardcoded list), then cross-checks it against the six markdown artifacts
 // authored in plan 24-01.
 func TestSkillsConsistencyTripwire(t *testing.T) {
@@ -65,12 +65,12 @@ func TestSkillsConsistencyTripwire(t *testing.T) {
 			"cpg-mcp-smoke/SKILL.md must mention every registered tool (coverage floor); missing %q", name)
 	}
 
-	readmeData, err := os.ReadFile("../../README.md")
-	require.NoError(t, err, "README.md must be readable at the repo root")
+	readmeData, err := os.ReadFile("../../docs/mcp-server.md")
+	require.NoError(t, err, "docs/mcp-server.md must exist and be readable")
 	readme := string(readmeData)
 
 	assert.Contains(t, readme, "## Agent tooling",
-		"README must declare the 'Agent tooling' section")
+		"docs/mcp-server.md must declare the 'Agent tooling' section")
 
 	for _, skill := range []string{
 		"cpg-triage",
@@ -80,7 +80,7 @@ func TestSkillsConsistencyTripwire(t *testing.T) {
 		"cpg-mcp-smoke",
 	} {
 		assert.Contains(t, readme, skill,
-			"README '## Agent tooling' section must list skill %q", skill)
+			"docs/mcp-server.md 'Agent tooling' section must list skill %q", skill)
 	}
 }
 
