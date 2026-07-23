@@ -28,6 +28,25 @@ target namespace, and Cilium >= 1.16 on the cluster. Confirm these before
 proceeding — a stale Cilium version silently degrades `cpg bootstrap`'s
 output rather than failing loudly.
 
+## Step 0.5: Pick the order (live traffic vs fresh namespace)
+
+Ask the operator one question before anything else: **does the namespace
+carry live traffic?**
+
+- **Live traffic → audit window FIRST, bootstrap second** (swap Steps 1
+  and 2 below). Flipping `PolicyAuditMode` is a no-op until a policy
+  matches, so opening the window first is harmless — and the bootstrap
+  apply then produces `AUDIT` verdicts instead of real drops. Zero real
+  drops, end to end.
+- **Fresh or scaled-down namespace → bootstrap first** (the order as
+  written). Nothing is running to drop, and the namespace is enforced from
+  the very first pod.
+
+See the runbook's
+[Choose Your Order](../../../docs/bootstrap-runbook.md#choose-your-order-live-traffic-vs-fresh-namespace)
+section. Either way, remind the operator the namespace is NOT enforced
+while the window is open — keep the `--ttl` as short as the capture needs.
+
 ## Step 1: Guide bootstrap (human-run)
 
 Instruct the operator to run, in their own terminal:
@@ -42,7 +61,8 @@ file first and `kubectl apply -f` it themselves; see the runbook's
 [Bootstrap the Namespace](../../../docs/bootstrap-runbook.md#bootstrap-the-namespace)
 section for both paths, plus the note on
 [Deploy / Scale Considerations](../../../docs/bootstrap-runbook.md#deploy--scale-considerations)
-if the namespace carries live traffic.
+if the namespace carries live traffic (in which case Step 2's window should
+already be open per Step 0.5).
 
 ## Step 2: Guide per-endpoint audit mode (human-run)
 

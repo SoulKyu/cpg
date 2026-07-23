@@ -31,6 +31,29 @@ from observed traffic instead of hand-writing it.
   offline/CI artifact generation, but confirm the target cluster's version yourself before
   applying anything it produces.
 
+## Choose Your Order: Live Traffic vs Fresh Namespace
+
+The two first steps below -- applying the default-deny bootstrap policy and opening the
+per-endpoint audit window -- are order-independent commands, and which one you run first
+matters a lot on a namespace with live traffic:
+
+- **Namespace with live traffic (recommended order: audit window FIRST).** Open
+  `cpg audit-window` *before* applying the bootstrap policy. Flipping an endpoint's
+  `PolicyAuditMode` is a no-op until a policy actually matches, so the flips are harmless --
+  and the moment the default-deny policy lands, every would-be-dropped flow becomes an `AUDIT`
+  verdict instead of a real drop. **Zero real drops, end to end.** This mirrors the order of
+  Cilium's own "Creating Policies from Verdicts" guide (audit mode first, then default-deny).
+  Read the sections below in this order: [Enable Per-Endpoint Audit Mode](#enable-per-endpoint-audit-mode)
+  first, then come back to [Bootstrap the Namespace](#bootstrap-the-namespace).
+- **Fresh or scaled-down namespace (bootstrap first, the order written below).** With no live
+  traffic there is nothing to drop, and applying the policy first means the namespace is
+  enforced from the very first pod. This is the conservative default: if you walk away
+  mid-runbook, the namespace converges to *protected*, not to *open*.
+
+Either way, remember that **while the audit window is open the namespace is not enforced** --
+traffic the default-deny would block is allowed (and logged as `AUDIT`). Keep the window as
+short as your capture needs (`--ttl` bounds it), whichever order you chose.
+
 ## Bootstrap the Namespace
 
 Generate the namespaced default-deny `CiliumNetworkPolicy` and apply it directly:
@@ -55,22 +78,29 @@ operator applies it.
 ## Deploy / Scale Considerations
 
 Bootstrapping default-deny on a namespace with live traffic immediately blocks anything not yet
-covered by a policy. Before applying:
+covered by a policy -- **unless the audit window is already open** (the recommended live-traffic
+order above), in which case those flows surface as `AUDIT` verdicts instead of drops. Before
+applying:
 
-- If the namespace runs a workload you can safely scale down first (a canary replica, a
-  low-traffic background job), do that -- it shrinks the blast radius of the initial
-  default-deny window while you build up policies from observed drops.
-- For anything user-facing, expect drops immediately after `kubectl apply`; the per-endpoint
-  audit window below is how you observe and fix them without blocking real traffic in the
-  meantime.
+- On live traffic, open the audit window first (see
+  [Choose Your Order](#choose-your-order-live-traffic-vs-fresh-namespace)) -- that is what makes
+  the apply drop-free.
+- If you bootstrap first anyway and the namespace runs a workload you can safely scale down (a
+  canary replica, a low-traffic background job), do that -- it shrinks the blast radius of the
+  initial default-deny window while you build up policies from observed drops.
+- If you bootstrap first on anything user-facing, expect drops immediately after
+  `kubectl apply` until the audit window below is open.
 - One namespace per `cpg bootstrap` invocation -- loop your shell over namespaces if you're
   onboarding several. There is no cluster-wide bootstrap mode on any code path.
 
 ## Enable Per-Endpoint Audit Mode
 
 Run `cpg audit-window` to enable `PolicyAuditMode` on the endpoints you're onboarding -- this
-reports policy-verdict violations without dropping traffic, so you can observe what a
-freshly-bootstrapped default-deny namespace needs before it starts actually blocking:
+reports policy-verdict violations without dropping traffic, so you can observe what the
+default-deny namespace needs before it starts actually blocking. On a live-traffic namespace,
+run this *before* applying the bootstrap policy (see
+[Choose Your Order](#choose-your-order-live-traffic-vs-fresh-namespace)) -- the flips are
+no-ops until the policy lands, and the apply then produces `AUDIT` verdicts instead of drops:
 
 ```bash
 cpg audit-window -n <namespace> --ttl 30m

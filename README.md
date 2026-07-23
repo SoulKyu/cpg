@@ -110,6 +110,37 @@ The grant is effectively "exec into any pod in `kube-system`" for whatever role 
 your cluster runs an admission controller (Kyverno, OPA Gatekeeper), consider policy-based
 scoping there as defense-in-depth -- this is not something cpg itself enforces or guarantees.
 
+## Audit-mode onboarding (default-deny with zero real drops)
+
+The full runbook lives in [docs/bootstrap-runbook.md](docs/bootstrap-runbook.md) -- this is the
+short version for a namespace **with live traffic**. The trick: flipping an endpoint's
+`PolicyAuditMode` is a no-op until a policy matches, so open the audit window *first* and the
+default-deny apply never drops anything -- every would-be drop surfaces as an `AUDIT` verdict
+instead.
+
+```bash
+# 1. Open the audit window FIRST (dedicated terminal — foreground, auto-reverts on exit/TTL)
+cpg audit-window -n production --ttl 30m
+
+# 2. Apply the default-deny bootstrap policy — flows become AUDIT verdicts, not drops
+cpg bootstrap -n production | kubectl apply -f -
+
+# 3. Capture the audited traffic and generate the allow policies
+cpg generate -n production --include-audit
+
+# 4. Review, then apply (always a human act)
+cpg explain production/api-server --json
+kubectl apply -f ./policies/production/
+
+# 5. Close the window (Ctrl+C or let --ttl expire) — audit flips revert automatically,
+#    default-deny now enforces against fully-covered traffic
+```
+
+On a **fresh namespace** (no live traffic) you can invert steps 1 and 2 -- bootstrap first
+means the namespace is protected from the very first pod, and there is nothing running to
+drop. Both orders, the new-endpoint race window, and the RBAC details are covered in the
+[runbook](docs/bootstrap-runbook.md).
+
 ## Quick start
 
 ```bash
