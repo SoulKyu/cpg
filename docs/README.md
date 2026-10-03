@@ -29,4 +29,5 @@ for the elevator pitch, see the [project README](../README.md).
 |-----------|---------------|
 | [CLI reference](cli-reference.md) | All flags, dry-run mode, exit codes, CI/cron integration |
 | [Known limitations](KNOWN_LIMITATIONS.md) | Documented limitations and edge cases, with workarounds and tracking IDs |
+| [Codebase map](CODEBASE_MAP.md) | Orientation map: packages, data flow, test layout |
 | [Development](development.md) | Project structure, build and test targets |
