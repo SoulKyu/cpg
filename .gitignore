@@ -1,3 +1,6 @@
 bin/
 .desloppify/
 /cpg
+
+# GSD/pi local install (regenerate prompts: node .pi/scripts/gsd-prompt-bridge.js)
+.pi/
