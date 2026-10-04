@@ -46,9 +46,9 @@ created: "2026-10-04"
 | 25-01-02 | 01 | 1 | L7GEN-04 | — | Below-gate templates emit literal rules, never silent widening | unit+replay | `go test -race -count=1 -run TestMinFlowsGate ./pkg/hubble/...` | ❌ W0 | ⬜ pending |
 | 25-01-03 | 01 | 1 | L7GEN-01 | — | 10k distinct paths collapse to one anchored template | golden/replay | `go test -race -count=1 -run TestL7CollapseGolden ./pkg/hubble/...` | ❌ W0 | ⬜ pending |
 | 25-01-04 | 01 | 1 | L7GEN-02 | T-25-01 | Segment-class matrix: hex/UUID templates; version/mixed/encoded literal fallback; pattern length cap (T-25-02) | unit+golden | `go test -race -count=1 -run 'TestPathTemplateClassifier\|TestCollapseHTTPPaths\|TestL7CollapseMixedClassesGolden' ./pkg/policy/... ./pkg/hubble/...` | ❌ W0 | ⬜ pending |
-| 25-01-05 | 01 | 1 | L7GEN-04 | T-25-03 | Gate boundary N-1/N; CLI rejects --min-flows-per-l7-rule < 1 (fail-closed); explain keeps literal-path evidence | unit+integration | `go test -race -count=1 -run 'TestCollapseHTTPPaths_GateBoundary\|TestMinFlowsGate\|TestValidateMinFlowsPerL7Rule' ./pkg/policy/... ./pkg/hubble/... ./cmd/cpg/...` | ❌ W0 | ⬜ pending |
+| 25-01-05 | 01 | 1 | L7GEN-04 | T-25-05 | Gate boundary N-1/N; CLI rejects --min-flows-per-l7-rule < 1 (fail-closed); explain keeps literal-path evidence | unit+integration | `go test -race -count=1 -run 'TestCollapseHTTPPaths_GateBoundary\|TestMinFlowsGate\|TestValidateMinFlowsPerL7Rule' ./pkg/policy/... ./pkg/hubble/... ./cmd/cpg/...` | ❌ W0 | ⬜ pending |
 | 25-02-01 | 02 | 2 | L7GEN-01 (criterion 2) | — | Byte-identical output without the flag | golden/regression | `go test -race -count=1 -run TestL7NoCollapseByteIdentity ./pkg/hubble/...` | ❌ W0 | ⬜ pending |
-| 25-02-02 | 02 | 2 | L7GEN-03 | T-25-03 | MCP arg validation fail-closed (reject invalid min_flows) | integration | `go test -race -count=1 -run TestMCPCollapseArgs ./cmd/cpg/...` | ❌ W0 | ⬜ pending |
+| 25-02-02 | 02 | 2 | L7GEN-03 | T-25-05 | MCP arg validation fail-closed (reject invalid min_flows) | integration | `go test -race -count=1 -run TestMCPCollapseArgs ./cmd/cpg/...` | ❌ W0 | ⬜ pending |
 | 25-02-03 | 02 | 2 | L7GEN-03 | — | MCP-vs-CLI parity: same flows, same collapsed rules (ROADMAP SC5) | integration | `go test -race -count=1 -run TestMCPCLICollapseParity ./cmd/cpg/...` | ❌ W0 | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
