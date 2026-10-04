@@ -519,7 +519,7 @@ func recordL7(pr *peerRules, f *flowpb.Flow, fp *flowProto, direction string, pe
 			opts.Collapse.observe(
 				collapseObsKey(direction, pr.obsPeerKey, portKey),
 				rules[0].Method,
-				pathFromURL(f.GetL7().GetHttp().GetUrl()),
+				rawPathFromURL(f.GetL7().GetHttp().GetUrl()),
 			)
 		}
 		for _, r := range rules {

@@ -19,6 +19,7 @@
 package policy
 
 import (
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -30,12 +31,12 @@ import (
 type segmentClass int
 
 const (
-	segWord     segmentClass = iota // anything else — never generalizes
-	segNumeric                      // ^[0-9]+$
-	segHexPrefix                    // ^0x[0-9a-fA-F]+$ (lowercase prefix only, per R3 masking)
-	segHexRun                       // ^[0-9a-fA-F]{6,}$ with ≥1 digit (all-letter runs stay words)
-	segUUID                         // canonical 8-4-4-4-12 hex UUID
-	segVersion                      // ^v[0-9]+$ — recognized but deliberately never generalizes
+	segWord      segmentClass = iota // anything else — never generalizes
+	segNumeric                       // ^[0-9]+$
+	segHexPrefix                     // ^0x[0-9a-fA-F]+$ (lowercase prefix only, per R3 masking)
+	segHexRun                        // ^[0-9a-fA-F]{6,}$ with ≥1 digit (all-letter runs stay words)
+	segUUID                          // canonical 8-4-4-4-12 hex UUID
+	segVersion                       // ^v[0-9]+$ — recognized but deliberately never generalizes
 )
 
 // Segment classifiers compiled once at package level. Order of application in
@@ -223,6 +224,35 @@ func literalAnchoredRule(rawPath string) string {
 		return "^/$"
 	}
 	return "^" + regexp.QuoteMeta(rawPath) + "$"
+}
+
+// rawPathFromURL returns the PATH COMPONENT OF THE RAW WIRE FORM of rawURL,
+// stripping scheme/host/query/fragment WITHOUT percent-decoding (mirrors
+// pathFromURL's stripping contract but keeps %XX escapes byte-for-byte).
+//
+// KNOWN_LIMITATIONS #8 invariant (L7GEN-02): classification, QuoteMeta, and
+// collapse operate on the wire-form path — "%C3%A9" is never decoded before
+// matching. The non-collapse path (pathFromURL/anchorPath in l7.go) keeps its
+// historical decoded behavior, untouched per plan verification; collapse
+// emission is computed from the raw observations collected here.
+func rawPathFromURL(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	u, err := url.Parse(rawURL)
+	if err == nil {
+		// EscapedPath returns the RawPath (wire form) when it is a valid
+		// encoding of u.Path — no percent-decoding, unlike u.Path.
+		return u.EscapedPath()
+	}
+	// Defensive fallback: manually trim query/fragment.
+	if i := strings.IndexByte(rawURL, '#'); i >= 0 {
+		rawURL = rawURL[:i]
+	}
+	if i := strings.IndexByte(rawURL, '?'); i >= 0 {
+		rawURL = rawURL[:i]
+	}
+	return rawURL
 }
 
 // CollapseHTTPPaths generalizes one observation set (method → raw literal
