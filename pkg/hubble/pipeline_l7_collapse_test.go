@@ -12,7 +12,6 @@ import (
 	flowpb "github.com/cilium/cilium/api/v1/flow"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 	"go.uber.org/zap/zaptest/observer"
 
@@ -157,7 +156,9 @@ func TestL7Collapse_CrossFlushReplace(t *testing.T) {
 	// Merge-on-write reconciliation: the second (authoritative) event
 	// REPLACES the first flush's literals.
 	merged := policy.MergePolicyWithOptions(ev1.Policy, ev2.Policy, policy.MergeOptions{ReplaceL7HTTP: true})
-	final := collapseEventHTTPPaths(merged)
+	// collapseEventHTTPPaths operates on the policy pointer; adapt the merged
+	// CNP into an event for the shared helper.
+	final := collapseEventHTTPPaths(policy.PolicyEvent{Policy: merged})
 	assert.Contains(t, final, "^/api/v1/users/[0-9]+$")
 	assert.NotContains(t, final, `^/api/v1/users/1$`, "stale literal must be replaced, not coexist")
 	assert.NotContains(t, final, `^/api/v1/users/2$`, "stale literal must be replaced, not coexist")
@@ -205,6 +206,7 @@ func TestAggregator_SetCollapseL7Paths(t *testing.T) {
 	agg := NewAggregator(10*time.Millisecond, logger, NewUnhandledTracker(logger))
 	assert.Nil(t, agg.l7Collapse, "collapse state must be nil by default")
 
+	agg.SetL7Enabled(true)
 	agg.SetCollapseL7Paths(true)
 	agg.SetMinFlowsPerL7Rule(7)
 	assert.True(t, agg.collapseL7Paths)
@@ -224,11 +226,22 @@ func TestAggregator_SetCollapseL7Paths(t *testing.T) {
 	for n := 1; n <= 6; n++ {
 		in <- collapseIngressFlow(fmt.Sprintf("/api/v1/users/%d", n))
 	}
+	// The first ticker tick can fire before Run() drains the buffered input,
+	// producing an empty flush event; wait for the event that actually carries
+	// the bucket's policy.
 	var ev policy.PolicyEvent
-	select {
-	case ev = <-out:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for flush")
+	deadline := time.After(2 * time.Second)
+waitForEvent:
+	for {
+		select {
+		case e := <-out:
+			if len(collapseEventHTTPPaths(e)) > 0 {
+				ev = e
+				break waitForEvent
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for flush with HTTP rules")
+		}
 	}
 	paths := collapseEventHTTPPaths(ev)
 	assert.NotContains(t, paths, "^/api/v1/users/[0-9]+$",

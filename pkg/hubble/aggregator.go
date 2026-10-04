@@ -92,6 +92,21 @@ type Aggregator struct {
 	// via SetIncludeAudit before Run().
 	includeAudit bool
 
+	// collapseL7Paths gates whole-run L7 path collapse (Phase 25); forwarded
+	// from PipelineConfig.CollapseL7Paths via SetCollapseL7Paths before Run().
+	collapseL7Paths bool
+
+	// minFlowsPerL7Rule is the distinct-observed-paths gate for collapsed
+	// templates (L7GEN-04); forwarded into AttributionOptions.MinFlowsPerL7Rule.
+	// Values < 1 resolve to policy.DefaultMinFlowsPerL7Rule (fail-closed).
+	minFlowsPerL7Rule int
+
+	// l7Collapse is the whole-run observed-path store. Allocated by
+	// SetCollapseL7Paths when collapse is enabled; mutated and read ONLY
+	// inside the flush path (single aggregator goroutine; L7GEN-01
+	// concurrency invariant — no locking by design).
+	l7Collapse *policy.L7CollapseState
+
 	// auditVerdictCount counts Verdict_AUDIT flows observed during the
 	// session, incremented unconditionally in Run() — powers the AUD-01
 	// empty-records warning in pipeline.go regardless of whether includeAudit
@@ -155,10 +170,10 @@ func NewAggregator(interval time.Duration, logger *zap.Logger, tracker flushingT
 	// WARN logs for unrecognized DropReason values (phase 10 CLASSIFY-02).
 	dropclass.SetWarnLogger(logger)
 	return &Aggregator{
-		interval:          interval,
-		logger:            logger,
-		warnedReserved:    make(map[string]struct{}),
-		tracker:           tracker,
+		interval:            interval,
+		logger:              logger,
+		warnedReserved:      make(map[string]struct{}),
+		tracker:             tracker,
 		seenWorkloads:       make(map[string]struct{}),
 		ignoredByProtocol:   make(map[string]uint64),
 		infraDrops:          make(map[flowpb.DropReason]uint64),
@@ -337,6 +352,24 @@ func (a *Aggregator) SetIncludeAudit(enabled bool) {
 	a.includeAudit = enabled
 }
 
+// SetCollapseL7Paths toggles whole-run L7 path collapse (Phase 25). Enabling
+// allocates the L7CollapseState used by every later flush; safe to call
+// before Run().
+func (a *Aggregator) SetCollapseL7Paths(enabled bool) {
+	a.collapseL7Paths = enabled
+	if enabled && a.l7Collapse == nil {
+		a.l7Collapse = policy.NewL7CollapseState()
+	}
+}
+
+// SetMinFlowsPerL7Rule configures the distinct-observed-paths gate for
+// collapsed path templates (L7GEN-04). Values < 1 resolve to
+// policy.DefaultMinFlowsPerL7Rule at use time (fail-closed, T-25-03). Safe to
+// call before Run().
+func (a *Aggregator) SetMinFlowsPerL7Rule(n int) {
+	a.minFlowsPerL7Rule = n
+}
+
 // AuditVerdictCount returns the number of Verdict_AUDIT flows observed
 // across the session. Populated regardless of includeAudit; used by AUD-01.
 func (a *Aggregator) AuditVerdictCount() uint64 {
@@ -473,7 +506,7 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan *flowpb.Flow, out chan<-
 					continue
 				case dropclass.DropClassNoise:
 					continue
-				// DropClassPolicy and DropClassUnknown fall through to keyFromFlow.
+					// DropClassPolicy and DropClassUnknown fall through to keyFromFlow.
 				}
 			}
 			key, skip := a.keyFromFlow(f)
@@ -543,15 +576,27 @@ func (a *Aggregator) keyFromFlow(f *flowpb.Flow) (key AggKey, skip bool) {
 func (a *Aggregator) flush(buckets map[AggKey][]*flowpb.Flow, out chan<- policy.PolicyEvent) {
 	for key, flows := range buckets {
 		cnp, attrib := policy.BuildPolicy(key.Namespace, key.Workload, flows, a.tracker, policy.AttributionOptions{
-			MaxSamples: a.maxSamples,
-			L7Enabled:  a.l7Enabled,
+			MaxSamples:        a.maxSamples,
+			L7Enabled:         a.l7Enabled,
+			MinFlowsPerL7Rule: a.minFlowsPerL7Rule,
+			Collapse:          a.l7Collapse,
 		})
 		out <- policy.PolicyEvent{
 			Namespace:   key.Namespace,
 			Workload:    key.Workload,
 			Policy:      cnp,
 			Attribution: attrib,
+			// Merge reconciliation contract (Phase 25 Decision 1): a
+			// collapse-enabled flush's HTTP set is whole-run-authoritative and
+			// must REPLACE prior per-bucket HTTP emissions at merge-on-write.
+			ReplaceL7HTTP: a.l7Enabled && a.l7Collapse != nil,
 		}
+	}
+	// Fold the window's raw path observations into the whole-run retained set
+	// AFTER every bucket's BuildPolicy has consumed them (single-goroutine;
+	// no locking needed).
+	if a.l7Collapse != nil {
+		a.l7Collapse.Absorb()
 	}
 	for k := range buckets {
 		delete(buckets, k)

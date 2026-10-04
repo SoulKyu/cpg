@@ -33,9 +33,9 @@ func PolicyName(workload string) string {
 
 var reservedEntityMap = map[string]api.Entity{
 	"reserved:kube-apiserver": api.EntityKubeAPIServer,
-	"reserved:host":          api.EntityHost,
-	"reserved:remote-node":   api.EntityRemoteNode,
-	"reserved:health":        api.EntityHealth,
+	"reserved:host":           api.EntityHost,
+	"reserved:remote-node":    api.EntityRemoteNode,
+	"reserved:health":         api.EntityHealth,
 }
 
 func isWorldIdentity(ep *flowpb.Endpoint) bool {
@@ -222,6 +222,11 @@ type peerRules struct {
 	// httpSeen dedups within a bucket so two flows reporting GET /a on the
 	// same (port, proto) collapse into a single PortRuleHTTP entry.
 	httpSeen map[string]map[string]struct{}
+	// obsPeerKey is the encoded Peer identity (encodePeer form) shared by the
+	// collapse observation keys of every (direction, peer, port) group in this
+	// bucket. Set once at bucket creation in groupFlows; used by recordL7 and
+	// applyL7Collapse so both sides derive identical collapseObsKey values.
+	obsPeerKey string
 	// dnsNames collects DNS matchName literals observed on egress flows on
 	// this peer bucket when L7Enabled. Order is preserved via dnsOrder for
 	// deterministic emission; dnsNames doubles as the dedup set.
@@ -401,6 +406,9 @@ func groupFlows(
 				b.entityOrder = append(b.entityOrder, entity)
 			}
 			p := Peer{Type: PeerEntity, Entity: string(entity)}
+			if er.obsPeerKey == "" {
+				er.obsPeerKey = encodePeer(p)
+			}
 			kind := recordL7(er, f, fp, direction, p, opts)
 			if kind != l7DNS {
 				er.addFlow(fp)
@@ -426,6 +434,9 @@ func groupFlows(
 				b.cidrOrder = append(b.cidrOrder, cidrStr)
 			}
 			p := Peer{Type: PeerCIDR, CIDR: cidrStr}
+			if cb.obsPeerKey == "" {
+				cb.obsPeerKey = encodePeer(p)
+			}
 			kind := recordL7(cb.peerRules, f, fp, direction, p, opts)
 			if kind != l7DNS {
 				cb.addFlow(fp)
@@ -446,6 +457,9 @@ func groupFlows(
 			b.peerOrder = append(b.peerOrder, key)
 		}
 		p := Peer{Type: PeerEndpoint, Labels: selectedLabelsFromFlow(ep)}
+		if eb.obsPeerKey == "" {
+			eb.obsPeerKey = encodePeer(p)
+		}
 		kind := recordL7(eb.peerRules, f, fp, direction, p, opts)
 		if kind != l7DNS {
 			eb.addFlow(fp)
@@ -497,6 +511,17 @@ func recordL7(pr *peerRules, f *flowpb.Flow, fp *flowProto, direction string, pe
 		}
 		portKey := strconv.FormatUint(uint64(fp.port), 10) + "/" + string(fp.proto)
 		pr.addHTTPRules(portKey, rules)
+		// Whole-run collapse collection (Phase 25 Decision 1): when collapse is
+		// active, additionally observe the raw literal path (wire form, never
+		// decoded) into the window set. Attribution itself is untouched
+		// (Decision 2: evidence stays keyed by literal anchored paths).
+		if opts.Collapse != nil {
+			opts.Collapse.observe(
+				collapseObsKey(direction, pr.obsPeerKey, portKey),
+				rules[0].Method,
+				pathFromURL(f.GetL7().GetHttp().GetUrl()),
+			)
+		}
 		for _, r := range rules {
 			l7 := &L7Discriminator{Protocol: "http", HTTPMethod: r.Method, HTTPPath: r.Path}
 			pr.recordAttribution(ruleKeyForL7(direction, peer, fp, l7), f, opts.MaxSamples)
@@ -522,6 +547,40 @@ func recordL7(pr *peerRules, f *flowpb.Flow, fp *flowProto, direction string, pe
 	return l7None
 }
 
+// applyL7Collapse replaces each HTTP sub-list in the bucket with collapsed
+// template + literal-fallback rules computed over the WHOLE-RUN observed path
+// set (Retained ∪ window Collected), per Phase 25 Decision 1. No-op unless
+// collapse is active (Collapse != nil && L7Enabled) — the default-off path is
+// byte-identical to pre-phase emission.
+func applyL7Collapse(pr *peerRules, direction string, opts AttributionOptions) {
+	if opts.Collapse == nil || !opts.L7Enabled {
+		return
+	}
+	for portKey := range pr.httpRules {
+		obsKey := collapseObsKey(direction, pr.obsPeerKey, portKey)
+		effective := mergeL7PathSets(opts.Collapse.Retained[obsKey], opts.Collapse.Collected[obsKey])
+		pr.httpRules[portKey] = CollapseHTTPPaths(effective, ResolveMinFlowsPerL7Rule(opts.MinFlowsPerL7Rule))
+	}
+}
+
+// mergeL7PathSets unions the supplied path sets (method → paths) into one.
+func mergeL7PathSets(sets ...L7PathSet) L7PathSet {
+	out := make(L7PathSet)
+	for _, s := range sets {
+		for method, paths := range s {
+			m, ok := out[method]
+			if !ok {
+				m = make(map[string]struct{})
+				out[method] = m
+			}
+			for p := range paths {
+				m[p] = struct{}{}
+			}
+		}
+	}
+	return out
+}
+
 func buildIngressRules(flows []*flowpb.Flow, policyNamespace string, tracker FlowTracker, opts AttributionOptions) ([]api.IngressRule, []RuleAttribution) {
 	b := groupFlows(flows, policyNamespace, tracker, ingressReasons, "ingress", opts,
 		func(f *flowpb.Flow) *flowpb.Endpoint { return f.Source },
@@ -530,6 +589,7 @@ func buildIngressRules(flows []*flowpb.Flow, policyNamespace string, tracker Flo
 	var attrib []RuleAttribution
 	for _, entity := range b.entityOrder {
 		er := b.entities[entity]
+		applyL7Collapse(er, "ingress", opts)
 		rules = append(rules, ingressRulesFrom(api.IngressCommonRule{FromEntities: api.EntitySlice{entity}}, er.ports, er.icmpFields, er.httpRules)...)
 		for _, a := range er.attrib {
 			attrib = append(attrib, *a)
@@ -537,6 +597,7 @@ func buildIngressRules(flows []*flowpb.Flow, policyNamespace string, tracker Flo
 	}
 	for _, key := range b.cidrOrder {
 		cb := b.cidrs[key]
+		applyL7Collapse(cb.peerRules, "ingress", opts)
 		rules = append(rules, ingressRulesFrom(api.IngressCommonRule{FromCIDR: api.CIDRSlice{cb.cidr}}, cb.ports, cb.icmpFields, cb.httpRules)...)
 		for _, a := range cb.attrib {
 			attrib = append(attrib, *a)
@@ -544,6 +605,7 @@ func buildIngressRules(flows []*flowpb.Flow, policyNamespace string, tracker Flo
 	}
 	for _, key := range b.peerOrder {
 		eb := b.peers[key]
+		applyL7Collapse(eb.peerRules, "ingress", opts)
 		rules = append(rules, ingressRulesFrom(api.IngressCommonRule{FromEndpoints: []api.EndpointSelector{eb.selector}}, eb.ports, eb.icmpFields, eb.httpRules)...)
 		for _, a := range eb.attrib {
 			attrib = append(attrib, *a)
@@ -560,6 +622,7 @@ func buildEgressRules(flows []*flowpb.Flow, policyNamespace string, tracker Flow
 	var attrib []RuleAttribution
 	for _, entity := range b.entityOrder {
 		er := b.entities[entity]
+		applyL7Collapse(er, "egress", opts)
 		rules = append(rules, egressRulesFrom(api.EgressCommonRule{ToEntities: api.EntitySlice{entity}}, er.ports, er.icmpFields, er.httpRules)...)
 		for _, a := range er.attrib {
 			attrib = append(attrib, *a)
@@ -567,6 +630,7 @@ func buildEgressRules(flows []*flowpb.Flow, policyNamespace string, tracker Flow
 	}
 	for _, key := range b.cidrOrder {
 		cb := b.cidrs[key]
+		applyL7Collapse(cb.peerRules, "egress", opts)
 		rules = append(rules, egressRulesFrom(api.EgressCommonRule{ToCIDR: api.CIDRSlice{cb.cidr}}, cb.ports, cb.icmpFields, cb.httpRules)...)
 		for _, a := range cb.attrib {
 			attrib = append(attrib, *a)
@@ -574,6 +638,7 @@ func buildEgressRules(flows []*flowpb.Flow, policyNamespace string, tracker Flow
 	}
 	for _, key := range b.peerOrder {
 		eb := b.peers[key]
+		applyL7Collapse(eb.peerRules, "egress", opts)
 		rules = append(rules, egressRulesFrom(api.EgressCommonRule{ToEndpoints: []api.EndpointSelector{eb.selector}}, eb.ports, eb.icmpFields, eb.httpRules)...)
 		for _, a := range eb.attrib {
 			attrib = append(attrib, *a)

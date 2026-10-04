@@ -78,6 +78,18 @@ type PipelineConfig struct {
 	// preserves byte-identical pre-v1.6 DROPPED-only behavior.
 	IncludeAudit bool
 
+	// CollapseL7Paths enables whole-run L7 path collapse (Phase 25): observed
+	// HTTP paths generalize into anchored regex templates behind the
+	// --l7-collapse-paths gate. Default false preserves pre-phase emission
+	// byte-for-byte (default-off invariant).
+	CollapseL7Paths bool
+
+	// MinFlowsPerL7Rule is the distinct-observed-paths confidence gate for
+	// collapsed templates (L7GEN-04). Zero resolves to
+	// policy.DefaultMinFlowsPerL7Rule (fail-closed); only meaningful when
+	// CollapseL7Paths is true.
+	MinFlowsPerL7Rule int
+
 	// IgnoreProtocols is the lowercase, already-validated set of L4 protocol
 	// names whose flows must be dropped before bucketing (PA5). Caller
 	// (cmd/cpg) is responsible for normalization + allowlist validation.
@@ -193,6 +205,8 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 	agg := NewAggregator(cfg.FlushInterval, cfg.Logger, tracker)
 	agg.SetL7Enabled(cfg.L7Enabled)
 	agg.SetIncludeAudit(cfg.IncludeAudit)
+	agg.SetCollapseL7Paths(cfg.CollapseL7Paths)
+	agg.SetMinFlowsPerL7Rule(cfg.MinFlowsPerL7Rule)
 	agg.SetIgnoreProtocols(cfg.IgnoreProtocols)
 	agg.SetIgnoreDropReasons(cfg.IgnoreDropReasons)
 	if cfg.EvidenceEnabled {

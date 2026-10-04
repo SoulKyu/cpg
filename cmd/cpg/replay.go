@@ -125,6 +125,9 @@ func runReplay(cmd *cobra.Command, args []string) error {
 		L7Enabled:    f.l7,
 		IncludeAudit: f.includeAudit,
 
+		CollapseL7Paths:   f.l7CollapsePaths,
+		MinFlowsPerL7Rule: f.minFlowsPerL7Rule,
+
 		IgnoreProtocols:   ignoreProtocols,
 		IgnoreDropReasons: ignoreDropReasons,
 		FailOnInfraDrops:  f.failOnInfraDrops,

@@ -12,6 +12,7 @@ import (
 
 	"github.com/SoulKyu/cpg/pkg/dropclass"
 	"github.com/SoulKyu/cpg/pkg/hubble"
+	"github.com/SoulKyu/cpg/pkg/policy"
 )
 
 // validateIgnoreProtocols normalizes the --ignore-protocol input (lowercase,
@@ -56,6 +57,9 @@ type commonFlags struct {
 
 	includeAudit bool
 
+	l7CollapsePaths   bool
+	minFlowsPerL7Rule int
+
 	ignoreProtocols   []string
 	ignoreDropReasons []string
 	failOnInfraDrops  bool
@@ -85,6 +89,9 @@ func addCommonFlags(cmd *cobra.Command) {
 
 	f.Bool("include-audit", false, "ingest Verdict_AUDIT flows alongside DROPPED (opt-in; default preserves pre-v1.6 DROPPED-only behavior)")
 
+	f.Bool("l7-collapse-paths", false, "collapse high-cardinality observed HTTP paths into anchored regex templates (opt-in; only segments with observed variance generalize; requires --l7)")
+	f.Int("min-flows-per-l7-rule", policy.DefaultMinFlowsPerL7Rule, "minimum number of distinct observed HTTP paths backing a collapsed path template; below this the literal rules are kept (requires --l7-collapse-paths)")
+
 	f.StringSlice("ignore-protocol", nil, "drop flows whose L4 protocol matches (repeatable, comma-separated). Valid: tcp, udp, icmpv4, icmpv6, sctp")
 
 	f.StringSlice("ignore-drop-reason", nil,
@@ -111,6 +118,8 @@ func parseCommonFlags(cmd *cobra.Command) commonFlags {
 	out.evidenceSessions, _ = f.GetInt("evidence-sessions")
 	out.l7, _ = f.GetBool("l7")
 	out.includeAudit, _ = f.GetBool("include-audit")
+	out.l7CollapsePaths, _ = f.GetBool("l7-collapse-paths")
+	out.minFlowsPerL7Rule, _ = f.GetInt("min-flows-per-l7-rule")
 	out.ignoreProtocols, _ = f.GetStringSlice("ignore-protocol")
 	out.ignoreDropReasons, _ = f.GetStringSlice("ignore-drop-reason")
 	out.failOnInfraDrops, _ = f.GetBool("fail-on-infra-drops")

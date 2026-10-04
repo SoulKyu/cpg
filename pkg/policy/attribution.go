@@ -126,4 +126,19 @@ type AttributionOptions struct {
 	// are ignored entirely — output is byte-identical to v1.1 for any input
 	// (HTTP-01 / HTTP-04 gating, byte-stability invariant).
 	L7Enabled bool
+	// MinFlowsPerL7Rule is the minimum number of DISTINCT observed HTTP paths
+	// backing a collapsed path template (L7GEN-04; the metric is distinct
+	// paths even though the flag name says "flows" — the requirement text is
+	// authoritative). Values < 1 resolve to DefaultMinFlowsPerL7Rule via
+	// ResolveMinFlowsPerL7Rule (fail-closed, T-25-03). Only meaningful when
+	// Collapse is active.
+	MinFlowsPerL7Rule int
+	// Collapse, when non-nil AND L7Enabled, activates whole-run L7 path
+	// collapse: recordL7 additionally collects raw literal paths into
+	// Collapse.Collected, and emission replaces each bucket's HTTP sub-list
+	// with CollapseHTTPPaths output over Retained ∪ Collected (Decision 1).
+	// Attribution itself stays keyed by literal paths (Decision 2), so
+	// `cpg explain --http-path` exact-match keeps working unchanged and
+	// evidence shows which observed paths back each template.
+	Collapse *L7CollapseState
 }
