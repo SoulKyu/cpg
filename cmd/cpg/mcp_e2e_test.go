@@ -32,6 +32,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -41,8 +42,13 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/encoding/protojson"
+	"sigs.k8s.io/yaml"
 
+	"github.com/SoulKyu/cpg/pkg/flowsource"
+	"github.com/SoulKyu/cpg/pkg/hubble"
 	"github.com/SoulKyu/cpg/pkg/policy/testdata"
 	"github.com/SoulKyu/cpg/pkg/session"
 )
@@ -813,4 +819,244 @@ func TestMCPE2EUngracefulDisconnect(t *testing.T) {
 		return relay.snapshot().cancelled
 	}, 5*time.Second, 50*time.Millisecond, "the fake relay's GetFlows stream context must be cancelled by the session-cleanup fan-out on transport death")
 	assert.True(t, relay.snapshot().started, "fake relay must have been reached before this assertion is meaningful")
+}
+
+// parseFixtureFlows reads a Hubble jsonpb fixture (one GetFlowsResponse per
+// line, the same format flowsource.FileSource streams) and returns the
+// embedded flows for scripting fakeRelay. Used by the collapse-parity test
+// so BOTH surfaces consume the identical fixture file as their flow source
+// (plan 25-02: no duplicated flow definitions).
+func parseFixtureFlows(t *testing.T, path string) []*flowpb.Flow {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var flows []*flowpb.Flow
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var resp observerpb.GetFlowsResponse
+		require.NoError(t, protojson.Unmarshal([]byte(line), &resp), "fixture line must parse as GetFlowsResponse")
+		if f := resp.GetFlow(); f != nil {
+			flows = append(flows, f)
+		}
+	}
+	require.NotEmpty(t, flows, "fixture must carry at least one flow")
+	return flows
+}
+
+// parityHTTPRule is one (Method, Path) pair extracted from an emitted CNP
+// http rules block. Parity is compared as parsed SETS of these pairs, not
+// raw bytes (MCP returns JSON-rendered policy; byte-identity is Task 1's
+// golden regression's concern).
+type parityHTTPRule struct {
+	Method string
+	Path   string
+}
+
+// parsePolicyHTTPRules extracts the (Method, Path) set from CNP YAML —
+// cpg emits L7 rules under spec.ingress/egress[].toPorts[].rules.http[],
+// where rules.http[] entries ARE the {method,path} objects (api.L7Rules).
+func parsePolicyHTTPRules(t *testing.T, yamlBytes []byte) []parityHTTPRule {
+	t.Helper()
+	var doc struct {
+		Spec *struct {
+			Ingress []struct {
+				ToPorts []struct {
+					Rules *struct {
+						HTTP []parityHTTPRule `json:"http"`
+					} `json:"rules"`
+				} `json:"toPorts"`
+			} `json:"ingress"`
+			Egress []struct {
+				ToPorts []struct {
+					Rules *struct {
+						HTTP []parityHTTPRule `json:"http"`
+					} `json:"rules"`
+				} `json:"toPorts"`
+			} `json:"egress"`
+		} `json:"spec"`
+	}
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &doc), "policy YAML must unmarshal")
+	require.NotNil(t, doc.Spec, "policy YAML must carry a spec")
+	var rules []parityHTTPRule
+	collect := func(entries []struct {
+		ToPorts []struct {
+			Rules *struct {
+				HTTP []parityHTTPRule `json:"http"`
+			} `json:"rules"`
+		} `json:"toPorts"`
+	}) {
+		for _, e := range entries {
+			for _, tp := range e.ToPorts {
+				if tp.Rules == nil {
+					continue
+				}
+				rules = append(rules, tp.Rules.HTTP...)
+			}
+		}
+	}
+	collect(doc.Spec.Ingress)
+	collect(doc.Spec.Egress)
+	require.NotEmpty(t, rules, "policy YAML must carry at least one http rule")
+	return rules
+}
+
+// parityRuleSet renders the (Method, Path) slice as a comparable set.
+func parityRuleSet(rules []parityHTTPRule) map[string]struct{} {
+	set := make(map[string]struct{}, len(rules))
+	for _, r := range rules {
+		set[r.Method+" "+r.Path] = struct{}{}
+	}
+	return set
+}
+
+// TestMCPCLICollapseParity proves ROADMAP SC5 / L7GEN-03: the SAME shared
+// fixture (testdata/flows/l7-collapse-mixed-classes.jsonl) driven through
+// the MCP session surface (fakeRelay + real cpg mcp subprocess) and the CLI
+// replay surface (hubble.RunPipelineWithSource over the same file) with
+// collapse enabled produces EXACTLY the same collapsed HTTP rule set —
+// numeric, 0x-hex, hex-run, and UUID templates plus the version/mixed/
+// encoded literals.
+//
+// The gate is 2, not the default 5: each segment-class group in the
+// mixed-classes fixture carries exactly 2 distinct paths (the 25-01
+// fixture-design precedent), so the default gate would emit only literals
+// and prove nothing about collapse parity. Both surfaces use the identical
+// value.
+func TestMCPCLICollapseParity(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real-subprocess e2e test in -short mode (one-time -race build + subprocess overhead)")
+	}
+
+	const fixture = "../../testdata/flows/l7-collapse-mixed-classes.jsonl"
+	const minFlows = 2
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	// --- MCP surface: same fixture served via fakeRelay ---
+	relayAddr, relay := startFakeRelay(t, parseFixtureFlows(t, fixture))
+
+	e2e := startE2ESubprocess(t, ctx)
+	cs := e2e.cs
+
+	startResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name: "start_session",
+		Arguments: map[string]any{
+			"server":                relayAddr,
+			"tls":                   false,
+			"timeout":               "5s",
+			"flush_interval":        "1s",
+			"l7":                    true,
+			"collapse_l7_paths":     true,
+			"min_flows_per_l7_rule": minFlows,
+		},
+	})
+	require.NoError(t, err)
+	require.False(t, startResp.IsError, "collapse-enabled start_session against the fake relay must not error")
+
+	var startOut struct {
+		SessionID string `json:"session_id"`
+	}
+	decodeStructured(t, startResp.StructuredContent, &startOut)
+	require.NotEmpty(t, startOut.SessionID)
+
+	var statusOut struct {
+		TmpDir string `json:"tmp_dir"`
+	}
+	statusResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "get_status",
+		Arguments: map[string]any{"session_id": startOut.SessionID},
+	})
+	require.NoError(t, err)
+	require.False(t, statusResp.IsError)
+	decodeStructured(t, statusResp.StructuredContent, &statusOut)
+	require.NotEmpty(t, statusOut.TmpDir)
+
+	relay.waitStarted(t, 10*time.Second)
+
+	// The fixture is all-INGRESS, so the single emitted policy is the
+	// destination workload (aggregator policyTargetEndpoint routing).
+	paths := session.DeriveSessionPaths(statusOut.TmpDir)
+	policyPath := filepath.Join(paths.OutputDir, "production", "api-server.yaml")
+	require.Eventually(t, func() bool {
+		_, statErr := os.Stat(policyPath)
+		return statErr == nil
+	}, 15*time.Second, 200*time.Millisecond, "expected the collapsed policy to flush to disk mid-capture")
+
+	stopResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "stop_session",
+		Arguments: map[string]any{"session_id": startOut.SessionID},
+	})
+	require.NoError(t, err)
+	require.False(t, stopResp.IsError)
+
+	getPolicyResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name: "get_policy",
+		Arguments: map[string]any{
+			"session_id": startOut.SessionID,
+			"namespace":  "production",
+			"workload":   "api-server",
+		},
+	})
+	require.NoError(t, err)
+	require.False(t, getPolicyResp.IsError, "get_policy must return the collapsed policy after stop")
+	var getPolicyOut struct {
+		YAML string `json:"yaml"`
+	}
+	decodeStructured(t, getPolicyResp.StructuredContent, &getPolicyOut)
+	require.NotEmpty(t, getPolicyOut.YAML)
+
+	// Graceful shutdown of the subprocess.
+	require.NoError(t, e2e.stdinW.Close())
+	exitErr := e2e.waitExit(t, 10*time.Second)
+	assert.NoError(t, exitErr, "a clean peer-EOF disconnect must exit 0")
+
+	// --- CLI surface: the same fixture through RunPipelineWithSource ---
+	outDir := t.TempDir()
+	logger := zap.NewNop()
+	src, err := flowsource.NewFileSource(fixture, logger)
+	require.NoError(t, err)
+	cfg := hubble.PipelineConfig{
+		FlushInterval:     50 * time.Millisecond,
+		OutputDir:         outDir,
+		Logger:            logger,
+		L7Enabled:         true,
+		CollapseL7Paths:   true,
+		MinFlowsPerL7Rule: minFlows,
+	}
+	cliCtx, cliCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cliCancel()
+	require.NoError(t, hubble.RunPipelineWithSource(cliCtx, cfg, src))
+
+	cliYAML, err := os.ReadFile(filepath.Join(outDir, "production", "api-server.yaml"))
+	require.NoError(t, err, "CLI replay must emit the api-server policy")
+
+	// --- Parity: identical (Method, Path) sets ---
+	mcpSet := parityRuleSet(parsePolicyHTTPRules(t, []byte(getPolicyOut.YAML)))
+	cliSet := parityRuleSet(parsePolicyHTTPRules(t, cliYAML))
+	require.Equal(t, cliSet, mcpSet,
+		"MCP collapse args must produce exactly the same collapsed HTTP rules as the CLI flag")
+
+	// The rule set must actually exercise collapse: the four generalizable
+	// class templates plus the version/mixed/encoded literals.
+	wantRules := []string{
+		"GET ^/api/v1/users/[0-9]+$",
+		"POST ^/api/v1/orders/0x[0-9a-fA-F]+$",
+		"PUT ^/api/v1/items/[0-9a-fA-F]+$",
+		"DELETE ^/api/v1/refs/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+		"GET ^/api/v1/v1$",
+		"GET ^/api/v1/v2$",
+		"GET ^/enc/Andr%C3%A9$",
+		"GET ^/enc/Jos%C3%A9$",
+		"PATCH ^/api/v1/mixed/123$",
+		"PATCH ^/api/v1/mixed/abc$",
+	}
+	for _, want := range wantRules {
+		assert.Contains(t, mcpSet, want, "collapsed-rule inventory must include %q", want)
+	}
+	require.Len(t, mcpSet, len(wantRules), "no unexpected extra rules on the MCP surface")
+	assertStdoutPurity(t, e2e.rawTee.Bytes())
 }
