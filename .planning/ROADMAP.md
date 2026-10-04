@@ -99,7 +99,7 @@ Full details: [milestones/v1.6-ROADMAP.md](milestones/v1.6-ROADMAP.md)
 <details open>
 <summary>🔨 v1.7 L7 Path Generalization & Namespace Awareness (Phases 25-26) — IN PROGRESS</summary>
 
-- [ ] Phase 25: L7 Path Collapse Engine (L7GEN-01..04)
+- [x] Phase 25: L7 Path Collapse Engine (L7GEN-01..04) (completed 2026-10-04)
 - [ ] Phase 26: Namespace Creation Awareness (NSAW-01..02)
 
 </details>
@@ -238,7 +238,7 @@ Archived per-phase details for shipped milestones live in [milestones/](mileston
 4. Only segments with observed variance generalize (numeric/hex/UUID → character classes); literal segments stay literal — unit-tested per segment class
 5. An MCP session arg `collapse_l7_paths: true` produces the same collapsed rules as the CLI flag
 
-**Plans**: 2 plans in 2 waves
+**Plans**: 2/2 plans complete in 2 waves
 
 **Wave 1**
 
@@ -288,7 +288,7 @@ Archived per-phase details for shipped milestones live in [milestones/](mileston
 | 22. Bootstrap Artifact Generation | v1.6 | 3/3 | Complete | 2026-07-22 |
 | 23. Managed Audit Window + SEC-01 Evolution | v1.6 | 4/4 | Complete | 2026-07-22 |
 | 24. cpg-Dedicated Skills & Agent Tooling | v1.6 | 2/2 | Complete | 2026-07-22 |
-| 25. L7 Path Collapse Engine | v1.7 | 1/2 | In Progress | — |
+| 25. L7 Path Collapse Engine | v1.7 | 2/2 | Complete    | 2026-10-04 |
 | 25. L7 Path Collapse Engine | v1.7 | 0/TBD | Not started | - |
 | 26. Namespace Creation Awareness | v1.7 | 0/TBD | Not started | - |
 
