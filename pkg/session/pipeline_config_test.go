@@ -109,3 +109,38 @@ func TestBuildPipelineConfig_IncludeAuditDefaultsFalse(t *testing.T) {
 
 	assert.False(t, cfg.IncludeAudit, "IncludeAudit must default to false when StartArgs.IncludeAudit is unset")
 }
+
+// TestBuildPipelineConfig_CollapseDefaults proves the plan 25-02
+// StartArgs → PipelineConfig mapping for the L7 collapse fields
+// (L7GEN-03): CollapseL7Paths passes through, and MinFlowsPerL7Rule is
+// resolved through policy.ResolveMinFlowsPerL7Rule — 0/omitted (the MCP
+// zero value for an omitted arg) maps to DefaultMinFlowsPerL7Rule (5),
+// never disabling the gate (T-25-05 fail-closed); a positive value passes
+// through unchanged. Resolution is harmless when collapse is off.
+func TestBuildPipelineConfig_CollapseDefaults(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := zap.NewNop()
+	var stdout bytes.Buffer
+	onFinal := func(hubble.SessionStats) {}
+
+	t.Run("collapse on, gate omitted resolves to default 5", func(t *testing.T) {
+		args := StartArgs{Server: "relay:4245", CollapseL7Paths: true}
+		cfg := buildPipelineConfig(args, tmpDir, args.Server, logger, "vTest", &stdout, nil, onFinal)
+		assert.True(t, cfg.CollapseL7Paths, "CollapseL7Paths must pass through from StartArgs")
+		assert.Equal(t, 5, cfg.MinFlowsPerL7Rule, "0/omitted gate must resolve to DefaultMinFlowsPerL7Rule (5)")
+	})
+
+	t.Run("positive gate passes through", func(t *testing.T) {
+		args := StartArgs{Server: "relay:4245", CollapseL7Paths: true, MinFlowsPerL7Rule: 7}
+		cfg := buildPipelineConfig(args, tmpDir, args.Server, logger, "vTest", &stdout, nil, onFinal)
+		assert.True(t, cfg.CollapseL7Paths)
+		assert.Equal(t, 7, cfg.MinFlowsPerL7Rule, "a positive gate value must pass through unchanged")
+	})
+
+	t.Run("all-zero args stay harmless with collapse off", func(t *testing.T) {
+		args := StartArgs{Server: "relay:4245"}
+		cfg := buildPipelineConfig(args, tmpDir, args.Server, logger, "vTest", &stdout, nil, onFinal)
+		assert.False(t, cfg.CollapseL7Paths, "CollapseL7Paths must default to false (opt-in)")
+		assert.Equal(t, 5, cfg.MinFlowsPerL7Rule, "resolution is harmless when collapse is off")
+	})
+}

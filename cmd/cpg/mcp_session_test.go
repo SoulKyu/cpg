@@ -281,3 +281,100 @@ func TestParseOptionalDuration(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "flush_interval must be <=", "the field name must be reported in the ceiling error too")
 }
+
+// TestMCPCollapseArgs proves the plan 25-02 MCP mirror of the CLI's
+// --l7-collapse-paths / --min-flows-per-l7-rule flags (L7GEN-03) with
+// T-25-05's fail-closed validation:
+//
+//  (a) min_flows_per_l7_rule: -1 is rejected as a tool error whose message
+//      NAMES the argument, before Manager.Start ever runs (no session is
+//      started — the negative value must never reach the pipeline, let
+//      alone disable the confidence gate);
+//  (b) collapse_l7_paths: true with min_flows_per_l7_rule omitted starts
+//      successfully (0/omitted resolves to DefaultMinFlowsPerL7Rule via
+//      policy.ResolveMinFlowsPerL7Rule in buildPipelineConfig) and
+//      get_status shows the session;
+//  (c) the start_session tool schema advertises both new properties.
+func TestMCPCollapseArgs(t *testing.T) {
+	initLoggerForTesting(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	clientT, drain := startInMemoryMCPSession(ctx)
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
+	cs, err := client.Connect(ctx, clientT, nil)
+	require.NoError(t, err)
+
+	// (c) schema advertisement, first — no session side effects.
+	toolsResult, err := cs.ListTools(ctx, nil)
+	require.NoError(t, err)
+	byName := make(map[string]*mcp.Tool, len(toolsResult.Tools))
+	for _, tool := range toolsResult.Tools {
+		byName[tool.Name] = tool
+	}
+	schema, ok := byName["start_session"].InputSchema.(map[string]any)
+	require.True(t, ok, "start_session InputSchema must round-trip as map[string]any")
+	props, ok := schema["properties"].(map[string]any)
+	require.True(t, ok)
+	require.Contains(t, props, "collapse_l7_paths", "start_session schema must advertise collapse_l7_paths")
+	require.Contains(t, props, "min_flows_per_l7_rule", "start_session schema must advertise min_flows_per_l7_rule")
+
+	// (a) negative min_flows_per_l7_rule is fail-closed (T-25-05). The
+	// D-07 bypass server address keeps the call bounded even in the RED
+	// state (missing validation would fall through to Manager.Start and
+	// fail fast on the dial instead of hanging on kubeconfig resolution).
+	negResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name: "start_session",
+		Arguments: map[string]any{
+			"server":                "127.0.0.1:1",
+			"timeout":               "2s",
+			"l7":                    true,
+			"collapse_l7_paths":     true,
+			"min_flows_per_l7_rule": -1,
+		},
+	})
+	require.NoError(t, err, "a validation failure must surface as a tool error, not a transport error")
+	require.True(t, negResp.IsError, "a negative min_flows_per_l7_rule must be rejected (T-25-05)")
+	require.Len(t, negResp.Content, 1)
+	negText, ok := negResp.Content[0].(*mcp.TextContent)
+	require.True(t, ok, "error content must be TextContent, got %T", negResp.Content[0])
+	assert.Contains(t, negText.Text, "min_flows_per_l7_rule",
+		"the error must name the offending argument")
+
+	// (b) collapse_l7_paths: true with the gate omitted starts cleanly.
+	startResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name: "start_session",
+		Arguments: map[string]any{
+			"server":           "127.0.0.1:1",
+			"timeout":          "2s",
+			"flush_interval":   "1s",
+			"l7":               true,
+			"collapse_l7_paths": true,
+		},
+	})
+	require.NoError(t, err)
+	require.False(t, startResp.IsError, "omitted min_flows_per_l7_rule (0) must resolve to the default, never an error")
+
+	var startOut struct {
+		SessionID string `json:"session_id"`
+	}
+	decodeStructured(t, startResp.StructuredContent, &startOut)
+	require.NotEmpty(t, startOut.SessionID)
+
+	statusResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "get_status",
+		Arguments: map[string]any{"session_id": startOut.SessionID},
+	})
+	require.NoError(t, err)
+	require.False(t, statusResp.IsError)
+	var statusOut struct {
+		TmpDir string `json:"tmp_dir"`
+	}
+	decodeStructured(t, statusResp.StructuredContent, &statusOut)
+	require.DirExists(t, statusOut.TmpDir, "the collapse-enabled session must be live per get_status")
+
+	cancel()
+	drain()
+	_ = cs.Close()
+}
