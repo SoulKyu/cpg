@@ -21,9 +21,11 @@ created: "2026-10-04"
 |----------|-------|
 | **Framework** | go test + testify (race detector enabled, per project convention) |
 | **Config file** | `Makefile` (test target) |
-| **Quick run command** | `go test -race -run 'TestL7Collapse|TestPathTemplate' ./pkg/policy/...` |
+| **Quick run command** | `go test -race -count=1 -run 'TestL7Collapse|TestPathTemplate' ./pkg/policy/... ./pkg/hubble/...` |
 | **Full suite command** | `make test` (go test -race ./...) |
 | **Estimated runtime** | ~30 seconds (full suite; policy package ~10s) |
+
+> **Vacuous-pass guard:** per-row commands target specific packages with `-run`. If the output reports `no tests to run` (`testing: warning: no tests to run`), the pattern matched nothing in the targeted packages — treat the run as FAILED, never as a pass. Always pass `-count=1` (cached results are not evidence).
 
 ---
 
@@ -40,11 +42,14 @@ created: "2026-10-04"
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 25-01-01 | 01 | 1 | L7GEN-02 | T-25-01 | Variance-only generalization; mixed classes stay literal | unit | `go test -race -run TestPathTemplateClassifier ./pkg/policy/...` | ❌ W0 | ⬜ pending |
-| 25-01-02 | 01 | 1 | L7GEN-04 | — | Below-gate templates emit literal rules, never silent widening | unit | `go test -race -run TestMinFlowsGate ./pkg/policy/...` | ❌ W0 | ⬜ pending |
-| 25-01-03 | 01 | 1 | L7GEN-01 | — | 10k distinct paths collapse to one anchored template | golden/replay | `go test -race -run TestL7CollapseGolden ./pkg/policy/...` | ❌ W0 | ⬜ pending |
-| 25-02-01 | 02 | 2 | L7GEN-01 (criterion 2) | — | Byte-identical output without the flag | golden/regression | `go test -race -run TestL7NoCollapseByteIdentity ./pkg/policy/...` | ❌ W0 | ⬜ pending |
-| 25-02-02 | 02 | 2 | L7GEN-03 | T-25-02 | MCP arg validation fail-closed (reject invalid min_flows) | integration | `go test -race -run TestMCPCollapseArgs ./` | ❌ W0 | ⬜ pending |
+| 25-01-01 | 01 | 1 | L7GEN-02 | T-25-01 | Variance-only generalization; mixed classes stay literal | unit | `go test -race -count=1 -run TestPathTemplateClassifier ./pkg/policy/...` | ❌ W0 | ⬜ pending |
+| 25-01-02 | 01 | 1 | L7GEN-04 | — | Below-gate templates emit literal rules, never silent widening | unit+replay | `go test -race -count=1 -run TestMinFlowsGate ./pkg/hubble/...` | ❌ W0 | ⬜ pending |
+| 25-01-03 | 01 | 1 | L7GEN-01 | — | 10k distinct paths collapse to one anchored template | golden/replay | `go test -race -count=1 -run TestL7CollapseGolden ./pkg/hubble/...` | ❌ W0 | ⬜ pending |
+| 25-01-04 | 01 | 1 | L7GEN-02 | T-25-01 | Segment-class matrix: hex/UUID templates; version/mixed/encoded literal fallback; pattern length cap (T-25-02) | unit+golden | `go test -race -count=1 -run 'TestPathTemplateClassifier\|TestCollapseHTTPPaths\|TestL7CollapseMixedClassesGolden' ./pkg/policy/... ./pkg/hubble/...` | ❌ W0 | ⬜ pending |
+| 25-01-05 | 01 | 1 | L7GEN-04 | T-25-03 | Gate boundary N-1/N; CLI rejects --min-flows-per-l7-rule < 1 (fail-closed); explain keeps literal-path evidence | unit+integration | `go test -race -count=1 -run 'TestCollapseHTTPPaths_GateBoundary\|TestMinFlowsGate\|TestValidateMinFlowsPerL7Rule' ./pkg/policy/... ./pkg/hubble/... ./cmd/cpg/...` | ❌ W0 | ⬜ pending |
+| 25-02-01 | 02 | 2 | L7GEN-01 (criterion 2) | — | Byte-identical output without the flag | golden/regression | `go test -race -count=1 -run TestL7NoCollapseByteIdentity ./pkg/hubble/...` | ❌ W0 | ⬜ pending |
+| 25-02-02 | 02 | 2 | L7GEN-03 | T-25-03 | MCP arg validation fail-closed (reject invalid min_flows) | integration | `go test -race -count=1 -run TestMCPCollapseArgs ./cmd/cpg/...` | ❌ W0 | ⬜ pending |
+| 25-02-03 | 02 | 2 | L7GEN-03 | — | MCP-vs-CLI parity: same flows, same collapsed rules (ROADMAP SC5) | integration | `go test -race -count=1 -run TestMCPCLICollapseParity ./cmd/cpg/...` | ❌ W0 | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -67,4 +72,4 @@ Wave 0 (test scaffolding) must exist before implementation tasks:
 | 2 — byte-identical without flag | `TestL7NoCollapseByteIdentity` golden vs v1.6 output |
 | 3 — gate literal fallback | `TestMinFlowsGate` on `below-threshold.jsonl` |
 | 4 — variance-only classes | table-driven `TestPathTemplateClassifier` (numeric/hex/UUID/mixed/version/encoded) |
-| 5 — MCP parity | CLI-vs-MCP golden equivalence on one shared fixture (`TestMCPCollapseArgs` + parity test) |
+| 5 — MCP parity | CLI-vs-MCP parity on one shared fixture (`TestMCPCLICollapseParity`); `TestMCPCollapseArgs` covers the fail-closed arg validation half |
