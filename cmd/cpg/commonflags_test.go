@@ -7,6 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+
+	"github.com/SoulKyu/cpg/pkg/policy"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 )
@@ -318,5 +320,36 @@ func TestIncludeAuditFlagParses(t *testing.T) {
 		cmd := newGenerateCmd()
 		f := parseCommonFlags(cmd)
 		assert.False(t, f.includeAudit)
+	})
+}
+
+// TestL7CollapseFlagParses confirms the --l7-collapse-paths and
+// --min-flows-per-l7-rule flags are registered on both generate and replay
+// subcommands, parse to their set values, and default to false /
+// policy.DefaultMinFlowsPerL7Rule (Phase 25 L7GEN-01/04, opt-in collapse).
+func TestL7CollapseFlagParses(t *testing.T) {
+	t.Run("generate parses both flags", func(t *testing.T) {
+		cmd := newGenerateCmd()
+		require.NoError(t, cmd.Flags().Set("l7-collapse-paths", "true"))
+		require.NoError(t, cmd.Flags().Set("min-flows-per-l7-rule", "9"))
+		f := parseCommonFlags(cmd)
+		assert.True(t, f.l7CollapsePaths)
+		assert.Equal(t, 9, f.minFlowsPerL7Rule)
+	})
+
+	t.Run("replay parses both flags", func(t *testing.T) {
+		cmd := newReplayCmd()
+		require.NoError(t, cmd.Flags().Set("l7-collapse-paths", "true"))
+		require.NoError(t, cmd.Flags().Set("min-flows-per-l7-rule", "9"))
+		f := parseCommonFlags(cmd)
+		assert.True(t, f.l7CollapsePaths)
+		assert.Equal(t, 9, f.minFlowsPerL7Rule)
+	})
+
+	t.Run("defaults when absent", func(t *testing.T) {
+		cmd := newGenerateCmd()
+		f := parseCommonFlags(cmd)
+		assert.False(t, f.l7CollapsePaths)
+		assert.Equal(t, policy.DefaultMinFlowsPerL7Rule, f.minFlowsPerL7Rule)
 	})
 }
