@@ -22,6 +22,7 @@ import (
 )
 
 const l7CollapseUsersFixture = "../../testdata/flows/l7-collapse-users.jsonl"
+const l7CollapseMixedClassesFixture = "../../testdata/flows/l7-collapse-mixed-classes.jsonl"
 
 // runCollapsePipeline replays a fixture with L7 codegen enabled and the
 // collapse flags set to the supplied values, mirroring runReplayPipeline.
@@ -181,6 +182,34 @@ func collapseEventHTTPPaths(ev policy.PolicyEvent) []string {
 		}
 	}
 	return paths
+}
+
+// TestL7CollapseMixedClassesGolden proves the per-class outcomes of the full
+// segment-class coverage matrix (L7GEN-02 / ROADMAP SC4) end-to-end through
+// the pipeline: homogeneous numeric/0x-hex/hex-run/UUID positions collapse to
+// their class templates, while version, mixed-class, and percent-encoded
+// positions stay literal. Each class group carries exactly 2 distinct paths,
+// so the gate is lowered to 2 to make templates reachable; groups are
+// separated by HTTP method because collapse groups per (method, segment
+// count) and cross-group position variance must not poison class detection.
+func TestL7CollapseMixedClassesGolden(t *testing.T) {
+	outDir, _, _ := runCollapsePipeline(t, l7CollapseMixedClassesFixture, true, 2, false)
+
+	yaml := collapseYAML(t, outDir)
+	assert.Contains(t, yaml, `path: ^/api/v1/users/[0-9]+$`, "numeric class must collapse")
+	assert.Contains(t, yaml, `path: ^/api/v1/orders/0x[0-9a-fA-F]+$`, "0x-hex class must collapse")
+	assert.Contains(t, yaml, `path: ^/api/v1/items/[0-9a-fA-F]+$`, "hex-run class must collapse")
+	assert.Contains(t, yaml, "path: ^/api/v1/refs/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+		"UUID class must collapse to the full 8-4-4-4-12 pattern")
+	assert.Contains(t, yaml, `path: ^/api/v1/v1$`, "version position must stay literal")
+	assert.Contains(t, yaml, `path: ^/api/v1/v2$`, "version position must stay literal")
+	assert.NotContains(t, yaml, `v[0-9]`, "version segment must never generalize")
+	assert.Contains(t, yaml, `path: ^/api/v1/mixed/123$`, "mixed-class position must stay literal")
+	assert.Contains(t, yaml, `path: ^/api/v1/mixed/abc$`, "mixed-class position must stay literal")
+	assert.Contains(t, yaml, `path: ^/enc/Andr%C3%A9$`, "percent-encoding must be preserved byte-for-byte")
+	assert.Contains(t, yaml, `path: ^/enc/Jos%C3%A9$`, "percent-encoding must be preserved byte-for-byte")
+	assert.Equal(t, 10, strings.Count(yaml, "path: "),
+		"expected exactly 4 templates + 6 literal rules")
 }
 
 // TestL7Collapse_DefaultOffUnchanged proves the default-off invariant: with
