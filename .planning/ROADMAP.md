@@ -246,7 +246,7 @@ Archived per-phase details for shipped milestones live in [milestones/](mileston
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 25-02-PLAN.md — MCP parity (`collapse_l7_paths` / `min_flows_per_l7_rule`) + byte-identity golden regression
+- [x] 25-02-PLAN.md — MCP parity (`collapse_l7_paths` / `min_flows_per_l7_rule`) + byte-identity golden regression
 
 ### Phase 26: Namespace Creation Awareness
 

@@ -4,16 +4,16 @@ milestone: v1.7
 current_phase: 25
 current_phase_name: L7 Path Collapse Engine
 status: executing
-stopped_at: Completed 23-02-PLAN.md
-last_updated: "2026-10-04T15:20:00.000Z"
+stopped_at: Completed 25-02-PLAN.md (phase 25 complete)
+last_updated: "2026-10-04T20:30:00.000Z"
 last_activity: 2026-10-04
-last_activity_desc: Plan 25-01 complete (L7 path collapse engine end-to-end, tasks 1-5)
-state_head: 0a4057f
+last_activity_desc: Plan 25-02 complete (byte-identity goldens, MCP collapse args fail-closed, CLI-vs-MCP parity)
+state_head: fbdcbed
 progress:
   total_phases: 1
   completed_phases: 0
   total_plans: 2
-  completed_plans: 1
+  completed_plans: 2
 milestone_name: L7 Path Generalization & Namespace Awareness
 ---
 
@@ -29,9 +29,9 @@ See: .planning/PROJECT.md (updated 2026-07-22)
 ## Current Position
 
 Phase: 25 (L7 Path Collapse Engine) — EXECUTING
-Plan: 1 of 2 — COMPLETE (25-01-SUMMARY.md committed)
-Status: Executing Phase 25 — next plan 25-02 (MCP parity + byte-identity golden regression)
-Last activity: 2026-10-04 — Plan 25-01 executed (L7 collapse engine, merge reconciliation, pipeline/CLI wiring, coverage matrix, gate validation)
+Plan: 2 of 2 — COMPLETE (25-02-SUMMARY.md committed); phase 25 complete, ready for verify-work
+Status: Phase 25 plans 25-01 + 25-02 executed — SC1/SC2/SC5 proven, L7GEN-01..04 closed
+Last activity: 2026-10-04 — Plan 25-02 executed (pre-phase-25 byte-identity goldens + regression, MCP collapse_l7_paths/min_flows_per_l7_rule with fail-closed validation, CLI-vs-MCP parity test)
 
 ## Performance Metrics
 
