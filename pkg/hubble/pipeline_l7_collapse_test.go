@@ -23,6 +23,8 @@ import (
 
 const l7CollapseUsersFixture = "../../testdata/flows/l7-collapse-users.jsonl"
 const l7CollapseMixedClassesFixture = "../../testdata/flows/l7-collapse-mixed-classes.jsonl"
+const l7CollapseBelowThresholdFixture = "../../testdata/flows/l7-collapse-below-threshold.jsonl"
+const l7CollapseUnicodeEncodedFixture = "../../testdata/flows/l7-collapse-unicode-encoded.jsonl"
 
 // runCollapsePipeline replays a fixture with L7 codegen enabled and the
 // collapse flags set to the supplied values, mirroring runReplayPipeline.
@@ -210,6 +212,38 @@ func TestL7CollapseMixedClassesGolden(t *testing.T) {
 	assert.Contains(t, yaml, `path: ^/enc/Jos%C3%A9$`, "percent-encoding must be preserved byte-for-byte")
 	assert.Equal(t, 10, strings.Count(yaml, "path: "),
 		"expected exactly 4 templates + 6 literal rules")
+}
+
+// TestMinFlowsGate proves the L7GEN-04 gate at replay level with the default
+// gate (0 resolves to policy.DefaultMinFlowsPerL7Rule = 5): the users group
+// (2 distinct < 5) emits two literal rules while the orders group (6 distinct
+// ≥ 5) collapses to one template — the N-1 vs N boundary in one fixture
+// (ROADMAP SC3).
+func TestMinFlowsGate(t *testing.T) {
+	outDir, _, _ := runCollapsePipeline(t, l7CollapseBelowThresholdFixture, true, 0, false)
+
+	yaml := collapseYAML(t, outDir)
+	assert.Contains(t, yaml, `path: ^/api/v1/users/1$`, "below-gate users group must stay literal")
+	assert.Contains(t, yaml, `path: ^/api/v1/users/2$`, "below-gate users group must stay literal")
+	assert.NotContains(t, yaml, `path: ^/api/v1/users/[0-9]+$`,
+		"below-threshold group must never emit a template")
+	assert.Contains(t, yaml, `path: ^/api/v1/orders/[0-9]+$`, "over-gate orders group must collapse")
+	assert.Equal(t, 3, strings.Count(yaml, "path: "),
+		"expected exactly 2 literal user rules + 1 orders template")
+}
+
+// TestL7CollapseUnicodeEncodedGolden proves the KNOWN_LIMITATIONS #8 encoding
+// invariant at replay level: percent-encoded paths stay literal rules with
+// their escapes preserved byte-for-byte (never decoded before matching).
+func TestL7CollapseUnicodeEncodedGolden(t *testing.T) {
+	outDir, _, _ := runCollapsePipeline(t, l7CollapseUnicodeEncodedFixture, true, 0, false)
+
+	yaml := collapseYAML(t, outDir)
+	assert.Contains(t, yaml, `path: ^/users/Andr%C3%A9$`)
+	assert.Contains(t, yaml, `path: ^/users/Jos%C3%A9$`)
+	assert.Contains(t, yaml, `path: ^/users/na%C3%AFve$`)
+	assert.Equal(t, 3, strings.Count(yaml, "path: "), "expected exactly 3 literal rules")
+	assert.NotContains(t, yaml, "André", "encoded form must not be decoded in emitted rules")
 }
 
 // TestL7Collapse_DefaultOffUnchanged proves the default-off invariant: with

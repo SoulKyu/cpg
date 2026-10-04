@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -351,5 +352,46 @@ func TestL7CollapseFlagParses(t *testing.T) {
 		f := parseCommonFlags(cmd)
 		assert.False(t, f.l7CollapsePaths)
 		assert.Equal(t, policy.DefaultMinFlowsPerL7Rule, f.minFlowsPerL7Rule)
+	})
+}
+
+// TestValidateMinFlowsPerL7Rule verifies the T-25-03 fail-closed CLI
+// validation (Decision 3): --min-flows-per-l7-rule values < 1 are rejected
+// with an error naming the flag; 1 and the default 5 are accepted. A zero can
+// never silently disable the confidence gate.
+func TestValidateMinFlowsPerL7Rule(t *testing.T) {
+	t.Run("rejects 0", func(t *testing.T) {
+		cmd := newGenerateCmd()
+		require.NoError(t, cmd.Flags().Set("min-flows-per-l7-rule", "0"))
+		err := cmd.PreRunE(cmd, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "--min-flows-per-l7-rule must be >= 1")
+	})
+
+	t.Run("rejects negative", func(t *testing.T) {
+		cmd := newReplayCmd()
+		require.NoError(t, cmd.Flags().Set("min-flows-per-l7-rule", "-1"))
+		err := cmd.PreRunE(cmd, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "--min-flows-per-l7-rule must be >= 1")
+	})
+
+	t.Run("accepts 1 and default 5 on generate and replay", func(t *testing.T) {
+		for _, tc := range []struct {
+			name  string
+			newCmd func() *cobra.Command
+			value string
+		}{
+			{"generate accepts 1", newGenerateCmd, "1"},
+			{"generate accepts 5", newGenerateCmd, "5"},
+			{"replay accepts 1", newReplayCmd, "1"},
+			{"replay accepts 5", newReplayCmd, "5"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				cmd := tc.newCmd()
+				require.NoError(t, cmd.Flags().Set("min-flows-per-l7-rule", tc.value))
+				require.NoError(t, cmd.PreRunE(cmd, nil))
+			})
+		}
 	})
 }

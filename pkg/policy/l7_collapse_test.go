@@ -274,6 +274,35 @@ func TestCollapseHTTPPaths_PatternLengthCap(t *testing.T) {
 		"test setup: candidate template must exceed the cap")
 }
 
+// TestCollapseHTTPPaths_GateBoundary pins the L7GEN-04 boundary in both
+// directions: exactly N distinct paths collapse to the template, N-1 stay
+// literal — never a silent widening at the threshold.
+func TestCollapseHTTPPaths_GateBoundary(t *testing.T) {
+	paths := collapsePathSet(
+		"GET /api/v1/orders/1",
+		"GET /api/v1/orders/2",
+		"GET /api/v1/orders/3",
+		"GET /api/v1/orders/4",
+		"GET /api/v1/orders/5",
+	)
+
+	t.Run("exactly N distinct paths collapse to the template", func(t *testing.T) {
+		rules := CollapseHTTPPaths(paths, 5)
+		require.Len(t, rules, 1)
+		assert.Equal(t, `^/api/v1/orders/[0-9]+$`, rules[0].Path)
+	})
+
+	t.Run("N-1 distinct paths stay literal", func(t *testing.T) {
+		rules := CollapseHTTPPaths(paths, 6)
+		require.Len(t, rules, 5)
+		for _, r := range rules {
+			assert.NotContains(t, r.Path, "[0-9]+", "below the gate no template may appear")
+			assert.True(t, strings.HasPrefix(r.Path, "^/api/v1/orders/") && strings.HasSuffix(r.Path, "$"),
+				"expected anchored literal rule, got %q", r.Path)
+		}
+	})
+}
+
 // TestCollapseHTTPPaths_SortsByMethodPath pins the output ordering to the
 // same (Method, Path) lexicographic key sortL7Rules uses, so collapsed YAML
 // is byte-stable across runs (L7GEN-04).
