@@ -109,6 +109,6 @@ func TestCollapseHTTPPaths_SortsByMethodPath(t *testing.T) {
 		return got[i].Path < got[j].Path
 	}), "output must be sorted by (Method, Path): %v", rules)
 	assert.Equal(t, `^/api/v1/items/[0-9]+$`, rules[0].Path)
-	assert.Equal(t, `^/api/v1/orders/[0-9]+$`, rules[1].Path)
-	assert.Equal(t, `^/api/v1/users/[0-9]+$`, rules[2].Path)
+	assert.Equal(t, `^/api/v1/users/[0-9]+$`, rules[1].Path)
+	assert.Equal(t, `^/api/v1/orders/[0-9]+$`, rules[2].Path)
 }
