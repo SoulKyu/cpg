@@ -207,6 +207,13 @@ func validateCommonFlags(cmd *cobra.Command, _ []string) error {
 	if _, err := validateIgnoreDropReasons(f.ignoreDropReasons, logger); err != nil {
 		return err
 	}
+	// T-25-03 fail-closed gate validation (Decision 3): a value < 1 can never
+	// silently disable the distinct-observed-paths confidence gate. The
+	// in-process resolution (ResolveMinFlowsPerL7Rule) already maps < 1 to
+	// the default; the CLI rejects it outright so misconfiguration is loud.
+	if f.minFlowsPerL7Rule < 1 {
+		return fmt.Errorf("--min-flows-per-l7-rule must be >= 1 (got %d)", f.minFlowsPerL7Rule)
+	}
 	return nil
 }
 
