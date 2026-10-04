@@ -3,17 +3,17 @@ gsd_state_version: "1.0"
 milestone: v1.7
 current_phase: 25
 current_phase_name: L7 Path Collapse Engine
-status: planning
+status: executing
 stopped_at: Completed 23-02-PLAN.md
-last_updated: "2026-10-04T14:44:27.828Z"
+last_updated: "2026-10-04T15:20:00.000Z"
 last_activity: 2026-10-04
-last_activity_desc: Milestone v1.7 roadmap created (2 phases, 6 requirements)
-state_head: c728731fffc631446422c96ba991a44ed4056383
+last_activity_desc: Plan 25-01 complete (L7 path collapse engine end-to-end, tasks 1-5)
+state_head: 0a4057f
 progress:
   total_phases: 1
   completed_phases: 0
   total_plans: 2
-  completed_plans: 0
+  completed_plans: 1
 milestone_name: L7 Path Generalization & Namespace Awareness
 ---
 
@@ -24,14 +24,14 @@ milestone_name: L7 Path Generalization & Namespace Awareness
 See: .planning/PROJECT.md (updated 2026-07-22)
 
 **Core value:** Automatically generate correct CiliumNetworkPolicies from observed Hubble denials so that SREs spend zero time manually writing network policies in default-deny environments.
-**Current focus:** Phase 21 — cilium-compatibility-matrix-runtime-detection
+**Current focus:** Phase 25 — L7 Path Collapse Engine
 
 ## Current Position
 
-Phase: 25 (L7 Path Collapse Engine) — READY TO EXECUTE
-Plan: —
-Status: Ready to discuss/plan Phase 25
-Last activity: 2026-10-04 — Milestone v1.7 roadmap created (2 phases, 6 requirements)
+Phase: 25 (L7 Path Collapse Engine) — EXECUTING
+Plan: 1 of 2 — COMPLETE (25-01-SUMMARY.md committed)
+Status: Executing Phase 25 — next plan 25-02 (MCP parity + byte-identity golden regression)
+Last activity: 2026-10-04 — Plan 25-01 executed (L7 collapse engine, merge reconciliation, pipeline/CLI wiring, coverage matrix, gate validation)
 
 ## Performance Metrics
 

@@ -238,6 +238,16 @@ Archived per-phase details for shipped milestones live in [milestones/](mileston
 4. Only segments with observed variance generalize (numeric/hex/UUID → character classes); literal segments stay literal — unit-tested per segment class
 5. An MCP session arg `collapse_l7_paths: true` produces the same collapsed rules as the CLI flag
 
+**Plans**: 2 plans in 2 waves
+
+**Wave 1**
+
+- [x] 25-01-PLAN.md — L7 path collapse engine end-to-end (classifier, gate, replace-merge, pipeline + CLI flags, coverage matrix, validation)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 25-02-PLAN.md — MCP parity (`collapse_l7_paths` / `min_flows_per_l7_rule`) + byte-identity golden regression
+
 ### Phase 26: Namespace Creation Awareness
 
 **Goal**: cpg's batch blind spot becomes visible — namespaces that appear during a run (live watch) or mid-capture (replay heuristic) are reported at end of run with a re-run hint
@@ -278,6 +288,7 @@ Archived per-phase details for shipped milestones live in [milestones/](mileston
 | 22. Bootstrap Artifact Generation | v1.6 | 3/3 | Complete | 2026-07-22 |
 | 23. Managed Audit Window + SEC-01 Evolution | v1.6 | 4/4 | Complete | 2026-07-22 |
 | 24. cpg-Dedicated Skills & Agent Tooling | v1.6 | 2/2 | Complete | 2026-07-22 |
+| 25. L7 Path Collapse Engine | v1.7 | 1/2 | In Progress | — |
 | 25. L7 Path Collapse Engine | v1.7 | 0/TBD | Not started | - |
 | 26. Namespace Creation Awareness | v1.7 | 0/TBD | Not started | - |
 
