@@ -11,6 +11,7 @@ import (
 
 	"github.com/SoulKyu/cpg/pkg/evidence"
 	"github.com/SoulKyu/cpg/pkg/hubble"
+	"github.com/SoulKyu/cpg/pkg/policy"
 )
 
 // defaultDuration returns fallback when d <= 0, else d.
@@ -100,6 +101,14 @@ func buildPipelineConfig(
 
 		L7Enabled:    args.L7,
 		IncludeAudit: args.IncludeAudit,
+		// L7GEN-03 (plan 25-02): the MCP mirror of the CLI collapse flags.
+		// The gate is resolved in exactly one place —
+		// policy.ResolveMinFlowsPerL7Rule maps 0/omitted to
+		// policy.DefaultMinFlowsPerL7Rule so a zero can never disable the
+		// gate (T-25-05); negative values never reach here (rejected in the
+		// package-main handler before Start).
+		CollapseL7Paths:   args.CollapseL7Paths,
+		MinFlowsPerL7Rule: policy.ResolveMinFlowsPerL7Rule(args.MinFlowsPerL7Rule),
 
 		IgnoreProtocols:   args.IgnoreProtocols,
 		IgnoreDropReasons: args.IgnoreDropReasons,

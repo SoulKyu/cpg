@@ -7,6 +7,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/SoulKyu/cpg/pkg/policy"
 	"github.com/SoulKyu/cpg/pkg/session"
 )
 
@@ -19,10 +20,17 @@ import (
 // unchanged from the CLI). sessionRef.SessionID below is this file's one
 // exception: it is always required.
 type startSessionArgs struct {
-	Namespace         []string `json:"namespace,omitempty" jsonschema:"namespace filter, repeatable"`
-	AllNamespaces     bool     `json:"all_namespaces,omitempty" jsonschema:"observe all namespaces"`
-	L7                bool     `json:"l7,omitempty" jsonschema:"enable L7 (HTTP/DNS) policy generation"`
-	IncludeAudit      bool     `json:"include_audit,omitempty" jsonschema:"ingest Verdict_AUDIT flows alongside DROPPED (opt-in; default preserves pre-v1.6 DROPPED-only behavior)"`
+	Namespace     []string `json:"namespace,omitempty" jsonschema:"namespace filter, repeatable"`
+	AllNamespaces bool     `json:"all_namespaces,omitempty" jsonschema:"observe all namespaces"`
+	L7            bool     `json:"l7,omitempty" jsonschema:"enable L7 (HTTP/DNS) policy generation"`
+	IncludeAudit  bool     `json:"include_audit,omitempty" jsonschema:"ingest Verdict_AUDIT flows alongside DROPPED (opt-in; default preserves pre-v1.6 DROPPED-only behavior)"`
+	// L7GEN-03 mirror of the CLI's --l7-collapse-paths / --min-flows-per-l7-rule
+	// flags (plan 25-02); descriptions mirror the CLI help text. A negative
+	// MinFlowsPerL7Rule is rejected fail-closed in the handler below (T-25-05);
+	// 0/omitted resolves to policy.DefaultMinFlowsPerL7Rule via
+	// policy.ResolveMinFlowsPerL7Rule in buildPipelineConfig.
+	CollapseL7Paths   bool     `json:"collapse_l7_paths,omitempty" jsonschema:"collapse high-cardinality observed HTTP paths into anchored regex templates (opt-in)"`
+	MinFlowsPerL7Rule int      `json:"min_flows_per_l7_rule,omitempty" jsonschema:"minimum number of distinct observed HTTP paths backing a collapsed path template"`
 	IgnoreDropReasons []string `json:"ignore_drop_reasons,omitempty" jsonschema:"exclude flows by drop reason name before classification"`
 	IgnoreProtocols   []string `json:"ignore_protocols,omitempty" jsonschema:"drop flows whose L4 protocol matches: tcp, udp, icmpv4, icmpv6, sctp"`
 	Server            string   `json:"server,omitempty" jsonschema:"explicit Hubble Relay address; bypasses auto port-forward when set"`
@@ -124,12 +132,22 @@ func registerSessionTools(server *mcp.Server, mgr *session.Manager) {
 		if err != nil {
 			return nil, session.StartResult{}, err
 		}
+		// T-25-05 fail-closed (plan 25-02): a negative gate value must never
+		// reach the pipeline — it is rejected here, before mgr.Start, with an
+		// error naming the argument. 0/omitted is valid and resolves to
+		// policy.DefaultMinFlowsPerL7Rule via policy.ResolveMinFlowsPerL7Rule
+		// inside buildPipelineConfig, so a zero can never disable the gate.
+		if args.MinFlowsPerL7Rule < 0 {
+			return nil, session.StartResult{}, fmt.Errorf("min_flows_per_l7_rule must be >= 0 (0 = use default %d)", policy.DefaultMinFlowsPerL7Rule)
+		}
 
 		result, err := mgr.Start(ctx, session.StartArgs{
 			Namespaces:        args.Namespace,
 			AllNamespaces:     args.AllNamespaces,
 			L7:                args.L7,
 			IncludeAudit:      args.IncludeAudit,
+			CollapseL7Paths:   args.CollapseL7Paths,
+			MinFlowsPerL7Rule: args.MinFlowsPerL7Rule,
 			IgnoreDropReasons: ignoreDropReasons,
 			IgnoreProtocols:   ignoreProtocols,
 			Server:            args.Server,

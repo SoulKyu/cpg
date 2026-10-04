@@ -286,15 +286,15 @@ func TestParseOptionalDuration(t *testing.T) {
 // --l7-collapse-paths / --min-flows-per-l7-rule flags (L7GEN-03) with
 // T-25-05's fail-closed validation:
 //
-//  (a) min_flows_per_l7_rule: -1 is rejected as a tool error whose message
-//      NAMES the argument, before Manager.Start ever runs (no session is
-//      started — the negative value must never reach the pipeline, let
-//      alone disable the confidence gate);
-//  (b) collapse_l7_paths: true with min_flows_per_l7_rule omitted starts
-//      successfully (0/omitted resolves to DefaultMinFlowsPerL7Rule via
-//      policy.ResolveMinFlowsPerL7Rule in buildPipelineConfig) and
-//      get_status shows the session;
-//  (c) the start_session tool schema advertises both new properties.
+//	(a) min_flows_per_l7_rule: -1 is rejected as a tool error whose message
+//	    NAMES the argument, before Manager.Start ever runs (no session is
+//	    started — the negative value must never reach the pipeline, let
+//	    alone disable the confidence gate);
+//	(b) collapse_l7_paths: true with min_flows_per_l7_rule omitted starts
+//	    successfully (0/omitted resolves to DefaultMinFlowsPerL7Rule via
+//	    policy.ResolveMinFlowsPerL7Rule in buildPipelineConfig) and
+//	    get_status shows the session;
+//	(c) the start_session tool schema advertises both new properties.
 func TestMCPCollapseArgs(t *testing.T) {
 	initLoggerForTesting(t)
 
@@ -346,10 +346,10 @@ func TestMCPCollapseArgs(t *testing.T) {
 	startResp, err := cs.CallTool(ctx, &mcp.CallToolParams{
 		Name: "start_session",
 		Arguments: map[string]any{
-			"server":           "127.0.0.1:1",
-			"timeout":          "2s",
-			"flush_interval":   "1s",
-			"l7":               true,
+			"server":            "127.0.0.1:1",
+			"timeout":           "2s",
+			"flush_interval":    "1s",
+			"l7":                true,
 			"collapse_l7_paths": true,
 		},
 	})

@@ -148,6 +148,18 @@ type StartArgs struct {
 	// IncludeAudit ingests Verdict_AUDIT flows alongside Verdict_DROPPED
 	// (AUD-01). Default false preserves pre-v1.6 DROPPED-only behavior.
 	IncludeAudit bool
+	// CollapseL7Paths collapses high-cardinality observed HTTP paths into
+	// anchored regex templates (L7GEN-03, plan 25-02). Default false
+	// preserves literal-path emission byte-identical to the pre-phase-25
+	// build (SC2).
+	CollapseL7Paths bool
+	// MinFlowsPerL7Rule is the minimum number of distinct observed HTTP
+	// paths backing a collapsed template. 0 (the MCP zero value for an
+	// omitted arg) resolves to policy.DefaultMinFlowsPerL7Rule via
+	// buildPipelineConfig (fail-closed, T-25-05: a zero can never disable
+	// the gate); negative values are rejected by the MCP handler before
+	// Start is ever called.
+	MinFlowsPerL7Rule int
 	// IgnoreDropReasons is the uppercase, pre-validated set (D-06 — same
 	// normalization as the CLI's existing drop-reason validator).
 	IgnoreDropReasons []string
