@@ -96,6 +96,14 @@ Full details: [milestones/v1.6-ROADMAP.md](milestones/v1.6-ROADMAP.md)
 
 </details>
 
+<details open>
+<summary>🔨 v1.7 L7 Path Generalization & Namespace Awareness (Phases 25-26) — IN PROGRESS</summary>
+
+- [ ] Phase 25: L7 Path Collapse Engine (L7GEN-01..04)
+- [ ] Phase 26: Namespace Creation Awareness (NSAW-01..02)
+
+</details>
+
 ## Phase Details
 
 ### Phase 16: MCP Server Foundation & Write Safety
@@ -217,6 +225,31 @@ The re-verification after 17-08 (2026-07-21, 4/5) closed both of those but reope
 
 Archived per-phase details for shipped milestones live in [milestones/](milestones/).
 
+### Phase 25: L7 Path Collapse Engine
+
+**Goal**: `--l7-collapse-paths` plus the `--min-flows-per-l7-rule` confidence gate turn thousands of literal HTTP path rules into a few anchored templates — opt-in, never silent, byte-identical without the flag
+**Depends on**: Nothing (builds on the v1.6 codebase; `pkg/policy/l7.go` + builder)
+**Requirements**: L7GEN-01, L7GEN-02, L7GEN-03, L7GEN-04
+**Success Criteria** (what must be TRUE):
+
+1. With `--l7-collapse-paths`, 10k distinct observed paths for `/api/v1/users/<n>` collapse to one anchored `^/api/v1/users/<pattern>$` rule per (method, template) in the generated CNP
+2. Without the flag, generated output is byte-identical to v1.6 (regression-tested)
+3. With `--min-flows-per-l7-rule N`, templates backed by fewer than N distinct observed paths emit their literal rules instead; the gate defaults to a conservative value when collapse is enabled
+4. Only segments with observed variance generalize (numeric/hex/UUID → character classes); literal segments stay literal — unit-tested per segment class
+5. An MCP session arg `collapse_l7_paths: true` produces the same collapsed rules as the CLI flag
+
+### Phase 26: Namespace Creation Awareness
+
+**Goal**: cpg's batch blind spot becomes visible — namespaces that appear during a run (live watch) or mid-capture (replay heuristic) are reported at end of run with a re-run hint
+**Depends on**: Nothing, but ships after 25 to keep the L7GEN diff isolated
+**Requirements**: NSAW-01, NSAW-02
+**Success Criteria** (what must be TRUE):
+
+1. A namespace created while `cpg generate` runs is listed in the end-of-run session summary with a re-run hint; zero new namespaces leaves the summary byte-identical to v1.6
+2. The namespace watch is fail-safe: watch failure (RBAC, connection) warns once and proceeds — generation is never blocked or degraded (readonly posture intact)
+3. `cpg replay` reports namespaces whose first observed flow arrives after capture start (flow-timestamp heuristic, no K8s watch needed)
+4. New-namespace reporting rides the existing v1.3 session-summary mechanism (stdout in CLI mode; no stdout purity regression in MCP mode)
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -242,8 +275,10 @@ Archived per-phase details for shipped milestones live in [milestones/](mileston
 | 19. Security Hardening & End-to-End Validation | v1.5 | 4/4 | Complete    | 2026-07-21 |
 | 20. `--include-audit` Verdict Ingestion | v1.6 | 4/4 | Complete    | 2026-07-22 |
 | 21. Cilium Compatibility Matrix + Runtime Detection | v1.6 | 4/4 | Complete   | 2026-07-22 |
-| 22. Bootstrap Artifact Generation | v1.6 | 1/3 | In Progress | - |
-| 23. Managed Audit Window + SEC-01 Evolution | v1.6 | 2/4 | In Progress|  |
-| 24. cpg-Dedicated Skills & Agent Tooling | v1.6 | 0/TBD | Not started | - |
+| 22. Bootstrap Artifact Generation | v1.6 | 3/3 | Complete | 2026-07-22 |
+| 23. Managed Audit Window + SEC-01 Evolution | v1.6 | 4/4 | Complete | 2026-07-22 |
+| 24. cpg-Dedicated Skills & Agent Tooling | v1.6 | 2/2 | Complete | 2026-07-22 |
+| 25. L7 Path Collapse Engine | v1.7 | 0/TBD | Not started | - |
+| 26. Namespace Creation Awareness | v1.7 | 0/TBD | Not started | - |
 
-**Milestone status:** v1.0 ✅ shipped · v1.1 ✅ shipped · v1.2 ✅ shipped · v1.3 ✅ shipped · v1.4 ✅ shipped · v1.5 ✅ shipped · v1.6 📋 in progress
+**Milestone status:** v1.0 ✅ shipped · v1.1 ✅ shipped · v1.2 ✅ shipped · v1.3 ✅ shipped · v1.4 ✅ shipped · v1.5 ✅ shipped · v1.6 ✅ shipped · v1.7 📋 in progress
