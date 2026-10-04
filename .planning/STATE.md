@@ -1,16 +1,16 @@
 ---
-gsd_state_version: 1.0
-milestone: v1.6
-milestone_name: Audit-Mode Onboarding & cpg-Dedicated Agent Tooling
-status: milestone_complete
-last_updated: "2026-07-22T16:39:17.813Z"
-last_activity: 2026-07-22
+gsd_state_version: "1.0"
+milestone: v1.7
+milestone_name: L7 Path Generalization & Namespace Awareness
+status: planning
+last_updated: "2026-10-04T13:51:35.774Z"
+last_activity: 2026-10-04
 progress:
-  total_phases: 9
-  completed_phases: 3
-  total_plans: 17
-  completed_plans: 13
-  percent: 33
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -24,12 +24,10 @@ See: .planning/PROJECT.md (updated 2026-07-22)
 
 ## Current Position
 
-Phase: — (milestone v1.6 shipped 2026-07-22, archived)
-Plan: 2 of 3
-Status: Ready to execute
-Last activity: 2026-07-22
-
-Progress: [█████████░] 87%
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-10-04 — Milestone v1.7 started
 
 ## Performance Metrics
 

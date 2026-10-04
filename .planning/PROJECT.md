@@ -8,19 +8,14 @@ A Go CLI tool that connects directly to Hubble Relay via gRPC, observes dropped/
 
 Automatically generate correct CiliumNetworkPolicies from observed Hubble denials so that SREs spend zero time manually writing network policies in default-deny environments.
 
-## Current Milestone: v1.6 Audit-Mode Onboarding & cpg-Dedicated Agent Tooling
+## Current Milestone: v1.7 L7 Path Generalization & Namespace Awareness
 
-**Goal:** Onboard namespaces from "no policies" to enforced default-deny with zero real drops via Cilium policy audit mode, and ship the cpg-local agent tooling that exploits the v1.5 MCP server.
+**Goal:** Make `--l7` policies maintainable at scale via confidence-gated HTTP path generalization, and surface cpg's batch blind spot by reporting namespaces created during a run.
 
 **Target features:**
-- `--include-audit`/`include_audit` AUDIT verdict ingestion (5 filter sites + zero-AUDIT single warning) — load-bearing piece, ships first
-- Bootstrap artifact generation: namespaced default-deny CNP (`enableDefaultDeny` form, Cilium ≥1.15) + audit-window runbook (CLI + readonly MCP tool)
-- Managed audit window: per-endpoint audit flips, new-pod watcher, lifecycle-bound revert via SESS-05 fan-out, TTL auto-revert — surface (MCP flag-gated vs CLI-only) is an open discuss-phase decision
-- SEC-01 evolves into a two-mode structural proof + README readonly-guarantee rewording
-- cpg-dedicated repo-local skills/agents (`cpg-triage`, `cpg-audit-onboard`, `cpg-policy-review`, `cpg-health-report`, `cpg-mcp-smoke`; optional single `cpg-operator` agent)
-- Cilium compatibility: declared support matrix (README, single documented floor) + runtime version detection with warn-and-proceed and feature gating
-
-**Ideation source:** [drafts/v1.6-audit-onboarding-and-cpg-agent-tooling.md](drafts/v1.6-audit-onboarding-and-cpg-agent-tooling.md) — verified code refs (§2), constraints carried forward (§4), researcher questions (§5), candidate REQ IDs (§6).
+- `--l7-collapse-paths` (HTTP-FUT-01): infer path templates from observed HTTP paths (`{id}` segments → character classes) so `/api/v1/users/N` collapses into one anchored pattern instead of N literal rules
+- `--min-flows-per-l7-rule N` (L7-FUT-02): confidence gate — a pattern only generalizes when ≥ N distinct flows confirm it; never generalize below the gate
+- Namespace awareness (light, batch-preserving): detect namespaces created during the run and report them in the session summary ("namespace X appeared after run start; re-run to cover it") — no daemon, no long-running mode
 
 ## Requirements
 
@@ -76,16 +71,20 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 - ✓ SEC-01 structural readonly audit: `TestMCPAuditReadonlyReachability` — SSA/RTA callgraph from `runMCPServer`, BFS-filtered to cpg-owned functions, direct-call scan; K8s write verbs (incl. DeleteCollection/UpdateStatus/ApplyStatus) fail unconditionally, fs writes (incl. Chmod/Truncate/Symlink/…) gated by an exact 5-function allowlist; mutation-tested diagnostic (function symbol + call path) — v1.5 Phase 19
 - ✓ SRV-01 + SRV-04: real-subprocess stdio e2e — `-race`-built `cpg mcp` driven over real pipes against an in-process fake Hubble observer relay; graceful lifecycle (initialize → 8-tool handshake/schema/annotation proof → session + 5 query tools → stop → clean exit, byte-pure stdout) and ungraceful-disconnect variant (stdin kill → bounded self-exit, tmpdir removed, relay stream cancelled; 5/5 stability under `-race`) — v1.5 Phase 19
 - ✓ SEC-03 README `## MCP Server (cpg mcp)` section: harness `env` block (KUBECONFIG/PATH/TMPDIR + why), secrets posture (L7 paths/labels reach the LLM; headers never captured), exec-credential-plugin non-interactive caveat + credential-persistence note, session model — v1.5 Phase 19
+- ✓ `--include-audit`/`include_audit` AUDIT verdict ingestion: 5 filter sites + zero-AUDIT single warning — v1.6 Phase 20
+- ✓ Bootstrap artifact generation: namespaced default-deny CNP (`enableDefaultDeny`, Cilium ≥1.15) + audit-window runbook — v1.6 Phase 22
+- ✓ Managed audit window: per-endpoint audit flips, new-pod watcher, lifecycle-bound revert, TTL auto-revert (CLI-only surface per gate decision) — v1.6 Phase 23
+- ✓ SEC-01 evolution: structural readonly proof byte-identical + WebSocket/fallback exec tripwire extension; README readonly-by-default rewording — v1.6 Phase 23
+- ✓ Cilium compatibility: declared support matrix + runtime version detection with warn-and-proceed and feature gating — v1.6 Phase 21
+- ✓ cpg-dedicated repo-local skills/agents (`cpg-triage`, `cpg-audit-onboard`, `cpg-policy-review`, `cpg-health-report`, `cpg-mcp-smoke`; `cpg-operator` agent) — v1.6 Phase 24
 
 ### Active
 
-<!-- v1.6 scope. Detailed REQ-IDs in REQUIREMENTS.md. -->
+<!-- v1.7 scope. Detailed REQ-IDs in REQUIREMENTS.md. -->
 
-- [x] Bootstrap default-deny CNP + audit-window runbook generation — AUD-02 (Phase 22)
-- [x] Managed audit window with lifecycle-bound revert + TTL — AUD-03 (Phase 23, CLI-only surface)
-- [x] SEC-01 evolution: proof byte-identical + tripwire, README readonly-by-default rewording — AUD-04 (Phase 23, Variant B — two-mode proof moot)
-- [x] cpg-local skills/agents, repo-local only — SKL-01..06 (Phase 24)
-- [x] Cilium compat: declared matrix + runtime detection — COMPAT-01..03 (Phase 21)
+- [ ] `--l7-collapse-paths` HTTP path template inference — L7GEN-01..03 (HTTP-FUT-01)
+- [ ] `--min-flows-per-l7-rule` confidence gate — L7GEN-04 (L7-FUT-02)
+- [ ] Namespace creation awareness in session summary — NSAW-01..02
 
 ### Planned
 
@@ -97,7 +96,7 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 - [ ] `cpg apply` command (dry-run by default, `--force` to apply) — v1.3 candidate
 - [ ] Policy consolidation / merging into broader rules — v1.3 candidate
 - [ ] Prometheus metrics for long-running instances — v1.3 candidate
-- [ ] HTTP path auto-collapse (`--l7-collapse-paths`) + FQDN wildcard inference (`--l7-fqdn-wildcard-depth`) — v1.3 candidate (HTTP-FUT-01, DNS-FUT-01)
+- [ ] FQDN wildcard inference (`--l7-fqdn-wildcard-depth`) — v1.3 candidate (DNS-FUT-01)
 - [ ] kube-dns selector autodetection (EKS / GKE / AKS / vanilla) — v1.3 candidate (DNS-FUT-02)
 - [ ] ToFQDNs from IP→name correlation when DNS records are missed — v1.3 candidate (DNS-FUT-03)
 - [ ] `--include-l7-forwarded` for DNS REFUSED denials surfaced as `Verdict_FORWARDED` — v1.3 candidate (L7-FUT-01)
