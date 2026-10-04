@@ -1,0 +1,27 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: cpg
+  name: cpg-client
+  namespace: production
+spec:
+  egress:
+  # IPv4(type=8) to CIDR 10.0.0.1/32
+  - icmps:
+    - fields:
+      - family: IPv4
+        type: 8
+    toCIDR:
+    - 10.0.0.1/32
+  # IPv4(type=8) to CIDR 10.0.0.2/32
+  - icmps:
+    - fields:
+      - family: IPv4
+        type: 8
+    toCIDR:
+    - 10.0.0.2/32
+  endpointSelector:
+    matchLabels:
+      app: client
+status: {}

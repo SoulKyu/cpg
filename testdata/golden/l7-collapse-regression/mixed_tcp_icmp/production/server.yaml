@@ -1,0 +1,24 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: cpg
+  name: cpg-server
+  namespace: production
+spec:
+  endpointSelector:
+    matchLabels:
+      app: server
+  ingress:
+  # TCP/80, TCP/443 from app=client, io.kubernetes.pod.namespace=default
+  - fromEndpoints:
+    - matchLabels:
+        app: client
+        io.kubernetes.pod.namespace: default
+    toPorts:
+    - ports:
+      - port: "80"
+        protocol: TCP
+      - port: "443"
+        protocol: TCP
+status: {}

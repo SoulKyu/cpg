@@ -1,0 +1,31 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: cpg
+  name: cpg-api-server
+  namespace: production
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: api-server
+  ingress:
+  # TCP/8080 from app.kubernetes.io/name=frontend
+  - fromEndpoints:
+    - matchLabels:
+        app.kubernetes.io/name: frontend
+    toPorts:
+    - ports:
+      - port: "8080"
+        protocol: TCP
+      rules:
+        http:
+        - method: GET
+          path: ^/api/v1/users$
+        - method: POST
+          path: ^/api/v1/users$
+        - method: GET
+          path: ^/healthz$
+        - method: GET
+          path: ^/api/v1/orders$
+status: {}
