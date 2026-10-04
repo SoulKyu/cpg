@@ -39,7 +39,7 @@ func TestMergePortRules_PreservesRules(t *testing.T) {
 		incoming := api.PortRules{
 			{Ports: []api.PortProtocol{tcp80}},
 		}
-		merged := mergePortRules(existing, incoming)
+		merged := mergePortRules(existing, incoming, false)
 		require.Len(t, merged, 1, "same (port, proto) collapses to a single PortRule")
 		require.Len(t, merged[0].Ports, 1)
 		assert.Equal(t, "80", merged[0].Ports[0].Port)
@@ -59,7 +59,7 @@ func TestMergePortRules_PreservesRules(t *testing.T) {
 				Rules: &api.L7Rules{HTTP: []api.PortRuleHTTP{httpGetA}},
 			},
 		}
-		merged := mergePortRules(existing, incoming)
+		merged := mergePortRules(existing, incoming, false)
 		require.Len(t, merged, 1)
 		require.NotNil(t, merged[0].Rules, "incoming Rules must be picked up")
 		require.Len(t, merged[0].Rules.HTTP, 1)
@@ -80,7 +80,7 @@ func TestMergePortRules_PreservesRules(t *testing.T) {
 				Rules: &api.L7Rules{HTTP: []api.PortRuleHTTP{httpGetA, httpPostB}},
 			},
 		}
-		merged := mergePortRules(existing, incoming)
+		merged := mergePortRules(existing, incoming, false)
 		require.Len(t, merged, 1)
 		require.NotNil(t, merged[0].Rules)
 		require.Len(t, merged[0].Rules.HTTP, 2, "duplicates dedup, new entry appended")
@@ -104,7 +104,7 @@ func TestMergePortRules_PreservesRules(t *testing.T) {
 				Rules: &api.L7Rules{HTTP: []api.PortRuleHTTP{httpPostB}},
 			},
 		}
-		merged := mergePortRules(existing, incoming)
+		merged := mergePortRules(existing, incoming, false)
 		require.Len(t, merged, 2, "distinct (port, proto) keys produce distinct PortRules")
 
 		// Find each by port — order is determined by the merge implementation but
@@ -140,7 +140,7 @@ func TestMergePortRules_PreservesRules(t *testing.T) {
 		incoming := api.PortRules{
 			{Ports: []api.PortProtocol{{Port: "8080", Protocol: api.ProtoTCP}}},
 		}
-		merged := mergePortRules(existing, incoming)
+		merged := mergePortRules(existing, incoming, false)
 		require.Len(t, merged, 1, "L4-only path collapses to a single PortRule (v1.1 behavior)")
 		assert.Nil(t, merged[0].Rules, "no Rules on either input → result.Rules stays nil")
 		require.Len(t, merged[0].Ports, 3)
@@ -167,7 +167,7 @@ func TestMergePortRules_L4OnlyByteIdentical(t *testing.T) {
 			{Port: "8080", Protocol: api.ProtoTCP},
 		}},
 	}
-	merged := mergePortRules(existing, incoming)
+	merged := mergePortRules(existing, incoming, false)
 	require.Len(t, merged, 1)
 	assert.Nil(t, merged[0].Rules)
 	require.Len(t, merged[0].Ports, 3)

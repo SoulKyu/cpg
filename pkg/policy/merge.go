@@ -10,12 +10,25 @@ import (
 	"github.com/cilium/cilium/pkg/policy/api"
 )
 
+// MergeOptions carries merge reconciliation behavior. See MergeOptions in
+// l7_collapse.go for the ReplaceL7HTTP contract (Phase 25 Decision 1).
+
 // MergePolicy merges incoming policy rules into an existing policy.
 // For each incoming rule, if a matching peer (same endpoints/entities/CIDR)
 // and same rule type (ports vs ICMP) exists, contents are merged.
 // If no match exists, the rule is appended as a new entry.
 // ObjectMeta is preserved from the existing policy.
 func MergePolicy(existing, incoming *ciliumv2.CiliumNetworkPolicy) *ciliumv2.CiliumNetworkPolicy {
+	return MergePolicyWithOptions(existing, incoming, MergeOptions{})
+}
+
+// MergePolicyWithOptions merges incoming policy rules into an existing policy
+// honoring opts. With opts.ReplaceL7HTTP set, each matching (port, proto)
+// bucket's incoming HTTP sub-list REPLACES the existing HTTP sub-list (the
+// incoming set is whole-run-authoritative under collapse); DNS sub-lists
+// still union-merge. With zero options the behavior is identical to
+// MergePolicy's pre-phase union-merge.
+func MergePolicyWithOptions(existing, incoming *ciliumv2.CiliumNetworkPolicy, opts MergeOptions) *ciliumv2.CiliumNetworkPolicy {
 	result := existing.DeepCopy()
 
 	if incoming.Spec == nil {
@@ -36,7 +49,7 @@ func MergePolicy(existing, incoming *ciliumv2.CiliumNetworkPolicy) *ciliumv2.Cil
 		merged := false
 		for i, exRule := range result.Spec.Ingress {
 			if ingressRulesMatch(exRule, inRule) {
-				result.Spec.Ingress[i].ToPorts = mergePortRules(exRule.ToPorts, inRule.ToPorts)
+				result.Spec.Ingress[i].ToPorts = mergePortRules(exRule.ToPorts, inRule.ToPorts, opts.ReplaceL7HTTP)
 				result.Spec.Ingress[i].ICMPs = mergeICMPRules(exRule.ICMPs, inRule.ICMPs)
 				merged = true
 				break
@@ -52,7 +65,7 @@ func MergePolicy(existing, incoming *ciliumv2.CiliumNetworkPolicy) *ciliumv2.Cil
 		merged := false
 		for i, exRule := range result.Spec.Egress {
 			if egressRulesMatch(exRule, inRule) {
-				result.Spec.Egress[i].ToPorts = mergePortRules(exRule.ToPorts, inRule.ToPorts)
+				result.Spec.Egress[i].ToPorts = mergePortRules(exRule.ToPorts, inRule.ToPorts, opts.ReplaceL7HTTP)
 				result.Spec.Egress[i].ICMPs = mergeICMPRules(exRule.ICMPs, inRule.ICMPs)
 				merged = true
 				break
@@ -196,7 +209,7 @@ func normalizeLabels(lbls map[string]string) map[string]string {
 // 6). Phase 7 does not special-case mixed L7 protocols; Phase 8/9 will add
 // an explicit refusal-with-warn at the build layer when both arrive on the
 // same bucket.
-func mergePortRules(existing, incoming api.PortRules) api.PortRules {
+func mergePortRules(existing, incoming api.PortRules, replaceL7HTTP bool) api.PortRules {
 	if len(existing) == 0 {
 		return incoming
 	}
@@ -251,7 +264,7 @@ func mergePortRules(existing, incoming api.PortRules) api.PortRules {
 					order = append(order, key)
 				}
 				if pr.Rules != nil {
-					b.rules = mergeL7Rules(b.rules, pr.Rules)
+					b.rules = mergeL7Rules(b.rules, pr.Rules, replaceL7HTTP)
 				}
 			}
 		}
@@ -281,11 +294,16 @@ func portRulesCarryL7(prs api.PortRules) bool {
 	return false
 }
 
-// mergeL7Rules union-merges two L7Rules pointers. Returns nil only when both
+// mergeL7Rules merges two L7Rules pointers. Returns nil only when both
 // inputs are nil. HTTP entries dedup by (Method, Path, Host, Headers,
 // HeaderMatches); DNS entries dedup by (MatchName, MatchPattern). First
 // observation wins on ordering — new entries append.
-func mergeL7Rules(a, b *api.L7Rules) *api.L7Rules {
+//
+// When replaceHTTP is true (Phase 25 Decision 1), a non-empty incoming HTTP
+// sub-list REPLACES the existing one instead of union-merging: the incoming
+// set is whole-run-authoritative under collapse. An empty incoming HTTP
+// sub-list leaves the existing rules untouched. DNS always union-merges.
+func mergeL7Rules(a, b *api.L7Rules, replaceHTTP bool) *api.L7Rules {
 	if a == nil && b == nil {
 		return nil
 	}
@@ -300,19 +318,25 @@ func mergeL7Rules(a, b *api.L7Rules) *api.L7Rules {
 	}
 
 	out := *a
-	// HTTP union-merge.
+	// HTTP merge (union by default; wholesale replacement when replaceHTTP —
+	// the collapsed template set supersedes earlier literal emissions whose
+	// dedup keys differ).
 	if len(b.HTTP) > 0 {
-		seen := make(map[string]struct{}, len(out.HTTP)+len(b.HTTP))
-		for _, h := range out.HTTP {
-			seen[httpRuleKey(h)] = struct{}{}
-		}
-		for _, h := range b.HTTP {
-			k := httpRuleKey(h)
-			if _, dup := seen[k]; dup {
-				continue
+		if replaceHTTP {
+			out.HTTP = append(make([]api.PortRuleHTTP, 0, len(b.HTTP)), b.HTTP...)
+		} else {
+			seen := make(map[string]struct{}, len(out.HTTP)+len(b.HTTP))
+			for _, h := range out.HTTP {
+				seen[httpRuleKey(h)] = struct{}{}
 			}
-			seen[k] = struct{}{}
-			out.HTTP = append(out.HTTP, h)
+			for _, h := range b.HTTP {
+				k := httpRuleKey(h)
+				if _, dup := seen[k]; dup {
+					continue
+				}
+				seen[k] = struct{}{}
+				out.HTTP = append(out.HTTP, h)
+			}
 		}
 	}
 	// DNS union-merge.

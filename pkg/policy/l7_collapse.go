@@ -23,7 +23,6 @@ import (
 	"sort"
 	"strings"
 
-	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
 	"github.com/cilium/cilium/pkg/policy/api"
 )
 
@@ -203,13 +202,6 @@ type MergeOptions struct {
 	// rules written by earlier flushes whose dedup keys differ from the
 	// template. DNS sub-lists are never replaced.
 	ReplaceL7HTTP bool
-}
-
-// MergePolicyWithOptions merges incoming policy rules into an existing policy
-// honoring opts. Provisional Task 1 wrapper delegating to MergePolicy; Task 2
-// moves the real replace-mode implementation into merge.go.
-func MergePolicyWithOptions(existing, incoming *ciliumv2.CiliumNetworkPolicy, opts MergeOptions) *ciliumv2.CiliumNetworkPolicy {
-	return MergePolicy(existing, incoming)
 }
 
 // collapseGroup is one (segment-count) group of observed paths for a method.

@@ -85,6 +85,14 @@ type PolicyEvent struct {
 	Workload    string
 	Policy      *ciliumv2.CiliumNetworkPolicy
 	Attribution []RuleAttribution // nil when AttributionOptions.MaxSamples == 0
+	// ReplaceL7HTTP carries the merge reconciliation contract (Phase 25
+	// Decision 1): set on every collapse-enabled flush. The event's HTTP rule
+	// set is whole-run-authoritative (computed over the entire run's observed
+	// path set), so the merge layer must REPLACE the matching (port, proto)
+	// buckets' HTTP sub-lists rather than union-merge — otherwise literal
+	// rules written before the collapse gate was crossed would persist
+	// alongside the template. DNS sub-lists are never replaced.
+	ReplaceL7HTTP bool
 }
 
 // BuildPolicy transforms a set of Hubble dropped flows into a CiliumNetworkPolicy.

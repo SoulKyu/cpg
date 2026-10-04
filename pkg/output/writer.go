@@ -51,7 +51,7 @@ func (w *Writer) Write(event policy.PolicyEvent) error {
 
 	var spec *api.Rule
 	if existing != nil {
-		merged := policy.MergePolicy(existing, event.Policy)
+		merged := policy.MergePolicyWithOptions(existing, event.Policy, policy.MergeOptions{ReplaceL7HTTP: event.ReplaceL7HTTP})
 		spec = merged.Spec
 		data, err = yaml.Marshal(merged)
 		if err != nil {
