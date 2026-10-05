@@ -94,11 +94,35 @@ func maybeRunVersionPreflight(ctx context.Context, kubeConfig *rest.Config, logg
 	k8s.DetectCiliumVersion(detectCtx, client, logger)
 }
 
-// maybeStartNamespaceWatcher RED compile stub — always nil; the real NSAW-01
-// launcher (nil-kubeconfig skip warning, l7ClientFactory seam,
-// k8s.StartNamespaceWatcher) lands with the GREEN commit.
-func maybeStartNamespaceWatcher(_ context.Context, _ *rest.Config, _ *zap.Logger) *k8s.NamespaceWatcher {
-	return nil
+// maybeStartNamespaceWatcher starts the NSAW-01 namespace-creation watcher
+// (pkg/k8s.StartNamespaceWatcher) once, before the pipeline runs. Always-on
+// (no opt-in flag — the report is advisory, like version preflight). The
+// launcher itself is fail-safe: a nil kubeconfig (the --server bypass,
+// Pitfall 6) or a client construction failure logs exactly one skip warning
+// and returns nil — generation proceeds without namespace awareness, and the
+// pipeline falls back to the replay heuristic. StartNamespaceWatcher never
+// returns an error and warns at most once itself, so this call site adds no
+// error handling of its own. The returned watcher's lifetime is bounded by
+// ctx (the run's signal context); wire the (possibly nil) result into
+// PipelineConfig.NewNamespaces — the interface field is nil-safe.
+//
+// Caller contract: invoke from cpg generate ONLY. cpg replay is offline by
+// definition and must never start a watcher.
+func maybeStartNamespaceWatcher(ctx context.Context, kubeConfig *rest.Config, logger *zap.Logger) *k8s.NamespaceWatcher {
+	if kubeConfig == nil {
+		var err error
+		kubeConfig, err = k8s.LoadKubeConfig()
+		if err != nil {
+			logger.Warn("namespace watch skipped: kubeconfig not available", zap.Error(err))
+			return nil
+		}
+	}
+	client, err := l7ClientFactory(kubeConfig)
+	if err != nil {
+		logger.Warn("namespace watch skipped: failed to construct kubernetes client", zap.Error(err))
+		return nil
+	}
+	return k8s.StartNamespaceWatcher(ctx, client, logger)
 }
 
 func newGenerateCmd() *cobra.Command {
@@ -274,6 +298,13 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 	// warns when the connected cluster is below one or more feature floors.
 	maybeRunVersionPreflight(ctx, kubeConfig, logger)
 
+	// NSAW-01: start the namespace-creation watcher ONCE before the pipeline
+	// runs. Always-on and advisory like version preflight; nil kubeConfig
+	// (--server bypass) or any launcher failure degrades to a single skip
+	// warning and the pipeline proceeds. The watcher (when non-nil) is the
+	// authoritative new-namespace source for the run's end-of-run report.
+	nsWatcher := maybeStartNamespaceWatcher(ctx, kubeConfig, logger)
+
 	return hubble.RunPipeline(ctx, hubble.PipelineConfig{
 		Server:          server,
 		TLSEnabled:      f.tlsEnabled,
@@ -309,6 +340,11 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 		IgnoreProtocols:   ignoreProtocols,
 		IgnoreDropReasons: ignoreDropReasons,
 		FailOnInfraDrops:  f.failOnInfraDrops,
+
+		// NSAW-01: nil when no watcher could be started (no kubeconfig,
+		// restricted RBAC at the cmd layer) — the pipeline then falls back to
+		// the replay heuristic in its watcher-precedence branch.
+		NewNamespaces: nsWatcher,
 	})
 }
 

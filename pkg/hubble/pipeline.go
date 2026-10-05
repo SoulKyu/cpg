@@ -43,8 +43,7 @@ func shouldExitForInfraDrops(failOnInfraDrops bool, infraDropTotal uint64) bool 
 // (NSAW-01). pkg/k8s.NamespaceWatcher implements it structurally — pkg/hubble
 // deliberately does not import pkg/k8s. Nil disables watch-based reporting:
 // cpg replay and MCP mode leave it nil and the pipeline falls back to the
-// NSAW-02 flow-timestamp heuristic. (TDD RED: the field exists for compile;
-// the watcher-precedence branch lands with GREEN.)
+// NSAW-02 flow-timestamp heuristic instead.
 type NewNamespacesSource interface {
 	NewNamespaces() []string
 }
@@ -131,8 +130,7 @@ type PipelineConfig struct {
 	// created after run start (NSAW-01 live watcher; cpg generate only).
 	// Nil (replay, MCP mode — optional-field style like ClusterPolicies and
 	// CollapseL7Paths) leaves the feature inert and falls back to the NSAW-02
-	// flow-timestamp heuristic. The watcher-precedence branch that reads this
-	// field lands with the 26-02 GREEN commit.
+	// flow-timestamp heuristic.
 	NewNamespaces NewNamespacesSource
 }
 
@@ -463,13 +461,20 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 	}
 	PrintClusterHealthSummary(stdout, snapshots, stats, healthPath, pathState)
 
-	// NSAW-02: print the new-namespace report block AFTER the cluster-health
-	// summary (advice about the NEXT run reads naturally last). Reuses the SAME
-	// resolved stdout local — no MCP-specific branch anywhere; MCP mode already
-	// points cfg.Stdout at mcpModeStdout(). Zero new namespaces ⇒ zero bytes
-	// written (byte-identity with the v1.6 session summary). Plan 26-02 wraps
-	// this unconditional replay call in the watcher-precedence branch.
-	PrintNewNamespacesSummary(stdout, computeNewNamespaces(agg.FirstSeenByNamespace()), NewNamespacesFromReplay)
+	// NSAW: watcher precedence — when a live namespace watcher was configured
+	// (cpg generate), its recorded list is AUTHORITATIVE for the run and the
+	// report uses the watch phrasing; otherwise (replay, MCP mode, unreachable
+	// kubeconfig) fall back to the NSAW-02 flow-timestamp heuristic with the
+	// replay phrasing. Zero new namespaces ⇒ zero bytes either way (the
+	// no-op-when-empty guard inside PrintNewNamespacesSummary preserves
+	// byte-identity with the v1.6 summary).
+	nsList := computeNewNamespaces(agg.FirstSeenByNamespace())
+	nsSource := NewNamespacesFromReplay
+	if cfg.NewNamespaces != nil {
+		nsList = cfg.NewNamespaces.NewNamespaces()
+		nsSource = NewNamespacesFromWatch
+	}
+	PrintNewNamespacesSummary(stdout, nsList, nsSource)
 
 	stats.Log(cfg.Logger)
 	// EXIT-01: --fail-on-infra-drops opt-in exit code.
