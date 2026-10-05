@@ -160,6 +160,18 @@ type Aggregator struct {
 	// ignoredByDropReason counts flows dropped via --ignore-drop-reason per
 	// reason name (uppercase canonical form). Surfaced via IgnoredByDropReason().
 	ignoredByDropReason map[string]uint64
+
+	// firstSeenByNamespace records the earliest observed Flow.Time per endpoint
+	// namespace (both source and destination — NSAW-02 A5 existence-awareness
+	// attribution). Surfaced via FirstSeenByNamespace() for the replay
+	// new-namespace report (pkg/hubble/ns_awareness.go).
+	//
+	// M-3: single-goroutine ownership during Run() (the aggregator goroutine).
+	// All read accessors (FirstSeenByNamespace) MUST be called only after
+	// errgroup g.Wait() returns — same contract as healthWriter.Snapshot().
+	// No mutex needed; concurrent access from outside Run() is a caller bug.
+	// Lazily allocated in Run() so zero-value Aggregator construction works.
+	firstSeenByNamespace map[string]time.Time
 }
 
 // NewAggregator creates a new Aggregator with the given flush interval.
@@ -240,6 +252,17 @@ func (a *Aggregator) IgnoredByDropReason() map[string]uint64 {
 func (a *Aggregator) InfraDrops() map[flowpb.DropReason]uint64 {
 	out := make(map[flowpb.DropReason]uint64, len(a.infraDrops))
 	for k, v := range a.infraDrops {
+		out[k] = v
+	}
+	return out
+}
+
+// FirstSeenByNamespace returns a copy of the per-namespace first-seen map
+// populated during Run(). Map iteration order is not stable; sort at the call
+// site for deterministic output.
+func (a *Aggregator) FirstSeenByNamespace() map[string]time.Time {
+	out := make(map[string]time.Time, len(a.firstSeenByNamespace))
+	for k, v := range a.firstSeenByNamespace {
 		out[k] = v
 	}
 	return out
@@ -447,6 +470,15 @@ func (a *Aggregator) Run(ctx context.Context, in <-chan *flowpb.Flow, out chan<-
 			if f.Verdict == flowpb.Verdict_AUDIT {
 				a.auditVerdictCount++
 			}
+			// NSAW-02: record the first-seen timestamp per endpoint namespace on
+			// EVERY observed flow, BEFORE any filter continue — a pre-recording
+			// continue would drop source-namespace visibility for filtered flows
+			// (same "regardless of bucket" rationale as the L7/AUDIT counters
+			// above). Lazily allocate so zero-value Aggregator construction works.
+			if a.firstSeenByNamespace == nil {
+				a.firstSeenByNamespace = make(map[string]time.Time)
+			}
+			noteFirstSeen(a.firstSeenByNamespace, f)
 			// FILTER-01: drop flows matching --ignore-drop-reason BEFORE the
 			// protocol filter and classification gate. User-explicit exclusion
 			// takes precedence. These flows do NOT increment flowsSeen,

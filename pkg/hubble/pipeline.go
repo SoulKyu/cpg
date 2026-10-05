@@ -445,6 +445,14 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 	}
 	PrintClusterHealthSummary(stdout, snapshots, stats, healthPath, pathState)
 
+	// NSAW-02: print the new-namespace report block AFTER the cluster-health
+	// summary (advice about the NEXT run reads naturally last). Reuses the SAME
+	// resolved stdout local — no MCP-specific branch anywhere; MCP mode already
+	// points cfg.Stdout at mcpModeStdout(). Zero new namespaces ⇒ zero bytes
+	// written (byte-identity with the v1.6 session summary). Plan 26-02 wraps
+	// this unconditional replay call in the watcher-precedence branch.
+	PrintNewNamespacesSummary(stdout, computeNewNamespaces(agg.FirstSeenByNamespace()), NewNamespacesFromReplay)
+
 	stats.Log(cfg.Logger)
 	// EXIT-01: --fail-on-infra-drops opt-in exit code.
 	// Default behavior (exit 0) is UNCHANGED when flag is not set (Pitfall P3).
