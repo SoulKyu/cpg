@@ -107,3 +107,128 @@ func TestPrintNewNamespacesSummary_EmptyAndNil(t *testing.T) {
 	assert.Equal(t, "", empty.String(), "no output when the list is empty")
 	assert.Equal(t, "", nilList.String(), "no output when the list is nil")
 }
+
+// TestFirstSeenZeroTime verifies the fail-safe timestamp edges (Pitfall 3):
+// flows with (a) nil Time, (b) a zero-value (Go year-1) timestamp, and (c) an
+// invalid timestamppb record NOTHING into the first-seen map; a capture
+// consisting ONLY of such flows yields an empty report — computeNewNamespaces
+// returns nil AND PrintNewNamespacesSummary writes zero bytes (fail-safe
+// empty, mirroring the summary no-op — never a crash, never a bogus report).
+func TestFirstSeenZeroTime(t *testing.T) {
+	later := nsawTime.Add(10 * time.Minute)
+
+	t.Run("nil_time_records_nothing", func(t *testing.T) {
+		m := map[string]time.Time{}
+		noteFirstSeen(m, nsawFlow(time.Time{}, "default", "production"))
+		assert.Empty(t, m, "nil Flow.Time must not be recorded")
+	})
+
+	t.Run("zero_value_timestamp_records_nothing", func(t *testing.T) {
+		m := map[string]time.Time{}
+		f := nsawFlow(later, "default", "production")
+		f.Time = timestamppb.New(time.Time{}) // Go zero time (year 1), IsZero via AsTime
+		noteFirstSeen(m, f)
+		assert.Empty(t, m, "zero-value Flow.Time must not be recorded")
+	})
+
+	t.Run("invalid_timestamp_records_nothing", func(t *testing.T) {
+		m := map[string]time.Time{}
+		f := nsawFlow(later, "default", "production")
+		f.Time = &timestamppb.Timestamp{Seconds: 1, Nanos: -1} // IsValid() == false
+		noteFirstSeen(m, f)
+		assert.Empty(t, m, "invalid Flow.Time must not be recorded")
+	})
+
+	t.Run("all_untimestamped_capture_reports_nothing", func(t *testing.T) {
+		m := map[string]time.Time{}
+		noteFirstSeen(m, nsawFlow(time.Time{}, "default", "production"))
+		noteFirstSeen(m, nsawFlow(time.Time{}, "latecomer", "production"))
+
+		assert.Nil(t, computeNewNamespaces(m), "no valid timestamps ⇒ nil report")
+
+		var buf bytes.Buffer
+		PrintNewNamespacesSummary(&buf, computeNewNamespaces(m), NewNamespacesFromReplay)
+		assert.Equal(t, "", buf.String(), "all-untimestamped capture must write zero bytes")
+	})
+}
+
+// TestFirstSeenNamespaces_CaptureStartEquality verifies the strict-After
+// adjacency edge: namespaces sharing the MINIMUM first-seen timestamp are all
+// treated as pre-existing (flagged assumption — the heuristic cannot
+// distinguish a namespace that existed at capture start from one created in
+// the same instant as the first flow). Namespaces sharing a LATER first-seen
+// (strictly after capture start) are ALL reported, sorted.
+func TestFirstSeenNamespaces_CaptureStartEquality(t *testing.T) {
+	t0 := nsawTime
+	mid := t0.Add(5 * time.Minute)
+	later := t0.Add(10 * time.Minute)
+
+	t.Run("equal_to_capture_start_neither_reported", func(t *testing.T) {
+		m := map[string]time.Time{}
+		noteFirstSeen(m, nsawFlow(t0, "default", "production"))
+		assert.Nil(t, computeNewNamespaces(m),
+			"namespaces first-seen exactly at capture start must NOT be reported")
+	})
+
+	t.Run("equal_later_first_seen_both_reported_sorted", func(t *testing.T) {
+		m := map[string]time.Time{}
+		noteFirstSeen(m, nsawFlow(t0, "default", "production"))
+		noteFirstSeen(m, nsawFlow(mid, "alpha", "beta"))
+		noteFirstSeen(m, nsawFlow(later, "latecomer", "x"))
+
+		got := computeNewNamespaces(m)
+		assert.Equal(t, []string{"alpha", "beta", "latecomer", "x"}, got,
+			"alpha/beta share a mid-capture first-seen strictly after capture start — both reported, sorted")
+	})
+}
+
+// TestFirstSeenNamespaces_SortedDeterministic verifies the ordering edge:
+// recording namespaces in non-alphabetical arrival order still yields a
+// lexicographically sorted report, and PrintNewNamespacesSummary output is
+// byte-identical across calls with differently-ordered copies of the same set
+// (deterministic output regardless of map iteration / flow arrival order).
+func TestFirstSeenNamespaces_SortedDeterministic(t *testing.T) {
+	t0 := nsawTime
+	later := t0.Add(10 * time.Minute)
+
+	t.Run("arrival_order_does_not_affect_sorting", func(t *testing.T) {
+		m := map[string]time.Time{}
+		noteFirstSeen(m, nsawFlow(t0, "default", "production"))
+		noteFirstSeen(m, nsawFlow(later, "zeta", ""))
+		noteFirstSeen(m, nsawFlow(later.Add(time.Minute), "alpha", ""))
+
+		assert.Equal(t, []string{"alpha", "zeta"}, computeNewNamespaces(m))
+	})
+
+	t.Run("print_output_byte_identical_across_input_orderings", func(t *testing.T) {
+		var buf1, buf2 bytes.Buffer
+		PrintNewNamespacesSummary(&buf1, []string{"zeta", "alpha"}, NewNamespacesFromReplay)
+		PrintNewNamespacesSummary(&buf2, []string{"alpha", "zeta"}, NewNamespacesFromReplay)
+
+		assert.Equal(t, buf1.String(), buf2.String(), "differently-ordered copies of the same set must print identically")
+	})
+}
+
+// TestFirstSeenNamespaces_EmptyNamespaceName verifies the empty-name guard:
+// endpoints carrying namespace "" (or absent endpoints) record nothing under
+// the empty key — "" is never treated as a reportable namespace.
+func TestFirstSeenNamespaces_EmptyNamespaceName(t *testing.T) {
+	later := nsawTime.Add(10 * time.Minute)
+
+	m := map[string]time.Time{}
+	// Explicit endpoints present but with empty namespace strings.
+	f1 := nsawFlow(nsawTime, "", "")
+	f1.Source = &flowpb.Endpoint{}
+	f1.Destination = &flowpb.Endpoint{}
+	noteFirstSeen(m, f1)
+	// Nil endpoints entirely.
+	noteFirstSeen(m, &flowpb.Flow{Time: timestamppb.New(later)})
+	// Mixed: one empty-name endpoint alongside a real one.
+	f3 := nsawFlow(later, "default", "")
+	noteFirstSeen(m, f3)
+
+	_, hasEmpty := m[""]
+	assert.False(t, hasEmpty, "empty-string namespace key must never be recorded")
+	assert.Equal(t, map[string]time.Time{"default": later}, m,
+		"only the real namespace (min of its observations) is recorded")
+}
