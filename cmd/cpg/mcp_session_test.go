@@ -155,6 +155,14 @@ func TestMCPSessionUnknownIDReturnsIsError(t *testing.T) {
 //     (Phase 16 registered zero tools and built none), so it is the first
 //     test that can catch a regression where the pipeline's human-readable
 //     summary leaks onto the real os.Stdout instead of os.Stderr.
+//
+//     Phase 26 provenance (NSAW-01): the new-namespace summary block added
+//     in Phase 26 rides the same cfg.Stdout = mcpModeStdout() = os.Stderr
+//     seam — MCP mode leaves PipelineConfig.NewNamespaces nil, so the block
+//     is either empty (no namespaces) or written to stderr — and is therefore
+//     structurally covered by the final assert.Empty(leaked) invariant below.
+//     This test passes UNCHANGED for Phase 26; its assertions must never be
+//     weakened or rewired (PATTERNS extension rule).
 func TestMCPSessionLifecycleWiringAndStdoutPurity(t *testing.T) {
 	r, w, err := os.Pipe()
 	require.NoError(t, err)

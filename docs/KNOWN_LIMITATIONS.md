@@ -115,9 +115,9 @@ cpg cannot bootstrap visibility itself. Without these prerequisites, `--l7` has 
 
 **Root cause:** cpg is a batch tool. Each run reads the observation window's flows and produces rules for the workloads seen during that window.
 
-**Workaround:** Wrap cpg in a cron job or watcher that re-runs on namespace creation events. Long-running streaming mode is not supported.
+**Workaround:** None needed for awareness — `cpg generate` now reports the blind spot itself. It watches namespace creation in read-only fashion (only the `namespaces/list` and `namespaces/watch` verbs) and, at end of run, lists namespaces that appeared after run start under `New namespaces detected during this run:` with a re-run hint (`namespace <name> appeared after run start — re-run to cover it`). The watch is fail-safe and advisory: if it is unavailable (e.g. an RBAC-restricted service account, an unreachable kubeconfig, or watch expiry) cpg logs exactly one warning and proceeds normally — generation is never blocked or degraded. `cpg replay` is offline by definition and instead reports namespaces first observed after capture start via a flow-timestamp heuristic on the captured flows. The report surfaces the blind spot; it does not close it — re-running cpg is still required to cover the new namespace, and long-running streaming/daemon mode remains out of scope.
 
-**Tracking:** No issue. By-design batch tool.
+**Tracking:** No issue for the awareness report (v1.7, Phase 26: `pkg/k8s` namespace watcher wired into `cpg generate`; heuristic fallback for `cpg replay`). By-design batch tool: covering a newly created namespace still requires a re-run.
 
 ---
 
