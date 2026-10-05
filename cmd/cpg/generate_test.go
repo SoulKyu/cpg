@@ -2,6 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,11 +14,31 @@ import (
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
+	clienttesting "k8s.io/client-go/testing"
 )
+
+// countCmdWarnings returns the number of warn-level entries in the observed log
+// (cmd/cpg counterpart of pkg/k8s's countWarnings helper).
+func countCmdWarnings(logs *observer.ObservedLogs) int {
+	return len(logs.FilterLevelExact(zapcore.WarnLevel).All())
+}
+
+// containsCmdMessage returns true if any logged entry's message contains substr.
+func containsCmdMessage(logs *observer.ObservedLogs, substr string) bool {
+	for _, e := range logs.All() {
+		if strings.Contains(e.Message, substr) {
+			return true
+		}
+	}
+	return false
+}
 
 func TestGenerateFlags_Validate(t *testing.T) {
 	tests := []struct {
@@ -345,4 +369,82 @@ func TestReplayCmd_RejectsNoL7PreflightFlag(t *testing.T) {
 	err := cmd.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no-l7-preflight")
+}
+
+// nsListForbiddenReactor produces a 403 Forbidden for a namespaces list
+// (list actions carry no single object name, hence not reusing forbiddenReactor).
+func nsListForbiddenReactor() clienttesting.ReactionFunc {
+	return func(action clienttesting.Action) (bool, runtime.Object, error) {
+		gr := schema.GroupResource{Resource: "namespaces"}
+		return true, nil, apierrors.NewForbidden(gr, "", errors.New("user lacks namespaces/list permission"))
+	}
+}
+
+// TestMaybeStartNamespaceWatcher covers the NSAW-01 launcher seam:
+//   - nil kubeconfig + LoadKubeConfig failure → nil watcher, exactly one
+//     "namespace watch skipped" warning (Pitfall 6: never blocking);
+//   - a fake clientset via the l7ClientFactory injection seam → a non-nil
+//     live watcher (List on the empty fake succeeds; watch inert);
+//   - a client whose List is 403-forbidden → still non-nil (inert) with one
+//     warn — the pkg/k8s fail-safe contract is visible at the cmd layer.
+func TestMaybeStartNamespaceWatcher(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("1_nil_kubeconfig_load_fails_returns_nil_one_warn", func(t *testing.T) {
+		// Point the clientcmd loading rules at a nonexistent file; a temp HOME
+		// keeps the default $HOME/.kube/config fallback out of the picture.
+		t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "does-not-exist.yaml"))
+		t.Setenv("HOME", t.TempDir())
+		logger, logs := observedLoggerForTest()
+
+		w := maybeStartNamespaceWatcher(ctx, nil, logger)
+
+		require.Nil(t, w, "no kubeconfig ⇒ no watcher; generation must proceed regardless")
+		if got := countCmdWarnings(logs); got != 1 {
+			t.Errorf("warning count: got %d, want 1; entries: %+v", got, logs.All())
+		}
+		if !containsCmdMessage(logs, "namespace watch skipped") {
+			t.Errorf("expected a warning containing %q; entries: %+v", "namespace watch skipped", logs.All())
+		}
+	})
+
+	t.Run("2_fake_client_via_l7ClientFactory_returns_live_watcher", func(t *testing.T) {
+		logger, logs := observedLoggerForTest()
+		withFakeL7ClientFactory(t, fake.NewSimpleClientset())
+
+		w := maybeStartNamespaceWatcher(ctx, &rest.Config{}, logger)
+
+		require.NotNil(t, w, "empty fake cluster: List succeeds ⇒ live watcher started via the injection seam")
+		if got := countCmdWarnings(logs); got != 0 {
+			t.Errorf("healthy start must not warn; got %d warnings; entries: %+v", got, logs.All())
+		}
+		assert.Nil(t, w.NewNamespaces(), "no namespaces created yet ⇒ empty report")
+	})
+
+	t.Run("3_list_forbidden_returns_inert_nonnil_watcher_one_warn", func(t *testing.T) {
+		logger, logs := observedLoggerForTest()
+		forbidden := fake.NewSimpleClientset()
+		forbidden.PrependReactor("list", "namespaces", nsListForbiddenReactor())
+		withFakeL7ClientFactory(t, forbidden)
+
+		w := maybeStartNamespaceWatcher(ctx, &rest.Config{}, logger)
+
+		require.NotNil(t, w, "fail-safe: RBAC denial yields an inert watcher, never nil, never an error")
+		if got := countCmdWarnings(logs); got != 1 {
+			t.Errorf("warning count: got %d, want 1; entries: %+v", got, logs.All())
+		}
+		assert.Nil(t, w.NewNamespaces(), "inert watcher reports no namespaces")
+	})
+}
+
+// TestReplayNeverStartsNamespaceWatcher is the source-level guard for the
+// caller contract: cpg replay is offline by definition and must never start a
+// namespace watcher (compile-free companion to the grep gate in the plan).
+func TestReplayNeverStartsNamespaceWatcher(t *testing.T) {
+	src, err := os.ReadFile("replay.go")
+	require.NoError(t, err)
+	assert.NotContains(t, string(src), "maybeStartNamespaceWatcher",
+		"cpg replay must never reference the namespace watcher launcher")
+	assert.NotContains(t, string(src), "StartNamespaceWatcher",
+		"cpg replay must never reference the namespace watcher")
 }

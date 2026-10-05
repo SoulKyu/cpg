@@ -73,8 +73,7 @@ func maybeRunL7Preflight(ctx context.Context, kubeConfig *rest.Config, l7Enabled
 //
 // Caller contract: invoke from cpg generate ONLY. cpg replay is offline by
 // definition and must never call this function.
-func maybeRunVersionPreflight(ctx context.Context, kubeConfig *rest.Config, logger *zap.Logger) {
-	if kubeConfig == nil {
+func maybeRunVersionPreflight(ctx context.Context, kubeConfig *rest.Config, logger *zap.Logger) {	if kubeConfig == nil {
 		var err error
 		kubeConfig, err = k8s.LoadKubeConfig()
 		if err != nil {
@@ -93,6 +92,13 @@ func maybeRunVersionPreflight(ctx context.Context, kubeConfig *rest.Config, logg
 	detectCtx, cancel := context.WithTimeout(ctx, versionPreflightTimeout)
 	defer cancel()
 	k8s.DetectCiliumVersion(detectCtx, client, logger)
+}
+
+// maybeStartNamespaceWatcher RED compile stub — always nil; the real NSAW-01
+// launcher (nil-kubeconfig skip warning, l7ClientFactory seam,
+// k8s.StartNamespaceWatcher) lands with the GREEN commit.
+func maybeStartNamespaceWatcher(_ context.Context, _ *rest.Config, _ *zap.Logger) *k8s.NamespaceWatcher {
+	return nil
 }
 
 func newGenerateCmd() *cobra.Command {

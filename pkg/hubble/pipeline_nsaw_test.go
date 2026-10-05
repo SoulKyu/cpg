@@ -102,3 +102,72 @@ func TestSummaryByteIdentity(t *testing.T) {
 	assert.Empty(t, computeNewNamespaces(m),
 		"small.jsonl namespaces are all first-seen at capture start ⇒ empty report")
 }
+
+// fakeNewNamespacesSource is a NewNamespacesSource returning a fixed list —
+// the test double for pkg/k8s.NamespaceWatcher (structural typing: no import
+// of pkg/k8s needed here).
+type fakeNewNamespacesSource struct{ names []string }
+
+func (f fakeNewNamespacesSource) NewNamespaces() []string { return f.names }
+
+// TestPipelineNewNamespacesWatch is the NSAW-01 watcher-precedence proof: when
+// PipelineConfig.NewNamespaces is set (cpg generate started a watcher), the
+// watcher's list is AUTHORITATIVE for the run and the report uses the WATCH
+// phrasing ("appeared after run start") — never the replay phrasing.
+func TestPipelineNewNamespacesWatch(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger, _ := newObservedLogger()
+
+	src, err := flowsource.NewFileSource("../../testdata/flows/small.jsonl", logger)
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	cfg := PipelineConfig{
+		FlushInterval: 10 * time.Millisecond,
+		OutputDir:     tmpDir,
+		Logger:        logger,
+		Stdout:        &buf,
+		NewNamespaces: fakeNewNamespacesSource{names: []string{"tenant-b"}},
+	}
+
+	err = RunPipelineWithSource(context.Background(), cfg, src)
+	require.NoError(t, err)
+
+	out := buf.String()
+	assert.Contains(t, out, "New namespaces detected during this run:")
+	assert.Contains(t, out, "  - namespace tenant-b appeared after run start — re-run to cover it",
+		"watcher-source run must use the watch phrasing")
+	assert.NotContains(t, out, "first observed after capture start",
+		"watcher-source run must NOT use the replay phrasing (watcher precedence)")
+}
+
+// TestPipelineNewNamespacesHeuristicFallback proves the precedence branch did
+// not perturb 26-01's fallback: with cfg.NewNamespaces nil (replay, MCP mode,
+// unreachable kubeconfig), the flow-timestamp heuristic stays in effect —
+// small.jsonl (all namespaces first-seen at capture start) yields zero NSAW
+// bytes (byte-identity with the v1.6 summary).
+func TestPipelineNewNamespacesHeuristicFallback(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger, _ := newObservedLogger()
+
+	src, err := flowsource.NewFileSource("../../testdata/flows/small.jsonl", logger)
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	cfg := PipelineConfig{
+		FlushInterval: 10 * time.Millisecond,
+		OutputDir:     tmpDir,
+		Logger:        logger,
+		Stdout:        &buf,
+		// NewNamespaces deliberately nil — heuristic fallback.
+	}
+
+	err = RunPipelineWithSource(context.Background(), cfg, src)
+	require.NoError(t, err)
+
+	out := buf.String()
+	assert.NotContains(t, out, "New namespaces detected during this run:",
+		"nil NewNamespaces ⇒ heuristic fallback; small.jsonl has zero new namespaces")
+	assert.NotContains(t, out, "re-run to cover it",
+		"nil NewNamespaces ⇒ zero NSAW bytes (byte-identity preserved)")
+}

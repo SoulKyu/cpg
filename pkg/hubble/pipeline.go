@@ -39,6 +39,16 @@ func shouldExitForInfraDrops(failOnInfraDrops bool, infraDropTotal uint64) bool 
 	return failOnInfraDrops && infraDropTotal > 0
 }
 
+// NewNamespacesSource supplies the namespaces created after run start
+// (NSAW-01). pkg/k8s.NamespaceWatcher implements it structurally — pkg/hubble
+// deliberately does not import pkg/k8s. Nil disables watch-based reporting:
+// cpg replay and MCP mode leave it nil and the pipeline falls back to the
+// NSAW-02 flow-timestamp heuristic. (TDD RED: the field exists for compile;
+// the watcher-precedence branch lands with GREEN.)
+type NewNamespacesSource interface {
+	NewNamespaces() []string
+}
+
 // PipelineConfig holds all configuration for the streaming pipeline.
 type PipelineConfig struct {
 	Server        string
@@ -116,6 +126,14 @@ type PipelineConfig struct {
 	// cluster-health.json alone does not carry PoliciesWritten/Skipped/Failed,
 	// LostEvents, or L7 counts.
 	OnFinal func(SessionStats)
+
+	// NewNamespaces, when non-nil, is the authoritative source of namespaces
+	// created after run start (NSAW-01 live watcher; cpg generate only).
+	// Nil (replay, MCP mode — optional-field style like ClusterPolicies and
+	// CollapseL7Paths) leaves the feature inert and falls back to the NSAW-02
+	// flow-timestamp heuristic. The watcher-precedence branch that reads this
+	// field lands with the 26-02 GREEN commit.
+	NewNamespaces NewNamespacesSource
 }
 
 // SessionStats tracks pipeline metrics for the session summary.
