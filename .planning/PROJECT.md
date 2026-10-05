@@ -77,14 +77,13 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 - ✓ SEC-01 evolution: structural readonly proof byte-identical + WebSocket/fallback exec tripwire extension; README readonly-by-default rewording — v1.6 Phase 23
 - ✓ Cilium compatibility: declared support matrix + runtime version detection with warn-and-proceed and feature gating — v1.6 Phase 21
 - ✓ cpg-dedicated repo-local skills/agents (`cpg-triage`, `cpg-audit-onboard`, `cpg-policy-review`, `cpg-health-report`, `cpg-mcp-smoke`; `cpg-operator` agent) — v1.6 Phase 24
+- ✓ `--l7-collapse-paths` HTTP path template inference (anchored, variance-gated generalization: numeric/hex/UUID → character classes; literal segments stay literal) + `collapse_l7_paths` MCP session arg — L7GEN-01..03 — v1.7 Phase 25
+- ✓ `--min-flows-per-l7-rule` confidence gate (below threshold the literal rules are kept; never silent generalization) — L7GEN-04 — v1.7 Phase 25
+- ✓ Namespace creation awareness in session summary: fail-safe K8s watcher on `generate` (warn-once, readonly verbs, never blocks generation) + replay first-flow-timestamp heuristic; zero new namespaces ⇒ byte-identical output — NSAW-01..02 — v1.7 Phase 26
 
 ### Active
 
-<!-- v1.7 scope. Detailed REQ-IDs in REQUIREMENTS.md. -->
-
-- [ ] `--l7-collapse-paths` HTTP path template inference — L7GEN-01..03 (HTTP-FUT-01)
-- [ ] `--min-flows-per-l7-rule` confidence gate — L7GEN-04 (L7-FUT-02)
-- [ ] Namespace creation awareness in session summary — NSAW-01..02
+<!-- Empty at v1.7 milestone close. -->
 
 ### Planned
 
@@ -209,4 +208,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-22 after Phase 20 (`--include-audit` Verdict Ingestion) completion.*
+*Last updated: 2026-10-05 after Phase 26 (Namespace Creation Awareness) completion — v1.7 phases complete.*

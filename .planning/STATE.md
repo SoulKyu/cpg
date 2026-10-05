@@ -20,10 +20,10 @@ milestone_name: L7 Path Generalization & Namespace Awareness
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-07-22)
+See: .planning/PROJECT.md (updated 2026-10-05)
 
 **Core value:** Automatically generate correct CiliumNetworkPolicies from observed Hubble denials so that SREs spend zero time manually writing network policies in default-deny environments.
-**Current focus:** Phase 26 — Namespace Creation Awareness
+**Current focus:** v1.7 milestone complete — ready for milestone close
 
 ## Current Position
 
