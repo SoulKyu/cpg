@@ -283,16 +283,16 @@ func (c *Fake) PrependWatchReactor(resource string, reaction WatchReactionFunc)
 | A6 | MCP `start_session` is live-only (no replay source), so NSAW-02 has no MCP surface | Architecture | None — verified from `pkg/session/manager.go:285-340` (resolveSetup only resolves live server/port-forward); reporting block is inert without a watcher/first-seen data anyway |
 | A7 | Go toolchain absence in *this research environment* does not reflect the executor environment | Environment Availability | Medium — if the executor environment also lacks Go, all `go test` validation steps fail until Go ≥ 1.25.1 is installed |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Exact wording/placement of the new-namespace block relative to the cluster-health block**
    - What we know: must print to the same `stdout` seam; must be absent (zero bytes) when the list is empty.
    - What's unclear: before vs after `PrintClusterHealthSummary`, and whether `cpg replay` uses an identical block header.
-   - Recommendation: print **after** the cluster-health block (it is advice about the *next* run, so it reads naturally last); one shared print function for both paths with a `source` line ("namespace X appeared after run start — re-run to cover it" / "namespace X first observed after capture start — re-run to cover it"). Planner may pin exact copy.
+   - RESOLVED: printed AFTER `PrintClusterHealthSummary`; one shared print function (`PrintNewNamespacesSummary`) for both paths with a `NewNamespaceSource` hint selecting the copy — watch: `  - namespace <name> appeared after run start — re-run to cover it`, replay: `  - namespace <name> first observed after capture start — re-run to cover it`, header `New namespaces detected during this run:`. Pinned in plan 26-01 objective + `<interfaces>` (also encoded in 26-01 must_haves).
 
 2. **Should NSAW-01 apply in MCP `start_session` mode?**
    - What we know: MCP sessions resolve a kubeconfig (port-forward, cluster_dedup), so a watch is *possible*; requirement text scopes NSAW-01 to `cpg generate`.
-   - Recommendation: keep it CLI-generate-only this phase (no watcher wired in `pkg/session`); the summary block is inert without one. Zero MCP-surface change, zero stdout-purity risk. Revisit if requested.
+   - RESOLVED: CLI-generate-only this phase — no watcher in `pkg/session`; MCP `start_session` leaves `PipelineConfig.NewNamespaces` nil (heuristic fallback only, inert for its report semantics; rides mcpModeStdout). Zero MCP-surface change, zero stdout-purity risk. Pinned in plan 26-02 objective (also encoded in 26-02 must_haves; enforceable via the replay/session grep guards in 26-02 acceptance criteria).
 
 ## Environment Availability
 
