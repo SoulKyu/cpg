@@ -3,17 +3,17 @@ gsd_state_version: "1.0"
 milestone: v1.7
 current_phase: 26
 current_phase_name: Namespace Creation Awareness
-status: executing
-stopped_at: Completed 26-01-PLAN.md
-last_updated: "2026-10-05T07:43:51.896Z"
+status: verifying
+stopped_at: Completed 26-02-PLAN.md
+last_updated: "2026-10-05T08:49:18.140Z"
 last_activity: 2026-10-05
 last_activity_desc: Phase 26 execution started
-state_head: bac5b52e706ab29afdb7ef78a9611e532170a0f5
+state_head: e89ffc80b537517a1b485ed2f31f4c09fb4aff28
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 4
-  completed_plans: 3
+  completed_plans: 4
 milestone_name: L7 Path Generalization & Namespace Awareness
 ---
 
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-22)
 
 Phase: 26 (Namespace Creation Awareness) — EXECUTING
 Plan: 2 of 2
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-10-05 — Phase 26 execution started
 
 ## Performance Metrics
@@ -69,6 +69,7 @@ Last activity: 2026-10-05 — Phase 26 execution started
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | Phase 26 P01 | 9 min | 2 tasks | 6 files |
+| Phase 26 P02 | 95min | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -104,6 +105,7 @@ Decisions logged in PROJECT.md Key Decisions table.
 - [Phase 23]: resolveCurrentIDFn defaults to a listCEFn-based re-list-and-filter by UID, avoiding a new Get-by-name client path
 - [Phase 23]: rootCtx.Done()-triggered Shutdown goroutine spawned from Open, not NewManager, since nothing exists to revert before Open runs
 - [Phase 26]: [26-01]: NSAW-02 capture start = min observed Flow.Time (A4); both endpoint namespaces recorded (A5); report rides cfg.Stdout seam after PrintClusterHealthSummary
+- [Phase 26]: NSAW-01: watcher list authoritative with watch phrasing; no reconnect ever; CLI-generate-only (MCP leaves NewNamespaces nil); no new CLI flag
 
 ### Pending Todos
 
@@ -138,8 +140,8 @@ Items acknowledged and deferred at milestone close on 2026-07-20 (v1.4); re-ackn
 
 **Resume file:** None
 
-Last session: 2026-10-05T07:43:51.853Z
-Stopped at: Completed 26-01-PLAN.md
+Last session: 2026-10-05T08:49:18.093Z
+Stopped at: Completed 26-02-PLAN.md
 Resume: `/gsd-plan-phase 20` — plan `--include-audit` Verdict Ingestion (AUD-01)
 
 ## Operator Next Steps
