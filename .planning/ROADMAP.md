@@ -100,7 +100,7 @@ Full details: [milestones/v1.6-ROADMAP.md](milestones/v1.6-ROADMAP.md)
 <summary>🔨 v1.7 L7 Path Generalization & Namespace Awareness (Phases 25-26) — IN PROGRESS</summary>
 
 - [x] Phase 25: L7 Path Collapse Engine (L7GEN-01..04) (completed 2026-10-04)
-- [ ] Phase 26: Namespace Creation Awareness (NSAW-01..02)
+- [x] Phase 26: Namespace Creation Awareness (NSAW-01..02) (completed 2026-10-05)
 
 </details>
 
@@ -260,7 +260,7 @@ Archived per-phase details for shipped milestones live in [milestones/](mileston
 3. `cpg replay` reports namespaces whose first observed flow arrives after capture start (flow-timestamp heuristic, no K8s watch needed)
 4. New-namespace reporting rides the existing v1.3 session-summary mechanism (stdout in CLI mode; no stdout purity regression in MCP mode)
 
-**Plans**: 2/2 plans executed in 2 waves
+**Plans**: 2/2 plans complete in 2 waves
 
 **Wave 1**
 
@@ -299,6 +299,6 @@ Archived per-phase details for shipped milestones live in [milestones/](mileston
 | 23. Managed Audit Window + SEC-01 Evolution | v1.6 | 4/4 | Complete | 2026-07-22 |
 | 24. cpg-Dedicated Skills & Agent Tooling | v1.6 | 2/2 | Complete | 2026-07-22 |
 | 25. L7 Path Collapse Engine | v1.7 | 2/2 | Complete | 2026-10-04 |
-| 26. Namespace Creation Awareness | v1.7 | 2/2 | In Progress|  |
+| 26. Namespace Creation Awareness | v1.7 | 2/2 | Complete    | 2026-10-05 |
 
 **Milestone status:** v1.0 ✅ shipped · v1.1 ✅ shipped · v1.2 ✅ shipped · v1.3 ✅ shipped · v1.4 ✅ shipped · v1.5 ✅ shipped · v1.6 ✅ shipped · v1.7 📋 in progress
