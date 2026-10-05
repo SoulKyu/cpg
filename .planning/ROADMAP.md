@@ -260,6 +260,16 @@ Archived per-phase details for shipped milestones live in [milestones/](mileston
 3. `cpg replay` reports namespaces whose first observed flow arrives after capture start (flow-timestamp heuristic, no K8s watch needed)
 4. New-namespace reporting rides the existing v1.3 session-summary mechanism (stdout in CLI mode; no stdout purity regression in MCP mode)
 
+**Plans**: 2 plans in 2 waves
+
+**Wave 1**
+
+- [ ] 26-01-PLAN.md — NSAW-02 replay heuristic end-to-end (aggregator first-seen map, pure helpers, no-op-when-empty summary block on the cfg.Stdout seam, staggered fixture, byte-identity proof)
+
+**Wave 2** *(blocked on Wave 1 — pkg/hubble/pipeline.go overlap)*
+
+- [ ] 26-02-PLAN.md — NSAW-01 live namespace watch (pkg/k8s fail-safe warn-once watcher, generate wiring via PipelineConfig.NewNamespaces precedence, MCP purity proof, KNOWN_LIMITATIONS §9 rewrite)
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -288,8 +298,7 @@ Archived per-phase details for shipped milestones live in [milestones/](mileston
 | 22. Bootstrap Artifact Generation | v1.6 | 3/3 | Complete | 2026-07-22 |
 | 23. Managed Audit Window + SEC-01 Evolution | v1.6 | 4/4 | Complete | 2026-07-22 |
 | 24. cpg-Dedicated Skills & Agent Tooling | v1.6 | 2/2 | Complete | 2026-07-22 |
-| 25. L7 Path Collapse Engine | v1.7 | 2/2 | Complete    | 2026-10-04 |
-| 25. L7 Path Collapse Engine | v1.7 | 0/TBD | Not started | - |
-| 26. Namespace Creation Awareness | v1.7 | 0/TBD | Not started | - |
+| 25. L7 Path Collapse Engine | v1.7 | 2/2 | Complete | 2026-10-04 |
+| 26. Namespace Creation Awareness | v1.7 | 0/2 | Planned | - |
 
 **Milestone status:** v1.0 ✅ shipped · v1.1 ✅ shipped · v1.2 ✅ shipped · v1.3 ✅ shipped · v1.4 ✅ shipped · v1.5 ✅ shipped · v1.6 ✅ shipped · v1.7 📋 in progress
