@@ -15,7 +15,7 @@
 ### NSAW — Namespace Awareness
 
 - [ ] **NSAW-01**: During `cpg generate`, cpg watches namespace-creation events and lists at end of run every namespace created after run start ("namespace X appeared after run start — re-run to cover it")
-- [ ] **NSAW-02**: On `replay`, cpg reports namespaces whose first observed flow arrives after capture start (flow-timestamp heuristic, no K8s watch)
+- [x] **NSAW-02**: On `replay`, cpg reports namespaces whose first observed flow arrives after capture start (flow-timestamp heuristic, no K8s watch)
 
 ## Future Requirements
 
