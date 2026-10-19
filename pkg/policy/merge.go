@@ -151,12 +151,12 @@ func matchEndpoints(a, b []api.EndpointSelector) bool {
 		var aLabels, bLabels map[string]string
 		var aExprs, bExprs []slim_metav1.LabelSelectorRequirement
 		if a[i].LabelSelector != nil {
-			aLabels = a[i].LabelSelector.MatchLabels
-			aExprs = a[i].LabelSelector.MatchExpressions
+			aLabels = a[i].MatchLabels
+			aExprs = a[i].MatchExpressions
 		}
 		if b[i].LabelSelector != nil {
-			bLabels = b[i].LabelSelector.MatchLabels
-			bExprs = b[i].LabelSelector.MatchExpressions
+			bLabels = b[i].MatchLabels
+			bExprs = b[i].MatchExpressions
 		}
 		if !matchLabelsNormalized(aLabels, bLabels) || !matchExpressionsNormalized(aExprs, bExprs) {
 			return false

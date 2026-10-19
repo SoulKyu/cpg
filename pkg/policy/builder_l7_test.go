@@ -463,7 +463,7 @@ func TestBuildPolicy_L7Enabled_DNS_MultipleQueries(t *testing.T) {
 			if ep.LabelSelector == nil {
 				continue
 			}
-			for _, v := range ep.LabelSelector.MatchLabels {
+			for _, v := range ep.MatchLabels {
 				if v == "kube-system" {
 					companions++
 				}
