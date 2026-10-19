@@ -423,7 +423,8 @@ func TestReplay_L7DNSGeneration(t *testing.T) {
 	assert.Contains(t, yaml, "dns:", "dns sub-block expected")
 
 	// DNS-02: kube-dns companion rule with both UDP+TCP/53.
-	assert.Contains(t, yaml, "k8s-app: kube-dns", "kube-dns companion selector expected")
+	// DNS-FUT-02: replay is offline, so the companion uses the fallback selector.
+	assert.Regexp(t, `(?s)key: k8s-app\s+operator: In\s+values:\s+- kube-dns\s+- coredns`, yaml, "fallback DNS companion selector expected")
 	assert.Contains(t, yaml, "io.kubernetes.pod.namespace: kube-system", "kube-system namespace selector expected")
 	// Both UDP and TCP must be present (companion must allow both).
 	assert.Regexp(t, `(?s)protocol:\s+UDP.*protocol:\s+TCP`, yaml, "companion must allow UDP and TCP")
@@ -504,7 +505,7 @@ func TestReplay_L7DNSDisabled_FallbackByteStable(t *testing.T) {
 		yaml := string(a)
 		// DNS-04 fallback must be CIDR-based v1.1 shape — no L7 artifacts.
 		assert.NotContains(t, yaml, "toFQDNs", "%s must not contain toFQDNs without --l7 (DNS-04)", rel)
-		assert.NotContains(t, yaml, "k8s-app: kube-dns", "%s must not contain kube-dns companion without --l7 (DNS-04)", rel)
+		assert.NotContains(t, yaml, "kube-system", "%s must not contain kube-dns companion without --l7 (DNS-04)", rel)
 		assert.NotContains(t, yaml, "matchName", "%s must not contain dns matchName without --l7 (DNS-04)", rel)
 		assert.NotContains(t, yaml, "matchPattern", "matchPattern must never appear (DNS-03)")
 		// CIDR fallback path is preserved.

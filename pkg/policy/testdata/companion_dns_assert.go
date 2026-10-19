@@ -7,14 +7,16 @@
 package testdata
 
 import (
+	"slices"
 	"testing"
 
 	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
+	slim_metav1 "github.com/cilium/cilium/pkg/k8s/slim/k8s/apis/meta/v1"
 	"github.com/cilium/cilium/pkg/policy/api"
 )
 
 // AssertHasKubeDNSCompanion fails the test when the supplied CNP does not
-// carry a kube-dns companion egress rule (selector k8s-app=kube-dns +
+// carry a DNS companion egress rule (selector k8s-app in (kube-dns, coredns) +
 // io.kubernetes.pod.namespace=kube-system, ports 53/UDP + 53/TCP, with at
 // least one DNS L7 matchName entry). DNS-02 invariant.
 //
@@ -53,22 +55,32 @@ func AssertHasKubeDNSCompanion(t *testing.T, cnp *ciliumv2.CiliumNetworkPolicy) 
 			return
 		}
 	}
-	t.Errorf("kube-dns companion egress rule missing or incomplete (need k8s-app=kube-dns + io.kubernetes.pod.namespace=kube-system + 53/UDP + 53/TCP + DNS rule); got egress=%+v", cnp.Spec.Egress)
+	t.Errorf("kube-dns companion egress rule missing or incomplete (need k8s-app in (kube-dns, coredns) + io.kubernetes.pod.namespace=kube-system + 53/UDP + 53/TCP + DNS rule); got egress=%+v", cnp.Spec.Egress)
 }
 
+// egressSelectsKubeDNS accepts the fallback selector (k8s-app In
+// [kube-dns, coredns]) and the k8s-app=kube-dns / k8s-app=coredns
+// matchLabels forms, all pinned to kube-system.
 func egressSelectsKubeDNS(eg api.EgressRule) bool {
 	for _, ep := range eg.ToEndpoints {
-		if ep.LabelSelector == nil {
+		ls := ep.LabelSelector
+		if ls == nil {
 			continue
 		}
 		hasApp, hasNS := false, false
-		for k, v := range ep.LabelSelector.MatchLabels {
+		for k, v := range ls.MatchLabels {
 			bare := stripLabelSourcePrefix(k)
-			if bare == "k8s-app" && v == "kube-dns" {
+			if bare == "k8s-app" && isDNSAppValue(v) {
 				hasApp = true
 			}
 			if bare == "io.kubernetes.pod.namespace" && v == "kube-system" {
 				hasNS = true
+			}
+		}
+		for _, req := range ls.MatchExpressions {
+			if stripLabelSourcePrefix(req.Key) == "k8s-app" && req.Operator == slim_metav1.LabelSelectorOpIn &&
+				slices.Contains(req.Values, "kube-dns") && slices.Contains(req.Values, "coredns") {
+				hasApp = true
 			}
 		}
 		if hasApp && hasNS {
@@ -77,6 +89,8 @@ func egressSelectsKubeDNS(eg api.EgressRule) bool {
 	}
 	return false
 }
+
+func isDNSAppValue(v string) bool { return v == "kube-dns" || v == "coredns" }
 
 func stripLabelSourcePrefix(k string) string {
 	for _, prefix := range []string{"any:", "k8s:"} {

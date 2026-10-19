@@ -125,6 +125,30 @@ func maybeStartNamespaceWatcher(ctx context.Context, kubeConfig *rest.Config, lo
 	return k8s.StartNamespaceWatcher(ctx, client, logger)
 }
 
+// maybeDetectDNSSelector reads the DNS companion selector from the
+// kube-system DNS Service (DNS-FUT-02). Only --l7 emits the companion, so
+// detection is skipped otherwise. Fail-safe: any failure logs one warning and
+// returns nil, which selects the policy fallback.
+func maybeDetectDNSSelector(ctx context.Context, kubeConfig *rest.Config, l7 bool, logger *zap.Logger) map[string]string {
+	if !l7 {
+		return nil
+	}
+	if kubeConfig == nil {
+		var err error
+		kubeConfig, err = k8s.LoadKubeConfig()
+		if err != nil {
+			logger.Warn("dns companion selector: kubeconfig not available, falling back to k8s-app in (kube-dns, coredns)", zap.Error(err))
+			return nil
+		}
+	}
+	client, err := l7ClientFactory(kubeConfig)
+	if err != nil {
+		logger.Warn("dns companion selector: failed to construct kubernetes client, falling back to k8s-app in (kube-dns, coredns)", zap.Error(err))
+		return nil
+	}
+	return k8s.DetectDNSSelector(ctx, client, logger)
+}
+
 func newGenerateCmd() *cobra.Command {
 	bin := "cpg"
 	if isKubectlPlugin() {
@@ -305,6 +329,8 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 	// authoritative new-namespace source for the run's end-of-run report.
 	nsWatcher := maybeStartNamespaceWatcher(ctx, kubeConfig, logger)
 
+	dnsSelector := maybeDetectDNSSelector(ctx, kubeConfig, f.l7, logger)
+
 	return hubble.RunPipeline(ctx, hubble.PipelineConfig{
 		Server:          server,
 		TLSEnabled:      f.tlsEnabled,
@@ -336,6 +362,7 @@ func runGenerate(cmd *cobra.Command, _ []string) error {
 
 		CollapseL7Paths:   f.l7CollapsePaths,
 		MinFlowsPerL7Rule: f.minFlowsPerL7Rule,
+		DNSSelector:       dnsSelector,
 
 		IgnoreProtocols:   ignoreProtocols,
 		IgnoreDropReasons: ignoreDropReasons,

@@ -99,6 +99,11 @@ type PipelineConfig struct {
 	// CollapseL7Paths is true.
 	MinFlowsPerL7Rule int
 
+	// DNSSelector is the kube-system DNS Service pod selector used by the
+	// DNS companion rule (pkg/k8s.DetectDNSSelector). Nil selects the
+	// fallback k8s-app In [kube-dns, coredns] (DNS-FUT-02).
+	DNSSelector map[string]string
+
 	// IgnoreProtocols is the lowercase, already-validated set of L4 protocol
 	// names whose flows must be dropped before bucketing (PA5). Caller
 	// (cmd/cpg) is responsible for normalization + allowlist validation.
@@ -223,6 +228,7 @@ func RunPipelineWithSource(ctx context.Context, cfg PipelineConfig, source flows
 	agg.SetIncludeAudit(cfg.IncludeAudit)
 	agg.SetCollapseL7Paths(cfg.CollapseL7Paths)
 	agg.SetMinFlowsPerL7Rule(cfg.MinFlowsPerL7Rule)
+	agg.SetDNSSelector(cfg.DNSSelector)
 	agg.SetIgnoreProtocols(cfg.IgnoreProtocols)
 	agg.SetIgnoreDropReasons(cfg.IgnoreDropReasons)
 	if cfg.EvidenceEnabled {

@@ -605,10 +605,10 @@ func TestManager_Start_ShutdownRacesSetup(t *testing.T) {
 	closeRelease := func() { releaseOnce.Do(func() { close(release) }) }
 	t.Cleanup(closeRelease)
 
-	m.resolveSetupFn = func(_ context.Context, _ StartArgs) (string, func(), map[string]*ciliumv2.CiliumNetworkPolicy, k8s.CompatInfo, error) {
+	m.resolveSetupFn = func(_ context.Context, _ StartArgs) (string, func(), map[string]*ciliumv2.CiliumNetworkPolicy, k8s.CompatInfo, map[string]string, error) {
 		close(entered)
 		<-release
-		return "bypass:1", func() {}, nil, k8s.CompatInfo{}, nil
+		return "bypass:1", func() {}, nil, k8s.CompatInfo{}, nil, nil
 	}
 
 	before, err := filepath.Glob(filepath.Join(os.TempDir(), "cpg-session-*"))
@@ -666,8 +666,8 @@ func TestManager_Start_ShutdownRacesSetup(t *testing.T) {
 func TestManager_Start_SetupFailureRollsBackSlot(t *testing.T) {
 	m := newTestManager(t, &blockingFlowSource{flow: someFlow()})
 
-	m.resolveSetupFn = func(_ context.Context, _ StartArgs) (string, func(), map[string]*ciliumv2.CiliumNetworkPolicy, k8s.CompatInfo, error) {
-		return "", func() {}, nil, k8s.CompatInfo{}, fmt.Errorf("injected setup failure")
+	m.resolveSetupFn = func(_ context.Context, _ StartArgs) (string, func(), map[string]*ciliumv2.CiliumNetworkPolicy, k8s.CompatInfo, map[string]string, error) {
+		return "", func() {}, nil, k8s.CompatInfo{}, nil, fmt.Errorf("injected setup failure")
 	}
 
 	before, err := filepath.Glob(filepath.Join(os.TempDir(), "cpg-session-*"))
@@ -681,8 +681,8 @@ func TestManager_Start_SetupFailureRollsBackSlot(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, after, len(before), "the pre-failure tmpdir must be removed, not orphaned")
 
-	m.resolveSetupFn = func(_ context.Context, _ StartArgs) (string, func(), map[string]*ciliumv2.CiliumNetworkPolicy, k8s.CompatInfo, error) {
-		return "bypass:1", func() {}, nil, k8s.CompatInfo{}, nil
+	m.resolveSetupFn = func(_ context.Context, _ StartArgs) (string, func(), map[string]*ciliumv2.CiliumNetworkPolicy, k8s.CompatInfo, map[string]string, error) {
+		return "bypass:1", func() {}, nil, k8s.CompatInfo{}, nil, nil
 	}
 
 	res, err := m.Start(context.Background(), StartArgs{Server: "bypass:1"})
@@ -918,10 +918,10 @@ func TestManager_Start_ShutdownCancelsSetupCtx(t *testing.T) {
 	m := newTestManager(t, &blockingFlowSource{flow: someFlow()})
 
 	entered := make(chan struct{})
-	m.resolveSetupFn = func(setupCtx context.Context, _ StartArgs) (string, func(), map[string]*ciliumv2.CiliumNetworkPolicy, k8s.CompatInfo, error) {
+	m.resolveSetupFn = func(setupCtx context.Context, _ StartArgs) (string, func(), map[string]*ciliumv2.CiliumNetworkPolicy, k8s.CompatInfo, map[string]string, error) {
 		close(entered)
 		<-setupCtx.Done() // load-bearing: inspects ctx instead of a manual release lever
-		return "", nil, nil, k8s.CompatInfo{}, setupCtx.Err()
+		return "", nil, nil, k8s.CompatInfo{}, nil, setupCtx.Err()
 	}
 
 	before, err := filepath.Glob(filepath.Join(os.TempDir(), "cpg-session-*"))

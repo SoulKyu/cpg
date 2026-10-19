@@ -1,15 +1,18 @@
 package policy
 
 import (
+	"reflect"
 	"testing"
 
 	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
+	slim_metav1 "github.com/cilium/cilium/pkg/k8s/slim/k8s/apis/meta/v1"
 	"github.com/cilium/cilium/pkg/policy/api"
 )
 
 // assertHasKubeDNSCompanion verifies the DNS-02 invariant: every CNP whose
 // generated rules contain toFQDNs ALSO contains a companion egress rule
-// matching kube-dns (k8s-app=kube-dns, io.kubernetes.pod.namespace=kube-system)
+// matching the cluster DNS pods (io.kubernetes.pod.namespace=kube-system +
+// k8s-app in (kube-dns, coredns))
 // allowing UDP+TCP/53 with at least one DNS matchName entry. Used as a shared
 // test helper across this plan and downstream plans (09-02, 09-04).
 func assertHasKubeDNSCompanion(t *testing.T, cnp *ciliumv2.CiliumNetworkPolicy) {
@@ -41,51 +44,14 @@ func assertHasKubeDNSCompanion(t *testing.T, cnp *ciliumv2.CiliumNetworkPolicy) 
 			return
 		}
 	}
-	t.Errorf("kube-dns companion egress rule missing or incomplete (need k8s-app=kube-dns + io.kubernetes.pod.namespace=kube-system + 53/UDP + 53/TCP + DNS rule)")
+	t.Errorf("kube-dns companion egress rule missing or incomplete (need k8s-app in (kube-dns, coredns) + io.kubernetes.pod.namespace=kube-system + 53/UDP + 53/TCP + DNS rule)")
 }
 
 // egressMatchesKubeDNSSelector reports whether the egress rule's ToEndpoints
-// carry the kube-dns selector pair.
+// select the DNS pods via the fallback selector (kube-system +
+// k8s-app in (kube-dns, coredns)) or the legacy k8s-app=kube-dns matchLabels.
 func egressMatchesKubeDNSSelector(eg api.EgressRule) bool {
-	for _, ep := range eg.ToEndpoints {
-		if ep.LabelSelector == nil {
-			continue
-		}
-		ml := ep.LabelSelector.MatchLabels
-		if matchKubeDNSLabels(ml) {
-			return true
-		}
-	}
-	return false
-}
-
-// matchKubeDNSLabels checks both plain and any:-prefixed forms of the kube-dns
-// labels (Cilium adds "any:" or "k8s:" source prefix during YAML roundtrip).
-func matchKubeDNSLabels(ml map[string]string) bool {
-	hasApp := false
-	hasNS := false
-	for k, v := range ml {
-		// Strip Cilium label-source prefix (any:, k8s:) for comparison.
-		bare := stripCiliumLabelSource(k)
-		if bare == "k8s-app" && v == "kube-dns" {
-			hasApp = true
-		}
-		if bare == "io.kubernetes.pod.namespace" && v == "kube-system" {
-			hasNS = true
-		}
-	}
-	return hasApp && hasNS
-}
-
-// stripCiliumLabelSource trims the leading "any:" or "k8s:" source prefix that
-// Cilium prepends to bare label keys during EndpointSelector serialization.
-func stripCiliumLabelSource(k string) string {
-	for _, prefix := range []string{"any:", "k8s:"} {
-		if len(k) > len(prefix) && k[:len(prefix)] == prefix {
-			return k[len(prefix):]
-		}
-	}
-	return k
+	return egressSelectsKubeDNS(eg, nil)
 }
 
 // fqdnEgressCNP builds a synthetic CNP carrying a single egress rule with the
@@ -115,7 +81,7 @@ func fqdnEgressCNP(names ...string) *ciliumv2.CiliumNetworkPolicy {
 
 func TestEnsureKubeDNSCompanion_EmptyCNP_NoOp(t *testing.T) {
 	cnp := &ciliumv2.CiliumNetworkPolicy{Spec: &api.Rule{}}
-	ensureKubeDNSCompanion(cnp)
+	ensureKubeDNSCompanion(cnp, nil)
 	if len(cnp.Spec.Egress) != 0 {
 		t.Errorf("empty CNP must remain empty after ensureKubeDNSCompanion; got %d egress rules", len(cnp.Spec.Egress))
 	}
@@ -137,7 +103,7 @@ func TestEnsureKubeDNSCompanion_NoFQDN_NoOp(t *testing.T) {
 		},
 	}
 	before := len(cnp.Spec.Egress)
-	ensureKubeDNSCompanion(cnp)
+	ensureKubeDNSCompanion(cnp, nil)
 	if got := len(cnp.Spec.Egress); got != before {
 		t.Errorf("non-FQDN CNP must not gain a companion rule; before=%d after=%d", before, got)
 	}
@@ -145,7 +111,7 @@ func TestEnsureKubeDNSCompanion_NoFQDN_NoOp(t *testing.T) {
 
 func TestEnsureKubeDNSCompanion_SingleFQDN_AddsCompanion(t *testing.T) {
 	cnp := fqdnEgressCNP("api.example.com")
-	ensureKubeDNSCompanion(cnp)
+	ensureKubeDNSCompanion(cnp, nil)
 	assertHasKubeDNSCompanion(t, cnp)
 	// Companion is appended (not prepended) to preserve existing test golden orders.
 	if len(cnp.Spec.Egress) != 2 {
@@ -155,7 +121,7 @@ func TestEnsureKubeDNSCompanion_SingleFQDN_AddsCompanion(t *testing.T) {
 
 func TestEnsureKubeDNSCompanion_MultiFQDN_CompanionListsAllNames(t *testing.T) {
 	cnp := fqdnEgressCNP("z.example.com", "a.example.com", "m.example.com")
-	ensureKubeDNSCompanion(cnp)
+	ensureKubeDNSCompanion(cnp, nil)
 	assertHasKubeDNSCompanion(t, cnp)
 
 	// Locate the companion rule and assert its DNS list is sorted and contains
@@ -197,9 +163,9 @@ func TestEnsureKubeDNSCompanion_MultiFQDN_CompanionListsAllNames(t *testing.T) {
 
 func TestEnsureKubeDNSCompanion_Idempotent(t *testing.T) {
 	cnp := fqdnEgressCNP("api.example.com")
-	ensureKubeDNSCompanion(cnp)
+	ensureKubeDNSCompanion(cnp, nil)
 	first := len(cnp.Spec.Egress)
-	ensureKubeDNSCompanion(cnp)
+	ensureKubeDNSCompanion(cnp, nil)
 	second := len(cnp.Spec.Egress)
 	if first != second {
 		t.Errorf("ensureKubeDNSCompanion must be idempotent; first=%d second=%d", first, second)
@@ -210,7 +176,7 @@ func TestEnsureKubeDNSCompanion_Idempotent(t *testing.T) {
 func TestEnsureKubeDNSCompanion_NeverEmitsMatchPattern(t *testing.T) {
 	// DNS-03: no glob/matchPattern is ever emitted, including in the companion.
 	cnp := fqdnEgressCNP("api.example.com", "www.example.org")
-	ensureKubeDNSCompanion(cnp)
+	ensureKubeDNSCompanion(cnp, nil)
 	for _, eg := range cnp.Spec.Egress {
 		for _, sel := range eg.ToFQDNs {
 			if sel.MatchPattern != "" {
@@ -230,3 +196,90 @@ func TestEnsureKubeDNSCompanion_NeverEmitsMatchPattern(t *testing.T) {
 	}
 }
 
+func companionSelector(t *testing.T, cnp *ciliumv2.CiliumNetworkPolicy) *slim_metav1.LabelSelector {
+	t.Helper()
+	last := cnp.Spec.Egress[len(cnp.Spec.Egress)-1]
+	if len(last.ToEndpoints) != 1 || last.ToEndpoints[0].LabelSelector == nil {
+		t.Fatalf("companion must carry exactly one label selector; got %+v", last.ToEndpoints)
+	}
+	return last.ToEndpoints[0].LabelSelector
+}
+
+// DNS-FUT-02: without a detected selector (replay, --server, RBAC denied) the
+// companion selects both the legacy kube-dns label and the upstream CoreDNS
+// chart default (k8s-app=coredns, e.g. Outscale OKS).
+func TestEnsureKubeDNSCompanion_Fallback_SelectsKubeDNSAndCoreDNS(t *testing.T) {
+	cnp := fqdnEgressCNP("api.example.com")
+	ensureKubeDNSCompanion(cnp, nil)
+
+	sel := companionSelector(t, cnp)
+	wantLabels := map[string]string{"io.kubernetes.pod.namespace": "kube-system"}
+	if !reflect.DeepEqual(sel.MatchLabels, wantLabels) {
+		t.Errorf("matchLabels = %v, want %v", sel.MatchLabels, wantLabels)
+	}
+	wantExpr := []slim_metav1.LabelSelectorRequirement{{
+		Key: "k8s-app", Operator: slim_metav1.LabelSelectorOpIn, Values: []string{"kube-dns", "coredns"},
+	}}
+	if !reflect.DeepEqual(sel.MatchExpressions, wantExpr) {
+		t.Errorf("matchExpressions = %+v, want %+v", sel.MatchExpressions, wantExpr)
+	}
+}
+
+// DNS-FUT-02: a selector detected from the kube-system DNS Service is used
+// verbatim, pinned to kube-system.
+func TestEnsureKubeDNSCompanion_DetectedSelector(t *testing.T) {
+	detected := map[string]string{
+		"app.kubernetes.io/instance": "coredns",
+		"app.kubernetes.io/name":     "coredns",
+		"k8s-app":                    "coredns",
+	}
+	cnp := fqdnEgressCNP("api.example.com")
+	ensureKubeDNSCompanion(cnp, detected)
+
+	sel := companionSelector(t, cnp)
+	want := map[string]string{
+		"app.kubernetes.io/instance":  "coredns",
+		"app.kubernetes.io/name":      "coredns",
+		"k8s-app":                     "coredns",
+		"io.kubernetes.pod.namespace": "kube-system",
+	}
+	if !reflect.DeepEqual(sel.MatchLabels, want) {
+		t.Errorf("matchLabels = %v, want %v", sel.MatchLabels, want)
+	}
+	if len(sel.MatchExpressions) != 0 {
+		t.Errorf("detected selector must not carry matchExpressions; got %+v", sel.MatchExpressions)
+	}
+
+	before := len(cnp.Spec.Egress)
+	ensureKubeDNSCompanion(cnp, detected)
+	if len(cnp.Spec.Egress) != before {
+		t.Errorf("detected-selector companion must be idempotent; before=%d after=%d", before, len(cnp.Spec.Egress))
+	}
+}
+
+// A companion already present in the legacy (k8s-app=kube-dns) or hand-edited
+// (k8s-app=coredns) matchLabels form must not be duplicated.
+func TestEnsureKubeDNSCompanion_ExistingMatchLabelsForms_NotDuplicated(t *testing.T) {
+	for _, app := range []string{"kube-dns", "coredns"} {
+		t.Run(app, func(t *testing.T) {
+			cnp := fqdnEgressCNP("api.example.com")
+			cnp.Spec.Egress = append(cnp.Spec.Egress, api.EgressRule{
+				EgressCommonRule: api.EgressCommonRule{ToEndpoints: []api.EndpointSelector{{
+					LabelSelector: &slim_metav1.LabelSelector{MatchLabels: map[string]string{
+						"k8s:k8s-app":                     app,
+						"k8s:io.kubernetes.pod.namespace": "kube-system",
+					}},
+				}}},
+				ToPorts: api.PortRules{{Ports: []api.PortProtocol{
+					{Port: "53", Protocol: api.ProtoUDP},
+					{Port: "53", Protocol: api.ProtoTCP},
+				}}},
+			})
+			before := len(cnp.Spec.Egress)
+			ensureKubeDNSCompanion(cnp, nil)
+			if len(cnp.Spec.Egress) != before {
+				t.Errorf("existing %s companion must not be duplicated; before=%d after=%d", app, before, len(cnp.Spec.Egress))
+			}
+		})
+	}
+}

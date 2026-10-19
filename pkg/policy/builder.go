@@ -137,10 +137,10 @@ func BuildPolicy(namespace, workload string, flows []*flowpb.Flow, tracker FlowT
 	cnp.Spec.Ingress = ingressRules
 	cnp.Spec.Egress = egressRules
 
-	// DNS-02: enforce companion kube-dns rule presence on every CNP that
+	// DNS-02: enforce companion DNS rule presence on every CNP that
 	// carries toFQDNs. Idempotent and a no-op when no toFQDNs are present,
 	// so this call is safe regardless of L7Enabled.
-	ensureKubeDNSCompanion(cnp)
+	ensureKubeDNSCompanion(cnp, opts.DNSSelector)
 
 	var attrib []RuleAttribution
 	attrib = append(attrib, ingressAttrib...)

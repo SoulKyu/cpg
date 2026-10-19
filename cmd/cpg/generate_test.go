@@ -448,3 +448,21 @@ func TestReplayNeverStartsNamespaceWatcher(t *testing.T) {
 	assert.NotContains(t, string(src), "StartNamespaceWatcher",
 		"cpg replay must never reference the namespace watcher")
 }
+
+// TestMaybeDetectDNSSelector asserts DNS-FUT-02 wiring: detection only runs
+// under --l7 and returns the kube-system DNS Service selector.
+func TestMaybeDetectDNSSelector(t *testing.T) {
+	selector := map[string]string{"k8s-app": "coredns"}
+	client := fake.NewSimpleClientset(&corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "coredns", Namespace: "kube-system"},
+		Spec: corev1.ServiceSpec{
+			Selector: selector,
+			Ports:    []corev1.ServicePort{{Port: 53}},
+		},
+	})
+	withFakeL7ClientFactory(t, client)
+	lg, _ := observedLoggerForTest()
+
+	assert.Nil(t, maybeDetectDNSSelector(context.Background(), &rest.Config{}, false, lg), "--l7 unset → no detection")
+	assert.Equal(t, selector, maybeDetectDNSSelector(context.Background(), &rest.Config{}, true, lg))
+}

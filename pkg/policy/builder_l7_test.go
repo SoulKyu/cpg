@@ -463,9 +463,10 @@ func TestBuildPolicy_L7Enabled_DNS_MultipleQueries(t *testing.T) {
 			if ep.LabelSelector == nil {
 				continue
 			}
-			ml := ep.LabelSelector.MatchLabels
-			if ml["k8s-app"] == "kube-dns" || ml["any:k8s-app"] == "kube-dns" || ml["k8s:k8s-app"] == "kube-dns" {
-				companions++
+			for _, v := range ep.LabelSelector.MatchLabels {
+				if v == "kube-system" {
+					companions++
+				}
 			}
 		}
 	}
@@ -496,7 +497,7 @@ func TestBuildPolicy_L7Disabled_DNSFlow_NoFQDN_NoCompanion(t *testing.T) {
 				continue
 			}
 			for k, v := range ep.LabelSelector.MatchLabels {
-				if v == "kube-dns" {
+				if v == "kube-system" {
 					t.Errorf("L7Enabled=false must not inject kube-dns companion; got label %s=%s", k, v)
 				}
 			}
@@ -529,7 +530,7 @@ func TestBuildPolicy_L7Enabled_DNS_EmptyQuery(t *testing.T) {
 				continue
 			}
 			for _, v := range ep.LabelSelector.MatchLabels {
-				assert.NotEqual(t, "kube-dns", v, "no FQDN observed → no kube-dns companion")
+				assert.NotEqual(t, "kube-system", v, "no FQDN observed → no kube-dns companion")
 			}
 		}
 	}

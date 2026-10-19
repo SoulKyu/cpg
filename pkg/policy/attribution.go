@@ -141,4 +141,8 @@ type AttributionOptions struct {
 	// `cpg explain --http-path` exact-match keeps working unchanged and
 	// evidence shows which observed paths back each template.
 	Collapse *L7CollapseState
+	// DNSSelector is the pod selector of the kube-system DNS Service
+	// (pkg/k8s.DetectDNSSelector) used by the DNS-02 companion rule. Nil
+	// selects the fallback k8s-app In [kube-dns, coredns] (DNS-FUT-02).
+	DNSSelector map[string]string
 }

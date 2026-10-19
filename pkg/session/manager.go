@@ -62,7 +62,7 @@ type Manager struct {
 	// swap it to gate the setup window or inject a deterministic setup
 	// failure with no cluster. Unexported and NOT a NewManager parameter —
 	// the exported constructor signature plan 17-04 calls is unaffected.
-	resolveSetupFn func(setupCtx context.Context, args StartArgs) (server string, cleanup func(), clusterPolicies map[string]*ciliumv2.CiliumNetworkPolicy, compat k8s.CompatInfo, err error)
+	resolveSetupFn func(setupCtx context.Context, args StartArgs) (server string, cleanup func(), clusterPolicies map[string]*ciliumv2.CiliumNetworkPolicy, compat k8s.CompatInfo, dnsSelector map[string]string, err error)
 
 	// detectVersionFn is a test-only injectable seam over m.detectVersion
 	// (COMPAT-02), mirroring resolveSetupFn's pattern exactly. NewManager
@@ -189,7 +189,7 @@ func (m *Manager) Start(reqCtx context.Context, args StartArgs) (StartResult, er
 	stopSetupOnShutdown := context.AfterFunc(sessionCtx, setupCancel)
 	defer stopSetupOnShutdown()
 
-	server, portForwardCleanup, clusterPolicies, compat, err := m.resolveSetupFn(setupCtx, args)
+	server, portForwardCleanup, clusterPolicies, compat, dnsSelector, err := m.resolveSetupFn(setupCtx, args)
 	if err != nil {
 		_ = os.RemoveAll(tmpDir)
 		return fail(err)
@@ -198,6 +198,7 @@ func (m *Manager) Start(reqCtx context.Context, args StartArgs) (StartResult, er
 	cfg := buildPipelineConfig(args, tmpDir, server, m.logger, m.cpgVersion, m.stdout, clusterPolicies, func(st hubble.SessionStats) {
 		s.final.Store(&st)
 	})
+	cfg.DNSSelector = dnsSelector
 
 	// D-10: correlate the opaque MCP handle with the internal evidence
 	// SessionID on a single log line.
@@ -291,7 +292,7 @@ func (m *Manager) Start(reqCtx context.Context, args StartArgs) (StartResult, er
 // entirely; otherwise it auto-port-forwards to hubble-relay. cluster_dedup
 // independently (re-)loads a kubeconfig even when the server bypass was
 // used, mirroring generate.go's own independent-of-server nuance.
-func (m *Manager) resolveSetup(setupCtx context.Context, args StartArgs) (server string, cleanup func(), clusterPolicies map[string]*ciliumv2.CiliumNetworkPolicy, compat k8s.CompatInfo, err error) {
+func (m *Manager) resolveSetup(setupCtx context.Context, args StartArgs) (server string, cleanup func(), clusterPolicies map[string]*ciliumv2.CiliumNetworkPolicy, compat k8s.CompatInfo, dnsSelector map[string]string, err error) {
 	var kubeConfig *rest.Config
 	if args.Server != "" {
 		// D-07: an explicit server bypasses kubeconfig + auto port-forward.
@@ -300,16 +301,16 @@ func (m *Manager) resolveSetup(setupCtx context.Context, args StartArgs) (server
 	} else {
 		kubeConfig, err = k8s.LoadKubeConfig()
 		if err != nil {
-			return "", nil, nil, k8s.CompatInfo{}, fmt.Errorf("--server not provided and kubeconfig not available: %w", err)
+			return "", nil, nil, k8s.CompatInfo{}, nil, fmt.Errorf("--server not provided and kubeconfig not available: %w", err)
 		}
 
 		localAddr, pfCleanup, pfErr := k8s.PortForwardToRelay(setupCtx, kubeConfig, m.logger)
 		if pfErr != nil {
 			if errors.Is(pfErr, context.DeadlineExceeded) {
-				return "", nil, nil, k8s.CompatInfo{}, fmt.Errorf(
+				return "", nil, nil, k8s.CompatInfo{}, nil, fmt.Errorf(
 					"kubeconfig auth did not complete within the setup timeout; re-authenticate outside the MCP session (e.g. run `kubectl get pods` once in a real shell) and retry: %w", pfErr)
 			}
-			return "", nil, nil, k8s.CompatInfo{}, fmt.Errorf("auto port-forward to hubble-relay failed: %w", pfErr)
+			return "", nil, nil, k8s.CompatInfo{}, nil, fmt.Errorf("auto port-forward to hubble-relay failed: %w", pfErr)
 		}
 		server = localAddr
 		cleanup = pfCleanup
@@ -320,13 +321,13 @@ func (m *Manager) resolveSetup(setupCtx context.Context, args StartArgs) (server
 			kubeConfig, err = k8s.LoadKubeConfig()
 			if err != nil {
 				cleanup()
-				return "", nil, nil, k8s.CompatInfo{}, fmt.Errorf("cluster_dedup requires kubeconfig: %w", err)
+				return "", nil, nil, k8s.CompatInfo{}, nil, fmt.Errorf("cluster_dedup requires kubeconfig: %w", err)
 			}
 		}
 		clusterPolicies, err = k8s.LoadClusterPoliciesForNamespaces(setupCtx, kubeConfig, dedupNamespaces(args))
 		if err != nil {
 			cleanup()
-			return "", nil, nil, k8s.CompatInfo{}, fmt.Errorf("loading cluster policies for dedup: %w", err)
+			return "", nil, nil, k8s.CompatInfo{}, nil, fmt.Errorf("loading cluster policies for dedup: %w", err)
 		}
 	}
 
@@ -339,7 +340,18 @@ func (m *Manager) resolveSetup(setupCtx context.Context, args StartArgs) (server
 	// deadline bounds this call regardless.
 	compat = m.detectVersionFn(setupCtx, kubeConfig, server, args.TLS, args.Timeout)
 
-	return server, cleanup, clusterPolicies, compat, nil
+	// DNS-FUT-02: read the DNS companion selector from the kube-system DNS
+	// Service. Only L7 sessions emit the companion; the D-07 bypass (no
+	// kubeconfig) and any detection failure keep the policy fallback.
+	if args.L7 && kubeConfig != nil {
+		if client, cErr := kubernetes.NewForConfig(kubeConfig); cErr == nil {
+			dnsSelector = k8s.DetectDNSSelector(setupCtx, client, m.logger)
+		} else {
+			m.logger.Warn("dns companion selector: failed to construct kubernetes client, falling back to k8s-app in (kube-dns, coredns)", zap.Error(cErr))
+		}
+	}
+
+	return server, cleanup, clusterPolicies, compat, dnsSelector, nil
 }
 
 // detectVersion is the production implementation bound to the

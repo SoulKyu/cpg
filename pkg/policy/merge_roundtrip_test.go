@@ -5,6 +5,8 @@ import (
 
 	flowpb "github.com/cilium/cilium/api/v1/flow"
 	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
+	slim_metav1 "github.com/cilium/cilium/pkg/k8s/slim/k8s/apis/meta/v1"
+	"github.com/cilium/cilium/pkg/policy/api"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"sigs.k8s.io/yaml"
@@ -206,4 +208,46 @@ func TestMergeAfterYAMLRoundtrip_EgressCIDR(t *testing.T) {
 
 	assert.Equal(t, string(originalYAML), string(mergedYAML))
 	assert.Len(t, merged.Spec.Egress, 1, "Should have exactly 1 egress rule")
+}
+
+// DNS-FUT-02: the fallback DNS companion carries matchExpressions. Re-merging
+// it after a YAML roundtrip must not duplicate it, and it must never be confused
+// with a rule selecting the whole kube-system namespace (same matchLabels,
+// no expressions).
+func TestMergeAfterYAMLRoundtrip_FallbackDNSCompanion(t *testing.T) {
+	flows := []*flowpb.Flow{mkDNSEgressFlow("api.example.com.")}
+	opts := policy.AttributionOptions{L7Enabled: true}
+
+	original, _ := policy.BuildPolicy("default", "client", flows, nil, opts)
+	originalYAML, err := yaml.Marshal(original)
+	require.NoError(t, err)
+
+	var fromDisk ciliumv2.CiliumNetworkPolicy
+	require.NoError(t, yaml.Unmarshal(originalYAML, &fromDisk))
+	testdata.AssertHasKubeDNSCompanion(t, &fromDisk)
+
+	incoming, _ := policy.BuildPolicy("default", "client", flows, nil, opts)
+	merged := policy.MergePolicy(&fromDisk, incoming)
+	assert.Len(t, merged.Spec.Egress, len(original.Spec.Egress), "companion must merge into itself, not duplicate")
+	testdata.AssertHasKubeDNSCompanion(t, merged)
+}
+
+func TestMergePolicy_FallbackDNSCompanionNotMergedIntoNamespaceRule(t *testing.T) {
+	existing, _ := policy.BuildPolicy("default", "client", nil, nil, policy.AttributionOptions{})
+	existing.Spec.Egress = []api.EgressRule{{
+		EgressCommonRule: api.EgressCommonRule{ToEndpoints: []api.EndpointSelector{{
+			LabelSelector: &slim_metav1.LabelSelector{MatchLabels: map[string]string{
+				"io.kubernetes.pod.namespace": "kube-system",
+			}},
+		}}},
+		ToPorts: api.PortRules{{Ports: []api.PortProtocol{{Port: "8080", Protocol: api.ProtoTCP}}}},
+	}}
+
+	incoming, _ := policy.BuildPolicy("default", "client",
+		[]*flowpb.Flow{mkDNSEgressFlow("api.example.com.")}, nil, policy.AttributionOptions{L7Enabled: true})
+
+	merged := policy.MergePolicy(existing, incoming)
+	assert.Equal(t, []api.PortProtocol{{Port: "8080", Protocol: api.ProtoTCP}}, merged.Spec.Egress[0].ToPorts[0].Ports,
+		"the namespace-wide rule must not absorb the DNS companion's 53/UDP+TCP")
+	testdata.AssertHasKubeDNSCompanion(t, merged)
 }

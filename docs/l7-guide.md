@@ -89,11 +89,12 @@ spec:
           rules:
             http:
               - {}
-    # match-all DNS rule triggers DNS proxy visibility for kube-dns.
+    # match-all DNS rule triggers DNS proxy visibility for kube-dns / CoreDNS.
     - toEndpoints:
         - matchLabels:
-            k8s-app: kube-dns
             io.kubernetes.pod.namespace: kube-system
+          matchExpressions:
+            - {key: k8s-app, operator: In, values: [kube-dns, coredns]}
       toPorts:
         - ports:
             - {port: "53", protocol: UDP}
@@ -127,4 +128,4 @@ Highlights worth knowing up front:
 - HTTP path explosion on REST APIs with IDs — one literal rule per observed `(method, path)`; no auto-collapse (limitation #2, `HTTP-FUT-01`).
 - Header-based rules never generated — anti-feature to prevent secret leakage (limitation #3).
 - DNS REFUSED denials are missed — `Verdict_FORWARDED` not yet supported (limitation #4, `L7-FUT-01`).
-- kube-dns companion selector hardcoded `k8s-app=kube-dns` — autodetect across CNI distributions deferred to v1.3 (limitation #6, `DNS-FUT-02`).
+- DNS companion selector is read from the `kube-system` DNS Service, falling back to `k8s-app in (kube-dns, coredns)`; DNS outside `kube-system` is not detected (limitation #6, `DNS-FUT-02`).
