@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.1](https://github.com/SoulKyu/cpg/compare/v1.12.0...v1.12.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* **deps:** bump x/net v0.60.0, cilium v1.19.5, grpc v1.83.1, ebpf v0.22.0; pin toolchain go1.26.9 ([86511b0](https://github.com/SoulKyu/cpg/commit/86511b032bf98264d05d1b7d103faa2ab293ea93))
+
 ## [1.12.0](https://github.com/SoulKyu/cpg/compare/v1.11.0...v1.12.0) (2026-10-19)
 
 
