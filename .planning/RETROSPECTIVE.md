@@ -81,6 +81,42 @@
 
 ---
 
+## Milestone: v1.7 — L7 Path Generalization & Namespace Awareness
+
+**Shipped:** 2026-10-05
+**Phases:** 2 (25-26) | **Plans:** 4 | **Tasks:** 13
+
+### What Was Built
+- `--l7-collapse-paths`: high-cardinality observed HTTP paths collapsed into anchored POSIX-ERE templates behind a distinct-observed-paths confidence gate, whole-run replace-merge reconciliation across flushes, default-off byte-identical (L7GEN-01..02)
+- Collapse flags mirrored through the MCP session surface (`collapse_l7_paths`, `min_flows_per_l7_rule`) with fail-closed gate validation and proven CLI-vs-MCP parity (L7GEN-03..04)
+- NSAW-02 replay: per-namespace first-seen timestamps, strictly-after-capture-start report via the cfg.Stdout seam, golden staggered fixture + byte-identity vs v1.6 summary
+- NSAW-01 generate: fail-safe read-only namespace watcher (List-snapshot + Watch, warn-once, readonly verbs), watcher-precedence reporting with heuristic fallback (replay/MCP untouched)
+
+### What Worked
+- Byte-identity golden pinning of the default path before building the feature — made "default-off changes nothing" a test, not a claim
+- TDD red/green per plan kept the 4-plan milestone reviewable in 2 sessions
+- Both phase verifications passed first try (25: static + goldens; 26: 19/19)
+
+### What Was Inefficient
+- REQUIREMENTS.md checkboxes were never ticked during execution — surfaced only at milestone close and had to be reconciled from verification evidence; traceability is a per-plan-completion duty, not a close-time task
+- A quick-task SUMMARY frontmatter had invalid YAML (unquoted `: ` in list items), discovered only when `audit-open acknowledge` refused it at close; artifact linters should catch this at write time
+
+### Patterns Established
+- Fail-closed numeric gates: out-of-range flag values rejected, never clamped (`--min-flows-per-l7-rule < 1`)
+- Raw-wire observation: percent-encoding never decoded before template inference — match semantics follow what Cilium sees
+- Warn-once fail-safe watchers: environmental failure degrades to at most one stderr warn, never an error into the pipeline
+
+### Key Lessons
+- Golden byte-identity fixtures are the cheapest proof that an opt-in feature is truly opt-in
+- Milestone-close audits fail on stale bookkeeping more often than on real gaps — keep artifacts current as you go
+
+### Cost Observations
+- Timeline: 2026-10-03 → 2026-10-05 (requirements → close), 2 phases / 4 plans / 13 tasks
+- Full `go test ./...` green at close; ~809 test functions across 13 packages
+- Notable: milestone closed with 6 acknowledged deferred items (2 stale quick-task artifacts, 4 carried v1.5 test/lint debts)
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -90,6 +126,8 @@
 | v1.0–v1.3 | n/a | 13 | TDD-first gsd plan execution (see milestone archives) |
 | v1.4 | 1 | 2 | Direct multi-agent workflow (review → verify → fix → PR) replacing per-phase plans for audit work |
 | v1.5 | ~4 | 4 | Full gsd pipeline (discuss --auto → plan → worktree-parallel execute → review-fix → verify) per phase; research-by-execution for hard designs |
+| v1.6 | n/a (retro skipped at close) | 5 | Onboarding push: audit verdicts, bootstrap artifact, managed audit window, repo-local skills/agent |
+| v1.7 | ~2 | 2 | Confidence-gated generalization with golden byte-identity pinning; fail-safe read-only watchers |
 
 ### Cumulative Quality
 
@@ -98,6 +136,8 @@
 | v1.3 | 418 | ungated (CI never ran) | unknown (never scanned in CI) |
 | v1.4 | 484 | 26 (baseline 30, zero new; debt scoped to v1.5) | 0 |
 | v1.5 | 610 | 26 (zero new; LINT-01..03 debt still open, now v1.6+ candidate) | 0 (GO-2026-5970 fixed in-flight) |
+| v1.6 | n/a | 26 (debt still open) | 0 |
+| v1.7 | ~809 (13 packages) | 26 (debt still open) | 0 |
 
 ### Top Lessons (Verified Across Milestones)
 
