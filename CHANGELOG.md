@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.12.2](https://github.com/SoulKyu/cpg/compare/v1.12.1...v1.12.2) (2026-10-19)
+
+
+### Bug Fixes
+
+* **policy:** detect DNS companion selector from kube-system DNS Service (DNS-FUT-02) ([650e81c](https://github.com/SoulKyu/cpg/commit/650e81cddaf8b26f4b7f85380003c49bd6f8420a))
+* **policy:** detect DNS companion selector from kube-system DNS Service (DNS-FUT-02) ([9a5788b](https://github.com/SoulKyu/cpg/commit/9a5788b4ec9fc654417c812d6a16deebcf031319))
+
 ## [1.12.1](https://github.com/SoulKyu/cpg/compare/v1.12.0...v1.12.1) (2026-10-19)
 
 
