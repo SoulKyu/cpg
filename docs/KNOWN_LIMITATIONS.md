@@ -73,15 +73,26 @@ cpg cannot bootstrap visibility itself. Without these prerequisites, `--l7` has 
 
 ---
 
-## 6. kube-dns selector on non-vanilla clusters
+## 6. DNS companion selector on non-vanilla clusters
 
-**Symptom:** The auto-injected DNS-53 companion rule uses `matchLabels: {k8s-app: kube-dns, io.kubernetes.pod.namespace: kube-system}`. On clusters where CoreDNS uses a different label (e.g., `k8s-app: coredns`) or runs in a different namespace, the companion rule matches no pods and DNS resolution stays denied.
+**Symptom:** The auto-injected DNS-53 companion rule must select the cluster DNS pods. CoreDNS labels differ across distributions: `k8s-app: kube-dns` on kubeadm / EKS / GKE / AKS / k3s, `k8s-app: coredns` with the upstream CoreDNS Helm chart defaults (e.g. Outscale OKS). A companion that selects no pod leaves DNS denied and `toFQDNs` never matches.
 
-**Root cause:** v1.2 hardcodes the selector with a YAML comment naming the assumption. Auto-detection across distributions (EKS / GKE / AKS / vanilla / k3s / OpenShift) was deferred to keep the milestone focused.
+**Behavior (`DNS-FUT-02`, resolved):** `cpg generate --l7` (and `cpg mcp` L7 sessions) read the selector of the port-53 Service in `kube-system` (`kube-dns` first, then `coredns`, then a lone port-53 Service) and use it verbatim, pinned to `io.kubernetes.pod.namespace: kube-system`. The resolved selector is logged as `dns companion selector detected`. When detection is unavailable — `cpg replay`, the `--server` bypass without kubeconfig, RBAC denied, or no unambiguous Service — cpg logs one warning and falls back to:
 
-**Workaround:** After cpg generation, edit the companion rule's `matchLabels` to reflect the actual DNS pod selector. The companion rule is auto-detected by `ensureKubeDNSCompanion` on subsequent runs and won't be duplicated.
+```yaml
+- matchLabels:
+    io.kubernetes.pod.namespace: kube-system
+  matchExpressions:
+    - {key: k8s-app, operator: In, values: [kube-dns, coredns]}
+```
 
-**Tracking:** `DNS-FUT-02` — kube-dns selector autodetection deferred to v1.3.
+**RBAC:** detection needs `services/list` in `kube-system`; without it cpg uses the fallback.
+
+**Remaining gap:** DNS outside `kube-system` (e.g. OpenShift `openshift-dns`) is not detected. Workaround: edit the companion rule's selector after generation. A companion carrying `k8s-app: kube-dns` or `k8s-app: coredns` (matchLabels or the fallback expression) is recognized on subsequent runs and not duplicated.
+
+**Upgrade note:** policies generated before this change carry `k8s-app: kube-dns` in `matchLabels`. Merging new output appends the new companion next to it; delete the old rule if it selects no pod on your cluster.
+
+**Tracking:** `DNS-FUT-02` — resolved for `kube-system` DNS; non-`kube-system` DNS namespace not yet handled.
 
 ---
 
@@ -123,13 +134,13 @@ cpg cannot bootstrap visibility itself. Without these prerequisites, `--l7` has 
 
 ## 10. Companion DNS-53 collision with existing rules
 
-**Symptom:** If the generated policy already contains an egress rule allowing UDP/53 with a different selector (e.g., `k8s-app: coredns`), `ensureKubeDNSCompanion` adds a second rule with `k8s-app: kube-dns`, producing redundant rules. Similarly, if an existing rule restricts UDP/53 only, the companion still adds a separate UDP+TCP/53 rule.
+**Symptom:** If the generated policy already contains an egress rule allowing UDP/53 to DNS pods with a selector cpg does not recognize (anything other than the detected selector, `k8s-app: kube-dns|coredns`, or the fallback expression), `ensureKubeDNSCompanion` adds a second companion rule, producing redundant rules. Similarly, if an existing rule restricts UDP/53 only, the companion still adds a separate UDP+TCP/53 rule.
 
 **Root cause:** The idempotency check looks for an exact match on the companion's selector + ports. Partial overlap is not detected.
 
 **Workaround:** Manually consolidate redundant rules after generation.
 
-**Tracking:** No issue. Rare in practice. Tied to `DNS-FUT-02` (autodetection would resolve most cases).
+**Tracking:** No issue. Rare in practice since `DNS-FUT-02` (see limitation #6).
 
 ---
 

@@ -82,11 +82,14 @@ spec:
           rules:
             dns:
               - matchName: api.example.com
-    # Companion kube-dns rule auto-injected for every CNP with toFQDNs (DNS-02).
+    # Companion DNS rule auto-injected for every CNP with toFQDNs (DNS-02).
+    # Selector read from the kube-system DNS Service; fallback shown here
+    # (replay / no RBAC), see KNOWN_LIMITATIONS #6.
     - toEndpoints:
         - matchLabels:
-            k8s-app: kube-dns
             io.kubernetes.pod.namespace: kube-system
+          matchExpressions:
+            - {key: k8s-app, operator: In, values: [kube-dns, coredns]}
       toPorts:
         - ports:
             - {port: "53", protocol: UDP}

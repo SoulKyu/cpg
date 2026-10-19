@@ -101,6 +101,10 @@ type Aggregator struct {
 	// Values < 1 resolve to policy.DefaultMinFlowsPerL7Rule (fail-closed).
 	minFlowsPerL7Rule int
 
+	// dnsSelector is the DNS companion selector forwarded into
+	// AttributionOptions.DNSSelector; nil selects the policy fallback.
+	dnsSelector map[string]string
+
 	// l7Collapse is the whole-run observed-path store. Allocated by
 	// SetCollapseL7Paths when collapse is enabled; mutated and read ONLY
 	// inside the flush path (single aggregator goroutine; L7GEN-01
@@ -393,6 +397,12 @@ func (a *Aggregator) SetMinFlowsPerL7Rule(n int) {
 	a.minFlowsPerL7Rule = n
 }
 
+// SetDNSSelector sets the DNS companion selector (DNS-FUT-02). Safe to call
+// before Run().
+func (a *Aggregator) SetDNSSelector(sel map[string]string) {
+	a.dnsSelector = sel
+}
+
 // AuditVerdictCount returns the number of Verdict_AUDIT flows observed
 // across the session. Populated regardless of includeAudit; used by AUD-01.
 func (a *Aggregator) AuditVerdictCount() uint64 {
@@ -612,6 +622,7 @@ func (a *Aggregator) flush(buckets map[AggKey][]*flowpb.Flow, out chan<- policy.
 			L7Enabled:         a.l7Enabled,
 			MinFlowsPerL7Rule: a.minFlowsPerL7Rule,
 			Collapse:          a.l7Collapse,
+			DNSSelector:       a.dnsSelector,
 		})
 		out <- policy.PolicyEvent{
 			Namespace:   key.Namespace,

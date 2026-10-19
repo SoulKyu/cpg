@@ -2,10 +2,12 @@ package policy
 
 import (
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
 	ciliumv2 "github.com/cilium/cilium/pkg/k8s/apis/cilium.io/v2"
+	slim_metav1 "github.com/cilium/cilium/pkg/k8s/slim/k8s/apis/meta/v1"
 	"github.com/cilium/cilium/pkg/labels"
 	"github.com/cilium/cilium/pkg/policy/api"
 )
@@ -138,26 +140,38 @@ func matchCIDRSlice(a, b api.CIDRSlice) bool {
 	return true
 }
 
-// matchEndpoints compares two slices of EndpointSelector by their matchLabels.
-// Handles the "any:" prefix that Cilium adds during YAML roundtrip by normalizing
-// keys before comparison.
+// matchEndpoints compares two slices of EndpointSelector by their matchLabels
+// and matchExpressions. Handles the "any:" prefix that Cilium adds during YAML
+// roundtrip by normalizing keys before comparison.
 func matchEndpoints(a, b []api.EndpointSelector) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	for i := range a {
 		var aLabels, bLabels map[string]string
+		var aExprs, bExprs []slim_metav1.LabelSelectorRequirement
 		if a[i].LabelSelector != nil {
-			aLabels = a[i].LabelSelector.MatchLabels
+			aLabels = a[i].MatchLabels
+			aExprs = a[i].MatchExpressions
 		}
 		if b[i].LabelSelector != nil {
-			bLabels = b[i].LabelSelector.MatchLabels
+			bLabels = b[i].MatchLabels
+			bExprs = b[i].MatchExpressions
 		}
-		if !matchLabelsNormalized(aLabels, bLabels) {
+		if !matchLabelsNormalized(aLabels, bLabels) || !matchExpressionsNormalized(aExprs, bExprs) {
 			return false
 		}
 	}
 	return true
+}
+
+// matchExpressionsNormalized compares two matchExpressions slices
+// order-sensitively, normalizing keys like matchLabelsNormalized does.
+func matchExpressionsNormalized(a, b []slim_metav1.LabelSelectorRequirement) bool {
+	return slices.EqualFunc(a, b, func(x, y slim_metav1.LabelSelectorRequirement) bool {
+		return normalizeLabelKey(x.Key) == normalizeLabelKey(y.Key) &&
+			x.Operator == y.Operator && slices.Equal(x.Values, y.Values)
+	})
 }
 
 // matchLabelsNormalized compares two label maps after normalizing label keys
@@ -183,13 +197,17 @@ func matchLabelsNormalized(a, b map[string]string) bool {
 func normalizeLabels(lbls map[string]string) map[string]string {
 	result := make(map[string]string, len(lbls))
 	for k, v := range lbls {
-		if strings.IndexByte(k, ':') < 0 {
-			// Plain key (no source prefix) → convert to serialized form
-			k = labels.GetCiliumKeyFrom(k)
-		}
-		result[k] = v
+		result[normalizeLabelKey(k)] = v
 	}
 	return result
+}
+
+func normalizeLabelKey(k string) string {
+	if strings.IndexByte(k, ':') < 0 {
+		// Plain key (no source prefix) → convert to serialized form
+		return labels.GetCiliumKeyFrom(k)
+	}
+	return k
 }
 
 // mergePortRules merges incoming port rules into existing ones, deduplicating
