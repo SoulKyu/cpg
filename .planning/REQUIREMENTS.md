@@ -1,16 +1,16 @@
 # Milestone v1.7 Requirements: L7 Path Generalization & Namespace Awareness
 
-**Status:** Scoped, not started
+**Status:** Complete — all 6 v1.7 requirements delivered and verified (Phase 25 passed 2026-10-04, Phase 26 passed 19/19 2026-10-05)
 **Created:** 2026-10-03
 
 ## v1.7 Requirements
 
 ### L7GEN — L7 Path Generalization
 
-- [ ] **L7GEN-01**: User can pass `--l7-collapse-paths` on `generate` and `replay` and get HTTP rules grouped by inferred path template instead of one literal `^/api/v1/users/N$` rule per observed `(method, path)` pair
-- [ ] **L7GEN-02**: Path templates stay anchored (`^…$`) and only generalize segments with observed variance (numeric, hex, UUID → character classes); literal segments remain literal
-- [ ] **L7GEN-03**: User can enable path collapse from an MCP session (`collapse_l7_paths` session arg, mirroring the `include_audit` pattern)
-- [ ] **L7GEN-04**: User can set `--min-flows-per-l7-rule N`: a template is only emitted when ≥ N distinct observed paths confirm it; below the threshold the literal rules are kept
+- [x] **L7GEN-01**: User can pass `--l7-collapse-paths` on `generate` and `replay` and get HTTP rules grouped by inferred path template instead of one literal `^/api/v1/users/N$` rule per observed `(method, path)` pair
+- [x] **L7GEN-02**: Path templates stay anchored (`^…$`) and only generalize segments with observed variance (numeric, hex, UUID → character classes); literal segments remain literal
+- [x] **L7GEN-03**: User can enable path collapse from an MCP session (`collapse_l7_paths` session arg, mirroring the `include_audit` pattern)
+- [x] **L7GEN-04**: User can set `--min-flows-per-l7-rule N`: a template is only emitted when ≥ N distinct observed paths confirm it; below the threshold the literal rules are kept
 
 ### NSAW — Namespace Awareness
 

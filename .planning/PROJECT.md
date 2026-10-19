@@ -8,11 +8,11 @@ A Go CLI tool that connects directly to Hubble Relay via gRPC, observes dropped/
 
 Automatically generate correct CiliumNetworkPolicies from observed Hubble denials so that SREs spend zero time manually writing network policies in default-deny environments.
 
-## Current Milestone: v1.7 L7 Path Generalization & Namespace Awareness
+## Milestone: v1.7 L7 Path Generalization & Namespace Awareness — SHIPPED 2026-10-05
 
 **Goal:** Make `--l7` policies maintainable at scale via confidence-gated HTTP path generalization, and surface cpg's batch blind spot by reporting namespaces created during a run.
 
-**Target features:**
+**Delivered:**
 - `--l7-collapse-paths` (HTTP-FUT-01): infer path templates from observed HTTP paths (`{id}` segments → character classes) so `/api/v1/users/N` collapses into one anchored pattern instead of N literal rules
 - `--min-flows-per-l7-rule N` (L7-FUT-02): confidence gate — a pattern only generalizes when ≥ N distinct flows confirm it; never generalize below the gate
 - Namespace awareness (light, batch-preserving): detect namespaces created during the run and report them in the session summary ("namespace X appeared after run start; re-run to cover it") — no daemon, no long-running mode
@@ -179,14 +179,18 @@ Automatically generate correct CiliumNetworkPolicies from observed Hubble denial
 | SEC-01 audit = function-level RTA callgraph + direct SSA call scan (never package-level import scan) | `cmd/cpg` is one `package main` mixing MCP and CLI write paths; only reachability from `runMCPServer` proves the readonly claim; naive whole-graph scans produced 70-102 third-party false positives | ✓ Good — shipped v1.5 Phase 19, mutation-tested |
 | SRV-04 e2e = real `-race` subprocess + in-process fake observerpb relay via `start_session{server}` bypass | "Full stdio" can't be proven on the in-memory transport; the D-07 server arg was designed for cluster-free e2e | ✓ Good — shipped v1.5 Phase 19; both variants stable 5/5 |
 | No GSD milestone git tags (v1.5 close) | release-please owns vX.Y.Z tags (product already at v1.9.x incl. an unrelated v1.5.0); bare milestone tags would collide/confuse; MILESTONES.md + archives are the record | ✓ Good — decided 2026-07-22, matches v1.0-v1.4 precedent |
+| L7 path collapse default-OFF, byte-identical when disabled | Generalization is a semantic change to emitted policy; silent behavior shift would be a security regression — same stance as `--l7` opt-in (v1.2) | ✓ Good — v1.7 Phase 25, golden-pinned byte-identity on default path |
+| Collapse gate = distinct observed paths (not raw flow count) with fail-closed validation (`< 1` rejected) | Distinct-path confirmation resists one client hammering one URL inflating confidence; fail-closed honors the anti-hallucination stance | ✓ Good — v1.7 Phase 25 |
+| Observe HTTP paths in raw wire form (percent-encoding never decoded) | Decoding before template inference could merge visually-equal but semantically-distinct paths and alter match semantics Cilium sees | ✓ Good — v1.7 Phase 25 |
+| NSAW reports the blind spot instead of closing it (no daemon) | Batch run-finished contract preserved; a read-only watcher surfaces newly created namespaces without mutating scope of the run | ✓ Good — v1.7 Phase 26, watcher fail-safe warn-once never blocks generation |
 
 ## Current State
 
-**Shipped:** v1.0 (2026-03-08), v1.1 (2026-04-24), v1.2 (2026-04-25), v1.3 (2026-04-26), v1.4 (2026-07-20), v1.5 (2026-07-22), and v1.6 (2026-07-22).
+**Shipped:** v1.0 (2026-03-08), v1.1 (2026-04-24), v1.2 (2026-04-25), v1.3 (2026-04-26), v1.4 (2026-07-20), v1.5 (2026-07-22), v1.6 (2026-07-22), and v1.7 (2026-10-05).
 
-**Codebase:** 12 packages (`pkg/{labels,policy,output,hubble,k8s,dedup,flowsource,evidence,diff,dropclass,session,explain}` + `cmd/`). **607 tests passing with `-race`** across 12 packages (up from 539 at Phase 17 close). CI green and operational (build + race tests + lint + govulncheck). Deps: cilium v1.19.4, go-sdk v1.6.1, jsonschema-go v0.4.3 (direct since Phase 18), toolchain go1.25.12. Known debt: 26 lint issues (16 errcheck + 10 SA1019) gated by `only-new-issues`, scoped to v1.5; pre-existing `pkg/session` shared-`/tmp` test flake documented in `phases/18-query-tools/deferred-items.md`. Release-please continues to handle product SemVer tagging.
+**Codebase:** 13 packages (`pkg/{labels,policy,output,hubble,k8s,dedup,flowsource,evidence,diff,dropclass,session,explain,auditwindow}` + `cmd/`). **~809 tests passing** across 13 packages (full `go test ./...` green at v1.7 close; ~610 at v1.5). CI green and operational (build + race tests + lint + govulncheck). Deps: cilium v1.19.4, go-sdk v1.6.1, jsonschema-go v0.4.3, golang.org/x/mod (direct since v1.3 hardening), toolchain go1.25.12. Known debt: 26 lint issues (16 errcheck + 10 SA1019) gated by `only-new-issues` (LINT-01..03); pre-existing `pkg/session` shared-`/tmp` test flake under parallel package runs (see STATE.md Deferred Items); gofmt debt on `cmd/cpg/commonflags.go`. Release-please continues to handle product SemVer tagging.
 
-**Current milestone:** none — v1.6 shipped 2026-07-22 (phases 20-24: AUDIT-verdict ingestion, PR-verified Cilium compat matrix + runtime detection, #35558-safe bootstrap artifact (stdout-only CLI + readonly MCP tool) with onboarding runbook, CLI-only `cpg audit-window` with bounded guaranteed revert + SEC-01 tripwire, and 5 repo-local cpg-* skills + `cpg-operator` agent pinned to the live 9-tool registry by `TestSkillsConsistencyTripwire`). Milestone audit passed; archives in `milestones/v1.6-*`. Next: `/gsd-new-milestone`.
+**Current milestone:** none — v1.7 shipped 2026-10-05 (phases 25-26: confidence-gated L7 HTTP path generalization `--l7-collapse-paths`/`--min-flows-per-l7-rule` with default-off byte-identity, MCP surface parity, and namespace creation awareness NSAW-01/02 with fail-safe readonly watcher + replay first-flow heuristic). Phase verifications passed (25: static+golden; 26: 19/19). Milestone closed with 6 acknowledged deferred items (2 stale quick-task artifacts, 4 carried v1.5 test/lint debts — see STATE.md Deferred Items). Archives in `milestones/v1.7-*`. Next: `/gsd:new-milestone`.
 
 **Next milestone goals (candidates, not committed):** lint-debt zero (LINT-01..03), release hardening (RELSEC-01..02), AUD-FUT-02 flag-gated bootstrap CNP apply/delete, Variant A MCP-gated audit window if LLM-driven onboarding demand materializes — see § Planned.
 
@@ -208,4 +212,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-10-05 after Phase 26 (Namespace Creation Awareness) completion — v1.7 phases complete.*
+*Last updated: 2026-10-05 after v1.7 milestone close*

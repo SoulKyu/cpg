@@ -1,0 +1,143 @@
+{
+  "contract": "1.0.0",
+  "flavor": "core",
+  "milestone": "v1.7",
+  "phases": [
+    {
+      "number": "1",
+      "name": "Core Policy Engine",
+      "status": "complete"
+    },
+    {
+      "number": "2",
+      "name": "Hubble Streaming Pipeline",
+      "status": "complete"
+    },
+    {
+      "number": "3",
+      "name": "Production Hardening",
+      "status": "complete"
+    },
+    {
+      "number": "4",
+      "name": "Offline Replay Core",
+      "status": "complete"
+    },
+    {
+      "number": "5",
+      "name": "Dry-Run & Pipeline Integration",
+      "status": "complete"
+    },
+    {
+      "number": "6",
+      "name": "Explain Command",
+      "status": "complete"
+    },
+    {
+      "number": "7",
+      "name": "L7 Infrastructure Prep",
+      "status": "complete"
+    },
+    {
+      "number": "8",
+      "name": "HTTP L7 Generation",
+      "status": "complete"
+    },
+    {
+      "number": "9",
+      "name": "DNS L7 Generation + explain L7 + Docs",
+      "status": "complete"
+    },
+    {
+      "number": "10",
+      "name": "Classifier Core",
+      "status": "complete"
+    },
+    {
+      "number": "11",
+      "name": "Aggregator Suppression + Health Writer",
+      "status": "complete"
+    },
+    {
+      "number": "12",
+      "name": "Session Summary Block",
+      "status": "complete"
+    },
+    {
+      "number": "13",
+      "name": "Flags + Exit Code",
+      "status": "complete"
+    },
+    {
+      "number": "14",
+      "name": "Fix Verification + Quality Gates",
+      "status": "complete"
+    },
+    {
+      "number": "15",
+      "name": "CI Trigger Fix + PR Delivery",
+      "status": "complete"
+    },
+    {
+      "number": "16",
+      "name": "MCP Server Foundation & Write Safety",
+      "status": "complete"
+    },
+    {
+      "number": "17",
+      "name": "Session Lifecycle",
+      "status": "complete"
+    },
+    {
+      "number": "18",
+      "name": "Query Tools",
+      "status": "complete"
+    },
+    {
+      "number": "19",
+      "name": "Security Hardening & End-to-End Validation",
+      "status": "complete"
+    },
+    {
+      "number": "20",
+      "name": "`--include-audit` Verdict Ingestion",
+      "status": "complete"
+    },
+    {
+      "number": "21",
+      "name": "Cilium Compatibility Matrix + Runtime Detection",
+      "status": "complete"
+    },
+    {
+      "number": "22",
+      "name": "Bootstrap Artifact Generation",
+      "status": "complete"
+    },
+    {
+      "number": "23",
+      "name": "Managed Audit Window + SEC-01 Evolution",
+      "status": "complete"
+    },
+    {
+      "number": "24",
+      "name": "cpg-Dedicated Skills & Agent Tooling",
+      "status": "complete"
+    },
+    {
+      "number": "25",
+      "name": "L7 Path Collapse Engine",
+      "status": "complete"
+    },
+    {
+      "number": "26",
+      "name": "Namespace Creation Awareness",
+      "status": "complete"
+    }
+  ],
+  "next": {
+    "command": "/gsd:progress",
+    "label": "Show progress",
+    "reason": "Unsure of state — showing progress"
+  },
+  "updated_at": "2026-10-19T12:19:14.935Z"
+}

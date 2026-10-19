@@ -47,3 +47,4 @@ prefixes, or `-p 1` in CI) — a test-infrastructure decision affecting both
 a collision-resistant glob pattern (e.g. tag the tmpdir with the test's own PID
 or a per-run UUID prefix) so its orphan check cannot observe tmpdirs created by
 sibling test binaries.
+  status: acknowledged

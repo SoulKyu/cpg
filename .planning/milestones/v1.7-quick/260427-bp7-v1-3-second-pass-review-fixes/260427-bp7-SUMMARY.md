@@ -13,27 +13,34 @@ tech-stack:
     - Rune-based Levenshtein for Unicode correctness
     - Distance threshold + conditional "did you mean" clause
     - modfile.Parse for structured go.mod parsing
+
 key-files:
   modified:
-    - pkg/hubble/pipeline.go (C-1: pathState switch clarity)
-    - pkg/hubble/pipeline_test.go (I-8: regression guard test)
-    - pkg/hubble/health_writer.go (C-2: deep-copy Snapshot, I-9: Remediation doc)
-    - pkg/hubble/health_writer_test.go (C-2: TestHealthWriterSnapshot_DeepCopy)
-    - pkg/hubble/aggregator.go (M-3: atomic.Uint64 healthChDrops + infraDrops doc)
-    - pkg/hubble/summary.go (M-1: frameWidth +28 accounting comment)
-    - cmd/cpg/commonflags.go (I-2/I-3/I-4/I-5: Levenshtein hardening)
-    - cmd/cpg/commonflags_test.go (I-1/I-4/I-5: PreRunE comments + new tests)
-    - pkg/dropclass/version_test.go (I-6/I-7: modfile-based drift guard)
-    - go.mod / go.sum (golang.org/x/mod promoted to direct)
+    - "pkg/hubble/pipeline.go (C-1: pathState switch clarity)"
+    - "pkg/hubble/pipeline_test.go (I-8: regression guard test)"
+    - "pkg/hubble/health_writer.go (C-2: deep-copy Snapshot, I-9: Remediation doc)"
+    - "pkg/hubble/health_writer_test.go (C-2: TestHealthWriterSnapshot_DeepCopy)"
+    - "pkg/hubble/aggregator.go (M-3: atomic.Uint64 healthChDrops + infraDrops doc)"
+    - "pkg/hubble/summary.go (M-1: frameWidth +28 accounting comment)"
+    - "cmd/cpg/commonflags.go (I-2/I-3/I-4/I-5: Levenshtein hardening)"
+    - "cmd/cpg/commonflags_test.go (I-1/I-4/I-5: PreRunE comments + new tests)"
+    - "pkg/dropclass/version_test.go (I-6/I-7: modfile-based drift guard)"
+    - "go.mod / go.sum (golang.org/x/mod promoted to direct)"
+
 decisions:
   - "Snapshot() caches build via sync.Once but deep-copies on every call — finalized atomic.Bool retained for backward compat with other callers"
   - "TestSuggestClosest assertion updated: with I-4 threshold only CT_MAP_INSERTION_FAILED passes for that candidate set (Rule 1 auto-fix)"
   - "min3 helper deleted in favor of built-in min() — Go 1.21+ confirmed in go.mod"
+
 metrics:
   duration: ~20 min
   completed: "2026-04-27"
   tasks: 4
   files: 10
+audit_acknowledged:
+  milestone: v1.7
+  at: 2026-10-05
+  status: unknown
 ---
 
 # Quick Task 260427-bp7: v1.3 Second-Pass Review Fixes Summary

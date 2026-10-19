@@ -31,17 +31,23 @@ key-files:
     - cmd/cpg/generate.go
     - cmd/cpg/replay.go
     - README.md
+
 decisions:
   - "SummaryPathState 3-value enum (Written/DryRun/EvidenceOff) replaces bool dryRun to cleanly express the no-evidence path"
   - "Levenshtein top-5 suggestions use zero-dependency inline DP — no new import"
   - "Snapshot() uses sync.Once + atomic.Bool dual gate: Once protects concurrent first callers, atomic.Bool provides lock-free fast path on subsequent calls"
   - "policyTargetEndpoint returns nil for both unknown-direction and nil-endpoint; caller re-checks direction to preserve distinct tracker reason codes"
   - "M1 deep-link policy: non-empty hints must NOT equal the bare troubleshooting/ page URL (not requiring '#' anchor — egress-gateway and encryption pages are specific enough)"
+
 metrics:
   duration: ~90 minutes
   completed: 2026-04-27
   tasks: 7
   files: 17
+audit_acknowledged:
+  milestone: v1.7
+  at: 2026-10-05
+  status: unknown
 ---
 
 # Quick Task 260427-aml: v1.3 Code Review Fixes — Summary

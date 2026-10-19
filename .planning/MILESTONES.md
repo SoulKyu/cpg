@@ -1,5 +1,19 @@
 # Milestones — CPG (Cilium Policy Generator)
 
+## v1.7 L7 Path Generalization & Namespace Awareness (Shipped: 2026-10-05)
+
+**Phases completed:** 2 phases (25-26), 4 plans, 13 tasks
+
+**Known verification overrides:** 6 newly acknowledged, 0 carried forward from a prior close (see STATE.md Deferred Items) — 2 stale quick-task artifacts (work completed in v1.3 era, closure markers missing) + 4 carried v1.5 test/lint debts (pkg/session shared-/tmp flake ×3, gofmt on cmd/cpg/commonflags.go).
+
+**Key accomplishments:****
+- `--l7-collapse-paths` collapses high-cardinality observed HTTP paths into anchored POSIX-ERE templates behind a distinct-observed-paths confidence gate, with whole-run replace-merge reconciliation across flushes — default-off byte-identical.
+- Default-path emission is regression-pinned byte-identical to the pre-phase-25 build, and the collapse flags are fully mirrored through the MCP session surface with fail-closed gate validation and proven CLI-vs-MCP rule parity.
+- NSAW-02 replay path end-to-end: the Aggregator records per-namespace first-seen timestamps (both endpoints), a pure helper computes the strictly-after-capture-start list (min Flow.Time, A4), and a no-op-when-empty report block rides the v1.3 cfg.Stdout summary seam — golden-proven by a staggered fixture replay and byte-identity-tested against the v1.6 summary.
+- Fail-safe read-only namespace-creation watcher (List-snapshot + Watch, warn-once, readonly verbs) wired into `cpg generate` via `PipelineConfig.NewNamespaces` with watcher-precedence reporting — heuristic fallback, replay/MCP surfaces, and byte-identity untouched.
+
+---
+
 ## v1.5 MCP Integration (Shipped: 2026-07-22)
 
 **Phases completed:** 4 phases (16-19), 21 plans, 44 tasks

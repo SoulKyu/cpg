@@ -27,6 +27,7 @@ rule: only auto-fix issues directly caused by the current task's changes.
   setup-window race in `pkg/session/manager.go`'s `Shutdown()` path if it becomes disruptive
   to CI. Not blocking for Phase 18's remaining plans (18-02..18-05), none of which touch
   `pkg/session`'s shutdown-race window.
+  status: acknowledged
 
 ## From 18-04 (get_evidence + pagination infra)
 
@@ -52,6 +53,7 @@ rule: only auto-fix issues directly caused by the current task's changes.
   plans/waves, the fix belongs in `pkg/session/manager_test.go`: scope the before/after glob
   to tmpdirs this specific test created (e.g. record the Manager's own tmpdir path instead of
   diffing a shared, unscoped `/tmp` glob), not a change to `pkg/session/manager.go` itself.
+  status: acknowledged
 
 ## From 18-05 (list_dropped_flows + phase close)
 
@@ -69,3 +71,4 @@ rule: only auto-fix issues directly caused by the current task's changes.
 - **Recommendation:** A one-line `gofmt -w cmd/cpg/commonflags.go` fix whenever a plan is
   actually scoped to that file, or as part of the v1.5 lint-debt cleanup (LINT-01..03, tracked
   in REQUIREMENTS.md v2).
+  status: acknowledged

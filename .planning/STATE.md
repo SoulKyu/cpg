@@ -1,19 +1,19 @@
 ---
 gsd_state_version: "1.0"
 milestone: v1.7
-current_phase: 26
-status: completed
+status: Awaiting next milestone
 stopped_at: Phase 26 complete — all phases complete
-last_updated: "2026-10-05T09:06:58.544Z"
-last_activity: 2026-10-05
-last_activity_desc: Phase 26 complete
-state_head: 4e2d8a2804d77b2c65f4390f3c919a22ef3b836c
+last_updated: "2026-10-19T12:19:14.923Z"
+last_activity: 2026-10-19
+last_activity_desc: Milestone v1.7 completed and archived
+state_head: 15d82fd511bd7d0a8c141b97b1fdb734e89343ae
 progress:
   total_phases: 2
   completed_phases: 2
   total_plans: 4
   completed_plans: 4
 milestone_name: L7 Path Generalization & Namespace Awareness
+current_phase: 26
 ---
 
 # Project State
@@ -27,10 +27,10 @@ See: .planning/PROJECT.md (updated 2026-10-05)
 
 ## Current Position
 
-Phase: 26
-Plan: Not started
-Status: All phases complete
-Last activity: 2026-10-05 — Phase 26 complete
+Phase: Milestone v1.7 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-10-19 — Milestone v1.7 completed and archived
 
 ## Performance Metrics
 
@@ -120,20 +120,22 @@ v1.3 deferred items (L7-FUT-01, DNS-FUT-02, etc.) tracked in PROJECT.md Planned 
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
-| 260426-pa5 | ignore-protocol flag (cpg generate + replay) | 2026-04-26 | 8f33122 | [260426-pa5-ignore-protocol-flag-cpg-generate-replay](./quick/260426-pa5-ignore-protocol-flag-cpg-generate-replay/) |
-| 260427-aml | v1.3 code-review fixes (16 fixes, C1-C3, I1-I8, M1-M7) | 2026-04-27 | e3b3e77 | [260427-aml-v1-3-code-review-fixes](./quick/260427-aml-v1-3-code-review-fixes/) |
-| 260427-bp7 | v1.3 second-pass review fixes (12 fixes, C1-C2, I1-I9, M1+M3) | 2026-04-27 | 42f0f57 | [260427-bp7-v1-3-second-pass-review-fixes](./quick/260427-bp7-v1-3-second-pass-review-fixes/) |
-| 260723-b26 | WebSocket exec with SPDY fallback in audit-window exec path (AUD-FUT-01) | 2026-07-23 | 2465740 | [20260723-websocket-exec-fallback](./quick/20260723-websocket-exec-fallback/) |
 
 ## Deferred Items
 
-Items acknowledged and deferred at milestone close on 2026-07-20 (v1.4); re-acknowledged unchanged at v1.5 close on 2026-07-22:
+Items acknowledged and deferred at milestone close on 2026-07-20 (v1.4); re-acknowledged unchanged at v1.5 close on 2026-07-22; re-acknowledged unchanged at v1.7 close on 2026-10-05:
 
 | Category | Item | Status |
 |----------|------|--------|
 | quick_task | 260426-pa5-ignore-protocol-flag-cpg-generate-replay | work completed 2026-04-26 (commit 8f33122); artifact lacks closure marker |
 | quick_task | 260427-aml-v1-3-code-review-fixes | work completed 2026-04-27 (commit e3b3e77); artifact lacks closure marker |
 | quick_task | 260427-bp7-v1-3-second-pass-review-fixes | work completed 2026-04-27 (commit 42f0f57); artifact lacks closure marker |
+| quick_task | 260427-aml-v1-3-code-review-fixes | re-acknowledged 2026-10-05 (v1.7); work completed 2026-04-27 (commit e3b3e77) |
+| quick_task | 260427-bp7-v1-3-second-pass-review-fixes | re-acknowledged 2026-10-05 (v1.7); work completed 2026-04-27 (commit 42f0f57); SUMMARY frontmatter YAML repaired to allow acknowledge |
+| deferred_items | 17/deferred-items.md: 17-05 cross-package os.TempDir() glob race between cmd/cpg and pkg/session test binaries | acknowledged 2026-10-05 (v1.7) |
+| deferred_items | 18/deferred-items.md: flaky TestManager_Start_ShutdownRacesSetup (pkg/session) shutdown/setup timing race | acknowledged 2026-10-05 (v1.7) |
+| deferred_items | 18/deferred-items.md: 3 pkg/session tmpdir-count tests race on shared /tmp under parallel go test | acknowledged 2026-10-05 (v1.7) |
+| deferred_items | 18/deferred-items.md: pre-existing gofmt debt cmd/cpg/commonflags.go | acknowledged 2026-10-05 (v1.7) |
 
 ## Session Continuity
 
@@ -145,6 +147,4 @@ Resume: `/gsd-plan-phase 20` — plan `--include-audit` Verdict Ingestion (AUD-0
 
 ## Operator Next Steps
 
-- Review the roadmap draft in .planning/ROADMAP.md
-- Start planning with /gsd-plan-phase 20
-- Note: Phase 23 requires /gsd-discuss-phase (AUD-03 surface + SEC-01 mechanism decisions) before it can be planned
+- Start the next milestone with /gsd-new-milestone
