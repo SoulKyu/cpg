@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.12.0](https://github.com/SoulKyu/cpg/compare/v1.11.0...v1.12.0) (2026-10-19)
+
+
+### Features
+
+* **25-01:** add pure L7 path collapse engine (classifier, template synthesis, gate, length cap) ([bdd6b41](https://github.com/SoulKyu/cpg/commit/bdd6b41c62e8f8f5b294c08ee18f15b3d5599949))
+* **25-01:** add replace-mode L7 merge reconciliation (PolicyEvent.ReplaceL7HTTP, MergePolicyWithOptions) ([04be558](https://github.com/SoulKyu/cpg/commit/04be558d6bcc9ef19b9bd4070a12278c6b64fe67))
+* **25-01:** observe collapse paths in raw wire form (percent-encoding never decoded) ([96f8e16](https://github.com/SoulKyu/cpg/commit/96f8e1655fb14412927a64d5aa6548f503ac768b))
+* **25-01:** reject --min-flows-per-l7-rule values below 1 (fail-closed gate validation) ([0a4057f](https://github.com/SoulKyu/cpg/commit/0a4057feeb3b2747a38afbd7124955d1a599fd9a))
+* **25-01:** wire L7 path collapse end-to-end (aggregator whole-run state, pipeline, CLI flags) ([8fb61c8](https://github.com/SoulKyu/cpg/commit/8fb61c853734caf8078146281fac675754ac147b))
+* **25-02:** commit pre-phase-25 byte-identity goldens (l7_http 1 policy, mixed_tcp_icmp server+client) ([40cfe09](https://github.com/SoulKyu/cpg/commit/40cfe092cc0ebd475949601beb98fe43a4ba0452))
+* **25-02:** wire collapse_l7_paths/min_flows_per_l7_rule through MCP session args (fail-closed gate validation, default resolution) ([3eb7229](https://github.com/SoulKyu/cpg/commit/3eb7229e7d855bf9367a73a39048249a13c80978))
+* **26-01:** implement NSAW-02 new-namespace replay report ([5899380](https://github.com/SoulKyu/cpg/commit/58993802beabf46599f6565e3a8165e6e8f33151))
+* **26-02:** implement NSAW-01 namespace watcher (GREEN) ([e852c5e](https://github.com/SoulKyu/cpg/commit/e852c5ef875128d70c4d6d89a422e0ef8fd1488a))
+* **26-02:** implement watcher-precedence branch and NSAW-01 generate wiring (GREEN) ([f5ff192](https://github.com/SoulKyu/cpg/commit/f5ff1927f87b16810af42b4f588b7a9e5585fea6))
+
+
+### Bug Fixes
+
+* **26:** mark research open questions resolved with pinned plan decisions ([b410fbc](https://github.com/SoulKyu/cpg/commit/b410fbcb8a921ada70d1e880b26dac92671acf76))
+
 ## [1.11.0](https://github.com/SoulKyu/cpg/compare/v1.10.0...v1.11.0) (2026-07-23)
 
 
